@@ -104,7 +104,8 @@ func (m *model) saveEditPanel() {
 		break
 	}
 
-	m.rebuildDisplayOrder()
+	// Rescan repos to pick up structural changes (collection toggle, etc.)
+	m.reloadItems()
 }
 
 func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

@@ -73,16 +73,38 @@ func (m model) viewList() string {
 		item := m.items[itemIdx]
 
 		// Determine section (must match rebuildDisplayOrder logic)
-		hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
-			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
+		// Children inherit parent's section
 		var section string
-		switch {
-		case hasInteractiveTab:
-			section = "active"
-		case item.repo.Favourite:
-			section = "favourites"
-		default:
-			section = "repos"
+		if item.repo.Parent != "" {
+			// Find parent's section
+			for _, pi := range m.displayOrder {
+				p := m.items[pi]
+				if p.repo.DirName == item.repo.Parent {
+					hasParentTab := p.status == statusClaude || p.status == statusShell ||
+						(p.status == statusRemote && TmuxHasSession(TmuxSessionName(p.repo.DirName, false)))
+					switch {
+					case hasParentTab:
+						section = "active"
+					case p.repo.Favourite:
+						section = "favourites"
+					default:
+						section = "repos"
+					}
+					break
+				}
+			}
+		}
+		if section == "" {
+			hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
+				(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
+			switch {
+			case hasInteractiveTab:
+				section = "active"
+			case item.repo.Favourite:
+				section = "favourites"
+			default:
+				section = "repos"
+			}
 		}
 
 		// Insert section header on change

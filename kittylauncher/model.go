@@ -107,10 +107,44 @@ func (m *model) allIndices() []int {
 }
 
 // rebuildDisplayOrder groups filtered items into active > favourites > rest
+// Children stay with their parent collection regardless of section
 func (m *model) rebuildDisplayOrder() {
+	// First, figure out which section each parent belongs to
+	parentSection := make(map[string]int) // 0=active, 1=fav, 2=rest
+	for _, idx := range m.filtered {
+		item := m.items[idx]
+		if item.repo.Parent != "" {
+			continue // skip children in first pass
+		}
+		hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
+			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
+		switch {
+		case hasInteractiveTab:
+			parentSection[item.repo.DirName] = 0
+		case item.repo.Favourite:
+			parentSection[item.repo.DirName] = 1
+		default:
+			parentSection[item.repo.DirName] = 2
+		}
+	}
+
 	var active, favourites, rest []int
 	for _, idx := range m.filtered {
 		item := m.items[idx]
+
+		// Children follow their parent's section
+		if item.repo.Parent != "" {
+			switch parentSection[item.repo.Parent] {
+			case 0:
+				active = append(active, idx)
+			case 1:
+				favourites = append(favourites, idx)
+			default:
+				rest = append(rest, idx)
+			}
+			continue
+		}
+
 		hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
 			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
 		switch {
@@ -126,6 +160,48 @@ func (m *model) rebuildDisplayOrder() {
 	m.displayOrder = append(m.displayOrder, active...)
 	m.displayOrder = append(m.displayOrder, favourites...)
 	m.displayOrder = append(m.displayOrder, rest...)
+}
+
+// reloadItems rescans repos from disk, preserving session state
+func (m *model) reloadItems() {
+	// Save current session state by DirName
+	sessionState := make(map[string]repoItem)
+	for _, item := range m.items {
+		if item.status != statusNone || item.tmuxSes != "" {
+			sessionState[item.repo.DirName] = item
+		}
+	}
+
+	// Rescan
+	repos := DiscoverRepos(m.cfg)
+	scratches := DiscoverScratches(m.cfg)
+
+	m.items = make([]repoItem, 0, len(repos)+len(scratches))
+	for _, r := range repos {
+		item := repoItem{repo: r}
+		// Restore session state
+		if prev, ok := sessionState[r.DirName]; ok {
+			item.status = prev.status
+			item.tmuxSes = prev.tmuxSes
+			item.title = prev.title
+		}
+		m.items = append(m.items, item)
+	}
+	for _, r := range scratches {
+		item := repoItem{repo: r}
+		if prev, ok := sessionState[r.DirName]; ok {
+			item.status = prev.status
+			item.tmuxSes = prev.tmuxSes
+			item.title = prev.title
+		}
+		m.items = append(m.items, item)
+	}
+
+	m.filtered = m.allIndices()
+	m.rebuildDisplayOrder()
+	if m.cursor >= len(m.displayOrder) {
+		m.cursor = max(0, len(m.displayOrder)-1)
+	}
 }
 
 func (m *model) selectedItem() *repoItem {
