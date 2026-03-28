@@ -47,7 +47,7 @@ func MapSessionsToItems(items []repoItem, sessions []TmuxSession) {
 
 func (m *model) openSelected(withClaude bool) tea.Cmd {
 	item := m.selectedItem()
-	if item == nil {
+	if item == nil || item.repo.IsCollection {
 		return nil
 	}
 

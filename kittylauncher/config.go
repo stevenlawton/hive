@@ -16,11 +16,12 @@ type NotificationConfig struct {
 }
 
 type WorkspaceConfig struct {
-	Name      string `yaml:"name,omitempty"`
-	Short     string `yaml:"short,omitempty"`
-	Color     string `yaml:"color,omitempty"`
-	Remote    bool   `yaml:"remote,omitempty"`
-	Favourite bool   `yaml:"favourite,omitempty"`
+	Name       string `yaml:"name,omitempty"`
+	Short      string `yaml:"short,omitempty"`
+	Color      string `yaml:"color,omitempty"`
+	Remote     bool   `yaml:"remote,omitempty"`
+	Favourite  bool   `yaml:"favourite,omitempty"`
+	Collection bool   `yaml:"collection,omitempty"`
 }
 
 type Config struct {
@@ -83,14 +84,16 @@ func SaveConfig(path string, cfg *Config) error {
 }
 
 type Repo struct {
-	DirName   string
-	Path      string
-	Name      string
-	Short     string
-	Color     string
-	Remote    bool
-	Favourite bool
-	IsScratch bool
+	DirName      string
+	Path         string
+	Name         string
+	Short        string
+	Color        string
+	Remote       bool
+	Favourite    bool
+	IsScratch    bool
+	IsCollection bool
+	Parent       string // DirName of parent collection, empty if top-level
 }
 
 func defaultShort(dirName string) string {
@@ -99,6 +102,19 @@ func defaultShort(dirName string) string {
 		clean = clean[:3]
 	}
 	return clean
+}
+
+func applyWorkspaceConfig(repo *Repo, ws WorkspaceConfig) {
+	if ws.Name != "" {
+		repo.Name = ws.Name
+	}
+	if ws.Short != "" {
+		repo.Short = ws.Short
+	}
+	repo.Color = ws.Color
+	repo.Remote = ws.Remote
+	repo.Favourite = ws.Favourite
+	repo.IsCollection = ws.Collection
 }
 
 func DiscoverRepos(cfg *Config) []Repo {
@@ -121,22 +137,50 @@ func DiscoverRepos(cfg *Config) []Repo {
 		}
 
 		if ws, ok := cfg.Workspaces[dirName]; ok {
-			if ws.Name != "" {
-				repo.Name = ws.Name
-			}
-			if ws.Short != "" {
-				repo.Short = ws.Short
-			}
-			repo.Color = ws.Color
-			repo.Remote = ws.Remote
-			repo.Favourite = ws.Favourite
+			applyWorkspaceConfig(&repo, ws)
 		}
 
-		repos = append(repos, repo)
+		if repo.IsCollection {
+			// Add the collection header (not selectable for opening)
+			repos = append(repos, repo)
+			// Scan children
+			children, err := os.ReadDir(repo.Path)
+			if err != nil {
+				continue
+			}
+			for _, child := range children {
+				if !child.IsDir() {
+					continue
+				}
+				childKey := dirName + "/" + child.Name()
+				childRepo := Repo{
+					DirName: childKey,
+					Path:    filepath.Join(repo.Path, child.Name()),
+					Name:    child.Name(),
+					Short:   defaultShort(child.Name()),
+					Parent:  dirName,
+				}
+				if ws, ok := cfg.Workspaces[childKey]; ok {
+					applyWorkspaceConfig(&childRepo, ws)
+				}
+				repos = append(repos, childRepo)
+			}
+		} else {
+			repos = append(repos, repo)
+		}
 	}
 
 	sort.Slice(repos, func(i, j int) bool {
-		return repos[i].DirName < repos[j].DirName
+		// Keep collections and their children together
+		keyI := repos[i].DirName
+		keyJ := repos[j].DirName
+		if repos[i].Parent != "" {
+			keyI = repos[i].Parent + "/" + filepath.Base(repos[i].Path)
+		}
+		if repos[j].Parent != "" {
+			keyJ = repos[j].Parent + "/" + filepath.Base(repos[j].Path)
+		}
+		return keyI < keyJ
 	})
 
 	return repos

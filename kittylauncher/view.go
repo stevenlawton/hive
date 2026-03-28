@@ -32,9 +32,12 @@ type viewItem struct {
 
 func (m model) View() tea.View {
 	var v tea.View
-	if m.mode == viewHelp {
+	switch m.mode {
+	case viewHelp:
 		v = tea.NewView(m.viewHelp())
-	} else {
+	case viewEdit:
+		v = tea.NewView(m.viewEdit())
+	default:
 		v = tea.NewView(m.viewList())
 	}
 	v.AltScreen = true
@@ -180,14 +183,80 @@ func (m model) viewHelp() string {
 }
 
 
+var (
+	editLabelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Width(14)
+	editActiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88"))
+	editBoxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#555555")).Padding(1, 2).Width(50)
+)
+
+func (m model) viewEdit() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("⚡ Edit — " + m.editDirName))
+	b.WriteString("\n\n")
+
+	// Text fields
+	for i, field := range m.editFields {
+		marker := "  "
+		if i == m.editFocus {
+			marker = editActiveStyle.Render("> ")
+		}
+		b.WriteString(marker + field.View() + "\n")
+	}
+
+	b.WriteString("\n")
+
+	// Toggle fields
+	toggleLabels := []string{"Remote", "Favourite", "Collection"}
+	for i, label := range toggleLabels {
+		focusIdx := editToggleRemote + i
+		marker := "  "
+		if focusIdx == m.editFocus {
+			marker = editActiveStyle.Render("> ")
+		}
+
+		checkbox := "[ ]"
+		if m.editToggles[i] {
+			checkbox = editActiveStyle.Render("[✓]")
+		}
+
+		b.WriteString(fmt.Sprintf("%s%s %s\n", marker, editLabelStyle.Render(label+":"), checkbox))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", 40)))
+	b.WriteString("\n")
+
+	hints := []struct{ key, val string }{
+		{"Tab/↑↓", "navigate"},
+		{"Space/Enter", "toggle"},
+		{"Ctrl+S", "save"},
+		{"Esc", "cancel"},
+	}
+	var parts []string
+	for _, h := range hints {
+		parts = append(parts, barKeyStyle.Render(h.key)+" "+barValStyle.Render(h.val))
+	}
+	b.WriteString(helpStyle.Render(strings.Join(parts, "  ")))
+
+	return b.String()
+}
+
 func (m model) renderItem(vi viewItem) string {
-	cursor := "  "
+	indent := ""
+	if vi.item.repo.Parent != "" {
+		indent = "  "
+	}
+
+	cursor := indent + "  "
 	if vi.index == m.cursor {
-		cursor = cursorStyle.Render("> ")
+		cursor = indent + cursorStyle.Render("> ")
 	}
 
 	name := vi.item.repo.Name
-	if vi.item.repo.IsScratch {
+	if vi.item.repo.IsCollection {
+		name = sectionStyle.Render("▸ " + name)
+	} else if vi.item.repo.IsScratch {
 		name = scratchStyle.Render(name)
 	} else {
 		name = nameStyle.Render(name)

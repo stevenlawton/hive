@@ -10,6 +10,7 @@ type keyMap struct {
 	Remote      key.Binding
 	RemoteFlag  key.Binding
 	FavFlag     key.Binding
+	Edit        key.Binding
 	Scratch     key.Binding
 	Promote     key.Binding
 	FocusTab    key.Binding
@@ -50,6 +51,10 @@ func newKeyMap() keyMap {
 		FavFlag: key.NewBinding(
 			key.WithKeys("F"),
 			key.WithHelp("F", "toggle favourite"),
+		),
+		Edit: key.NewBinding(
+			key.WithKeys("E"),
+			key.WithHelp("E", "edit repo"),
 		),
 		Scratch: key.NewBinding(
 			key.WithKeys("s"),

@@ -14,6 +14,7 @@ const (
 	viewList viewMode = iota
 	viewHelp
 	viewPromote
+	viewEdit
 )
 
 type sessionStatus int
@@ -51,6 +52,12 @@ type model struct {
 	err       error
 	alerts    map[string]string
 	flashing  bool
+
+	// Edit panel state
+	editFields  []textinput.Model
+	editToggles []bool   // remote, favourite, collection
+	editFocus   int      // which field is focused (0-2 = text, 3-5 = toggles)
+	editDirName string   // which repo we're editing
 }
 
 func newModel(cfg *Config, cfgPath string) model {
@@ -190,6 +197,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.promote, cmd = m.promote.Update(msg)
 		return m, cmd
 	}
+	if m.mode == viewEdit && m.editFocus < len(m.editFields) {
+		var cmd tea.Cmd
+		m.editFields[m.editFocus], cmd = m.editFields[m.editFocus].Update(msg)
+		return m, cmd
+	}
 
 	return m, nil
 }
@@ -200,6 +212,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Global
 	if key == "ctrl+c" {
 		return m, tea.Quit
+	}
+
+	// Edit mode
+	if m.mode == viewEdit {
+		return m.handleEditKey(msg)
 	}
 
 	// Help mode
@@ -282,6 +299,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "F":
 		m.toggleFavouriteFlag()
 		return m, nil
+	case "E":
+		return m, m.openEditPanel()
 	case "s":
 		return m, m.createScratch()
 	case "p":
