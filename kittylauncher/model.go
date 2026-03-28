@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -133,15 +134,176 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		if msg.String() == "q" || msg.String() == "ctrl+c" {
-			return m, tea.Quit
-		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		return m, nil
+	case tea.KeyPressMsg:
+		return m.handleKey(msg)
+	case tickMsg:
+		return m.handleTick()
+	case flashRestoreMsg:
+		m.flashing = false
+		KittySetTabColor("KittyLauncher", "#ff8c00")
+		return m, nil
+	case reconnectMsg:
+		m.reconnectSessions()
+		return m, nil
 	}
+
+	// Pass through to sub-components
+	if m.filtering {
+		var cmd tea.Cmd
+		m.filter, cmd = m.filter.Update(msg)
+		m.applyFilter()
+		return m, cmd
+	}
+	if m.mode == viewPromote {
+		var cmd tea.Cmd
+		m.promote, cmd = m.promote.Update(msg)
+		return m, cmd
+	}
+
 	return m, nil
+}
+
+func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	// Global
+	if key == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	// Help mode
+	if m.mode == viewHelp {
+		if key == "?" || key == "escape" {
+			m.mode = viewList
+		}
+		return m, nil
+	}
+
+	// Promote mode
+	if m.mode == viewPromote {
+		switch key {
+		case "enter":
+			name := m.promote.Value()
+			if name != "" {
+				m.promoteSelected(name)
+			}
+			m.mode = viewList
+			m.promote.SetValue("")
+			return m, nil
+		case "escape":
+			m.mode = viewList
+			m.promote.SetValue("")
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.promote, cmd = m.promote.Update(msg)
+		return m, cmd
+	}
+
+	// Filter mode
+	if m.filtering {
+		switch key {
+		case "enter":
+			m.filtering = false
+			m.filter.Blur()
+			return m, nil
+		case "escape":
+			m.filtering = false
+			m.filter.SetValue("")
+			m.filter.Blur()
+			m.filtered = m.allIndices()
+			m.cursor = 0
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.filter, cmd = m.filter.Update(msg)
+		m.applyFilter()
+		return m, cmd
+	}
+
+	// List mode
+	switch key {
+	case "q":
+		return m, tea.Quit
+	case "?":
+		m.mode = viewHelp
+	case "/":
+		m.filtering = true
+		return m, m.filter.Focus()
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < len(m.filtered)-1 {
+			m.cursor++
+		}
+	case "enter":
+		return m, m.openSelected(true)
+	case "shift+enter":
+		return m, m.openSelected(false)
+	case "r":
+		return m, m.toggleRemote()
+	case "s":
+		return m, m.createScratch()
+	case "p":
+		item := m.selectedItem()
+		if item != nil && item.repo.IsScratch {
+			m.mode = viewPromote
+			m.promote.SetValue("")
+			return m, m.promote.Focus()
+		}
+	case "tab":
+		return m, m.focusSelectedTab()
+	case "x":
+		return m, m.killSelected()
+	case "d":
+		return m, m.detachSelected()
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		idx := int(key[0] - '0')
+		KittyFocusTabByIndex(idx)
+	}
+
+	return m, nil
+}
+
+func (m model) handleTick() (tea.Model, tea.Cmd) {
+	return m, healthTick()
+}
+
+func (m *model) applyFilter() {
+	query := strings.ToLower(m.filter.Value())
+	if query == "" {
+		m.filtered = m.allIndices()
+		m.cursor = 0
+		return
+	}
+	var matched []int
+	for i, item := range m.items {
+		name := strings.ToLower(item.repo.Name)
+		dirName := strings.ToLower(item.repo.DirName)
+		if fuzzyMatch(query, name) || fuzzyMatch(query, dirName) {
+			matched = append(matched, i)
+		}
+	}
+	m.filtered = matched
+	if m.cursor >= len(m.filtered) {
+		m.cursor = max(0, len(m.filtered)-1)
+	}
+}
+
+func fuzzyMatch(query, target string) bool {
+	qi := 0
+	for i := 0; i < len(target) && qi < len(query); i++ {
+		if target[i] == query[qi] {
+			qi++
+		}
+	}
+	return qi == len(query)
 }
 
 // --- Method stubs (implemented in Tasks 8 and 9) ---
