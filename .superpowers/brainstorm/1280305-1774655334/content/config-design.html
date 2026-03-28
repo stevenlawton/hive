@@ -1,0 +1,71 @@
+<h2>Workspace Config</h2>
+<p class="subtitle">How repos map to display names, colors, and behavior</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">~/.config/kittylauncher/config.yaml</div>
+    <div class="mockup-body" style="background:#1a1a2e;color:#e0e0e0;font-family:monospace;font-size:12px;padding:16px;line-height:1.7">
+      <div style="color:#888"># Global settings</div>
+      <div><span style="color:#ff8c00">repos_dir</span>: ~/repos</div>
+      <div><span style="color:#ff8c00">scratch_dir</span>: /tmp/kl-scratch</div>
+      <div><span style="color:#ff8c00">default_action</span>: claude  <span style="color:#888"># or "shell"</span></div>
+      <div style="margin-top:12px;color:#888"># Workspace definitions</div>
+      <div><span style="color:#ff8c00">workspaces</span>:</div>
+      <div style="margin-left:16px">
+        <div><span style="color:#82aaff">SliceWise</span>:  <span style="color:#888"># matches ~/repos/SliceWise</span></div>
+        <div style="margin-left:16px">
+          <div><span style="color:#c792ea">name</span>: "SliceWize"</div>
+          <div><span style="color:#c792ea">color</span>: "#ff6b6b"</div>
+          <div><span style="color:#c792ea">remote</span>: true</div>
+          <div><span style="color:#c792ea">favourite</span>: true</div>
+        </div>
+        <div style="margin-top:8px"><span style="color:#82aaff">tgclaudebridge</span>:</div>
+        <div style="margin-left:16px">
+          <div><span style="color:#c792ea">name</span>: "Telegram Bridge"</div>
+          <div><span style="color:#c792ea">color</span>: "#0088cc"</div>
+          <div><span style="color:#c792ea">remote</span>: true</div>
+          <div><span style="color:#c792ea">favourite</span>: true</div>
+        </div>
+        <div style="margin-top:8px"><span style="color:#82aaff">vinted-deals</span>:</div>
+        <div style="margin-left:16px">
+          <div><span style="color:#c792ea">name</span>: "Vinted"</div>
+          <div><span style="color:#c792ea">color</span>: "#09b1ba"</div>
+        </div>
+        <div style="margin-top:8px"><span style="color:#82aaff">lom2</span>:</div>
+        <div style="margin-left:16px">
+          <div><span style="color:#c792ea">name</span>: "Legend of Mir"</div>
+          <div><span style="color:#c792ea">color</span>: "#c792ea"</div>
+          <div><span style="color:#c792ea">favourite</span>: true</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">What should be configurable?</h3>
+
+<div class="options" data-multiselect>
+  <div class="option" data-choice="inline" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Config file only</h3>
+      <p>Edit YAML manually. TUI is read-only — it reads config on startup. Simple, predictable.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="tui-edit" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>TUI can edit config</h3>
+      <p>Toggle remote/favourite from the TUI, set names inline. Changes persist back to YAML. More convenient, more code.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="auto-discover" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Auto-discover + overrides</h3>
+      <p>TUI scans ~/repos automatically. Config only needed for overrides (name, color, remote). Unconfigured repos show with dirname and default color.</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:16px">I'd recommend C — auto-discover everything, config just for the special ones. What do you think?</p>

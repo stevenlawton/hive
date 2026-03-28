@@ -272,7 +272,83 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleTick() (tea.Model, tea.Cmd) {
-	return m, healthTick()
+	sessions, err := TmuxListSessions()
+	if err != nil {
+		return m, healthTick()
+	}
+
+	liveSessions := make(map[string]bool)
+	for _, s := range sessions {
+		liveSessions[s.Name] = true
+	}
+
+	deadAlerts := DetectDeadSessions(m.items, liveSessions)
+	remoteAlerts := DetectDeadRemotes(m.items, liveSessions)
+
+	newAlerts := make(map[string]string)
+	for k, v := range deadAlerts {
+		newAlerts[k] = v
+	}
+	for k, v := range remoteAlerts {
+		newAlerts[k] = v
+	}
+
+	hasNewHighSeverity := false
+	for k, v := range newAlerts {
+		if _, existed := m.alerts[k]; !existed {
+			hasNewHighSeverity = true
+			for i := range m.items {
+				if m.items[i].repo.DirName == k && v == "session crashed" {
+					m.items[i].status = statusDead
+				}
+			}
+		}
+	}
+	m.alerts = newAlerts
+
+	// Update tab titles from tmux pane titles
+	for i := range m.items {
+		item := &m.items[i]
+		if (item.status == statusClaude || item.status == statusRemote) && item.tmuxSes != "" {
+			title, err := TmuxPaneTitle(item.tmuxSes)
+			if err == nil && title != item.title {
+				item.title = title
+				newTabTitle := item.repo.Short
+				if title != "" {
+					newTabTitle = item.repo.Short + " — " + title
+				}
+				KittySetTabTitle("title:^"+item.repo.Short, newTabTitle)
+			}
+		}
+	}
+
+	var cmds []tea.Cmd
+	if hasNewHighSeverity {
+		if m.cfg.Notifications.TabFlash && !m.flashing {
+			m.flashing = true
+			KittySetTabColor("KittyLauncher", "#ff0000")
+			cmds = append(cmds, flashRestore())
+		}
+		if m.cfg.Notifications.Desktop {
+			for k, v := range newAlerts {
+				if _, existed := m.alerts[k]; !existed {
+					sendDesktopNotification(k, v)
+				}
+			}
+		}
+		for k := range newAlerts {
+			if _, existed := m.alerts[k]; !existed {
+				for _, item := range m.items {
+					if item.repo.DirName == k {
+						KittySetTabTitle("title:^"+item.repo.Short, "⚠ "+item.repo.Short)
+					}
+				}
+			}
+		}
+	}
+
+	cmds = append(cmds, healthTick())
+	return m, tea.Batch(cmds...)
 }
 
 func (m *model) applyFilter() {
@@ -306,13 +382,3 @@ func fuzzyMatch(query, target string) bool {
 	return qi == len(query)
 }
 
-// --- Method stubs (implemented in Tasks 8 and 9) ---
-
-func (m *model) openSelected(withClaude bool) tea.Cmd { return nil }
-func (m *model) toggleRemote() tea.Cmd                { return nil }
-func (m *model) createScratch() tea.Cmd               { return nil }
-func (m *model) focusSelectedTab() tea.Cmd             { return nil }
-func (m *model) killSelected() tea.Cmd                 { return nil }
-func (m *model) detachSelected() tea.Cmd               { return nil }
-func (m *model) reconnectSessions()                    {}
-func (m *model) promoteSelected(name string)           {}

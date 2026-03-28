@@ -1,0 +1,14 @@
+{"type":"server-started","port":55931,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:55931","screen_dir":"/home/steve/repos/workspace/.superpowers/brainstorm/1280305-1774655334/content","state_dir":"/home/steve/repos/workspace/.superpowers/brainstorm/1280305-1774655334/state"}
+{"type":"screen-added","file":"/home/steve/repos/workspace/.superpowers/brainstorm/1280305-1774655334/content/tui-layout.html"}
+{"source":"user-event","type":"click","text":"1\n    \n      Fuzzy Filter\n      Type to filter repos instantly (like fzf). Shows all ~/repos dirs, active ones at top.","choice":"filter","id":null,"timestamp":1774656012155}
+{"source":"user-event","type":"click","text":"2\n    \n      Live Status\n      Shows which repos have active tmux sessions, whether claude or shell, and remote-control status.","choice":"status","id":null,"timestamp":1774656014146}
+{"source":"user-event","type":"click","text":"3\n    \n      Grouped Sections\n      Active sessions at top, then favourites, then all repos alphabetically. Clear visual separation.","choice":"sections","id":null,"timestamp":1774656020194}
+{"source":"user-event","type":"click","text":"4\n    \n      Tab Color Coding\n      TUI tab = orange. Workspace tabs = default. Remote-control tabs = distinct color (red/purple?).","choice":"tabcolor","id":null,"timestamp":1774656024290}
+{"type":"screen-added","file":"/home/steve/repos/workspace/.superpowers/brainstorm/1280305-1774655334/content/config-design.html"}
+{"source":"user-event","type":"click","text":"A\n    \n      Config file only\n      Edit YAML manually. TUI is read-only — it reads config on startup. Simple, predictable.","choice":"inline","id":null,"timestamp":1774656113418}
+{"source":"user-event","type":"click","text":"B\n    \n      TUI can edit config\n      Toggle remote/favourite from the TUI, set names inline. Changes persist back to YAML. More convenient, more code.","choice":"tui-edit","id":null,"timestamp":1774656113939}
+{"source":"user-event","type":"click","text":"C\n    \n      Auto-discover + overrides\n      TUI scans ~/repos automatically. Config only needed for overrides (name, color, remote). Unconfigured repos show with dirname and default color.","choice":"auto-discover","id":null,"timestamp":1774656114446}
+{"type":"screen-added","file":"/home/steve/repos/workspace/.superpowers/brainstorm/1280305-1774655334/content/architecture.html"}
+{"type":"screen-added","file":"/home/steve/repos/workspace/.superpowers/brainstorm/1280305-1774655334/content/scratch-and-help.html"}
+{"type":"screen-added","file":"/home/steve/repos/workspace/.superpowers/brainstorm/1280305-1774655334/content/waiting.html"}
+{"type":"server-stopped","reason":"idle timeout"}

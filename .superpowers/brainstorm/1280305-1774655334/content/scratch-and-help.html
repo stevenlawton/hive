@@ -1,0 +1,78 @@
+<h2>Scratch Instances & Help</h2>
+<p class="subtitle">Disposable workspaces and the help overlay</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Scratch — Create & Promote</div>
+    <div class="mockup-body" style="background:#1a1a2e;color:#e0e0e0;font-family:monospace;font-size:12px;padding:16px;line-height:1.8">
+      <div style="color:#c792ea;font-weight:bold;margin-bottom:8px">Press 's' → New Scratch</div>
+      <div style="color:#888;font-size:11px">
+        <div>1. Creates <span style="color:#09b1ba">/tmp/kl-scratch/scratch-20260328-001</span></div>
+        <div>2. Opens kitty tab + claude session</div>
+        <div>3. Shows in TUI list with <span style="color:#555;font-style:italic">tmp</span> badge</div>
+      </div>
+      <div style="border-top:1px solid #333;margin:12px 0"></div>
+      <div style="color:#c792ea;font-weight:bold;margin-bottom:8px">Press 'p' on scratch → Promote</div>
+      <div style="color:#888;font-size:11px">
+        <div>1. TUI prompts for name: <span style="color:#ff8c00">▌</span></div>
+        <div>2. Moves dir to <span style="color:#09b1ba">~/repos/&lt;name&gt;</span></div>
+        <div>3. Runs <span style="color:#09b1ba">git init</span></div>
+        <div>4. Updates tmux session name</div>
+        <div>5. Updates kitty tab title</div>
+        <div>6. Scratch badge removed</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">Help Overlay — Press '?'</div>
+    <div class="mockup-body" style="background:#1a1a2e;color:#e0e0e0;font-family:monospace;font-size:12px;padding:16px;line-height:1.7">
+      <div style="color:#ff8c00;font-weight:bold;text-align:center;margin-bottom:12px">⚡ KittyLaunch — Keyboard Shortcuts</div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 16px">
+        <span style="color:#ff8c00">Enter</span><span style="color:#888">Open repo + start claude</span>
+        <span style="color:#ff8c00">Shift+Enter</span><span style="color:#888">Open repo + shell only</span>
+        <span style="color:#ff8c00">r</span><span style="color:#888">Toggle remote-control</span>
+        <span style="color:#ff8c00">s</span><span style="color:#888">New scratch instance</span>
+        <span style="color:#ff8c00">p</span><span style="color:#888">Promote scratch to repo</span>
+        <span style="color:#ff8c00">Tab</span><span style="color:#888">Jump to tab for selected repo</span>
+        <span style="color:#ff8c00">x</span><span style="color:#888">Kill session + close tab</span>
+        <span style="color:#ff8c00">d</span><span style="color:#888">Detach tab (keep tmux alive)</span>
+        <span style="color:#ff8c00">/</span><span style="color:#888">Filter repos</span>
+        <span style="color:#ff8c00">1-9</span><span style="color:#888">Jump to kitty tab by number</span>
+        <span style="color:#ff8c00">?</span><span style="color:#888">Toggle this help</span>
+        <span style="color:#ff8c00">q</span><span style="color:#888">Quit TUI (sessions persist)</span>
+      </div>
+      <div style="border-top:1px solid #333;margin-top:12px;padding-top:8px;color:#555;font-size:11px;text-align:center">
+        Press ? or Esc to close
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Scratch cleanup</h3>
+
+<div class="options">
+  <div class="option" data-choice="manual" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Manual only</h3>
+      <p>Scratch dirs live in /tmp so they disappear on reboot. TUI shows them while they exist, that's it.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="prompt" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Prompt on quit</h3>
+      <p>When quitting TUI, if unpromoted scratches exist, ask "Promote or discard?" for each.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="age" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Age-based warning</h3>
+      <p>If a scratch is >24h old, show a warning badge in the TUI. Nudge to promote or kill, but don't auto-delete.</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:16px">Check http://localhost:55931 — scratch flow on the left, help overlay on the right. Which cleanup style?</p>

@@ -1,0 +1,86 @@
+<h2>KittyLaunch — TUI Layout</h2>
+<p class="subtitle">The home-base tab that lives permanently in kitty</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">TUI — Repo List View (default)</div>
+    <div class="mockup-body" style="background:#1a1a2e;color:#e0e0e0;font-family:monospace;font-size:13px;padding:16px;line-height:1.6">
+      <div style="color:#ff8c00;font-weight:bold;margin-bottom:8px">⚡ KittyLaunch</div>
+      <div style="color:#888;margin-bottom:12px;font-size:11px">~/repos  ·  3 active  ·  1 remote</div>
+      <div style="border-bottom:1px solid #333;margin-bottom:8px"></div>
+      <div style="margin-bottom:2px">
+        <span style="color:#00ff88">▶</span>
+        <span style="background:#2a2a4a;padding:2px 8px;border-radius:3px;color:#fff"> SliceWise </span>
+        <span style="color:#888;margin-left:8px">claude interactive</span>
+        <span style="color:#ff8c00;margin-left:8px">⟳ remote</span>
+      </div>
+      <div style="margin-bottom:2px;opacity:0.7">
+        <span style="color:#555">  </span>
+        <span style="padding:2px 8px"> lom2 </span>
+        <span style="color:#888;margin-left:8px">claude interactive</span>
+      </div>
+      <div style="margin-bottom:2px;opacity:0.7">
+        <span style="color:#555">  </span>
+        <span style="padding:2px 8px"> tgclaudebridge </span>
+        <span style="color:#888;margin-left:8px">shell only</span>
+      </div>
+      <div style="margin-bottom:2px;opacity:0.7">
+        <span style="color:#555">  </span>
+        <span style="padding:2px 8px;color:#666;font-style:italic"> scratch-1743298... </span>
+        <span style="color:#888;margin-left:8px">claude interactive</span>
+        <span style="color:#444;margin-left:8px">tmp</span>
+      </div>
+      <div style="border-top:1px solid #333;margin-top:12px;padding-top:8px;color:#555;font-size:11px">
+        <div style="margin-bottom:12px">
+          <span style="color:#888">Filter:</span>
+          <span style="color:#ff8c00">▌</span>
+        </div>
+        <div style="display:flex;gap:24px;flex-wrap:wrap">
+          <span><span style="color:#ff8c00">Enter</span> open + claude</span>
+          <span><span style="color:#ff8c00">Shift+Enter</span> open + shell</span>
+          <span><span style="color:#ff8c00">r</span> toggle remote</span>
+          <span><span style="color:#ff8c00">s</span> new scratch</span>
+          <span><span style="color:#ff8c00">p</span> promote scratch</span>
+          <span><span style="color:#ff8c00">Tab</span> focus tab</span>
+          <span><span style="color:#ff8c00">?</span> help</span>
+          <span><span style="color:#ff8c00">q</span> quit</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:32px">Key Interactions</h3>
+
+<div class="options" data-multiselect>
+  <div class="option" data-choice="filter" onclick="toggleSelect(this)">
+    <div class="letter">1</div>
+    <div class="content">
+      <h3>Fuzzy Filter</h3>
+      <p>Type to filter repos instantly (like fzf). Shows all ~/repos dirs, active ones at top.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="status" onclick="toggleSelect(this)">
+    <div class="letter">2</div>
+    <div class="content">
+      <h3>Live Status</h3>
+      <p>Shows which repos have active tmux sessions, whether claude or shell, and remote-control status.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="sections" onclick="toggleSelect(this)">
+    <div class="letter">3</div>
+    <div class="content">
+      <h3>Grouped Sections</h3>
+      <p>Active sessions at top, then favourites, then all repos alphabetically. Clear visual separation.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="tabcolor" onclick="toggleSelect(this)">
+    <div class="letter">4</div>
+    <div class="content">
+      <h3>Tab Color Coding</h3>
+      <p>TUI tab = orange. Workspace tabs = default. Remote-control tabs = distinct color (red/purple?).</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:16px">Click any features that feel right. All of them? Some? Let me know in the terminal.</p>

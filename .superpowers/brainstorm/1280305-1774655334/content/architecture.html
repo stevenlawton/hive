@@ -1,0 +1,94 @@
+<h2>Architecture</h2>
+<p class="subtitle">How the pieces connect</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">System Overview</div>
+    <div class="mockup-body" style="background:#1a1a2e;color:#e0e0e0;font-family:monospace;font-size:12px;padding:20px;line-height:1.8">
+      <div style="text-align:center;margin-bottom:16px">
+        <span style="background:#ff8c00;color:#000;padding:4px 12px;border-radius:4px;font-weight:bold">launch-kl.sh</span>
+        <span style="color:#555"> ──→ </span>
+        <span style="color:#888">starts kitty with TUI in first tab</span>
+      </div>
+      <div style="display:flex;gap:12px;justify-content:center;margin-bottom:20px">
+        <div style="border:1px solid #ff8c00;border-radius:6px;padding:12px;min-width:180px;text-align:center">
+          <div style="color:#ff8c00;font-weight:bold;margin-bottom:4px">Kitty Tab 0 (orange)</div>
+          <div style="color:#888;font-size:11px">TUI Process</div>
+          <div style="color:#555;font-size:10px;margin-top:4px">Go binary — pure kitty, no tmux</div>
+        </div>
+        <div style="border:1px solid #555;border-radius:6px;padding:12px;min-width:180px;text-align:center">
+          <div style="color:#82aaff;font-weight:bold;margin-bottom:4px">Kitty Tab 1</div>
+          <div style="color:#888;font-size:11px">tmux attach -t kl-slicewise</div>
+          <div style="color:#555;font-size:10px;margin-top:4px">claude interactive session</div>
+        </div>
+        <div style="border:1px solid #555;border-radius:6px;padding:12px;min-width:180px;text-align:center">
+          <div style="color:#ff6b6b;font-weight:bold;margin-bottom:4px">Kitty Tab 2</div>
+          <div style="color:#888;font-size:11px">tmux attach -t kl-rc-tgbridge</div>
+          <div style="color:#ff6b6b;font-size:10px;margin-top:4px">claude remote-control ⟳</div>
+        </div>
+      </div>
+      <div style="border:1px dashed #333;padding:12px;border-radius:6px;margin-bottom:16px">
+        <div style="color:#c792ea;font-weight:bold;margin-bottom:8px">TUI controls via:</div>
+        <div style="display:flex;gap:32px">
+          <div>
+            <div style="color:#ff8c00">kitty @</div>
+            <div style="color:#555;font-size:11px">• launch (new tab)</div>
+            <div style="color:#555;font-size:11px">• set-tab-title</div>
+            <div style="color:#555;font-size:11px">• set-tab-color</div>
+            <div style="color:#555;font-size:11px">• focus-tab</div>
+            <div style="color:#555;font-size:11px">• close-tab</div>
+            <div style="color:#555;font-size:11px">• ls (query state)</div>
+          </div>
+          <div>
+            <div style="color:#09b1ba">tmux</div>
+            <div style="color:#555;font-size:11px">• new-session -s kl-&lt;name&gt;</div>
+            <div style="color:#555;font-size:11px">• send-keys (launch claude)</div>
+            <div style="color:#555;font-size:11px">• has-session (check alive)</div>
+            <div style="color:#555;font-size:11px">• kill-session (cleanup)</div>
+            <div style="color:#555;font-size:11px">• list-sessions (reconnect)</div>
+          </div>
+        </div>
+      </div>
+      <div style="border:1px dashed #333;padding:12px;border-radius:6px">
+        <div style="color:#c792ea;font-weight:bold;margin-bottom:8px">Session Lifecycle</div>
+        <div style="color:#888;font-size:11px">
+          <div>1. User hits Enter on "SliceWise" in TUI</div>
+          <div>2. TUI runs: <span style="color:#09b1ba">tmux new-session -d -s kl-slicewise -c ~/repos/SliceWise</span></div>
+          <div>3. TUI runs: <span style="color:#09b1ba">tmux send-keys -t kl-slicewise 'claude' Enter</span></div>
+          <div>4. TUI runs: <span style="color:#ff8c00">kitty @ launch --type=tab --title="SliceWize" tmux attach -t kl-slicewise</span></div>
+          <div>5. TUI runs: <span style="color:#ff8c00">kitty @ set-tab-color -m title:SliceWize active_bg=#ff6b6b</span></div>
+          <div style="margin-top:6px;color:#555">On kitty restart → TUI detects existing tmux sessions (kl-* prefix), re-attaches tabs</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Tab Naming</h3>
+<p class="subtitle">You mentioned repo + claude title. How should tab titles look?</p>
+
+<div class="options">
+  <div class="option" data-choice="simple" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Config name only</h3>
+      <p><code>SliceWize</code> — clean and short. The TUI shows full status.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="prefix" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Name + mode indicator</h3>
+      <p><code>SliceWize 🤖</code> or <code>SliceWize [claude]</code> — shows at a glance if claude is running vs shell.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="rich" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Name + claude session title</h3>
+      <p><code>SliceWize — fixing auth bug</code> — pulls the active claude session title if available.</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:16px">Take a look at http://localhost:55931 — does the architecture make sense? And which tab naming style?</p>
