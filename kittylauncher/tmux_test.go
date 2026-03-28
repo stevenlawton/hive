@@ -37,6 +37,9 @@ func TestTmuxSessionName(t *testing.T) {
 	if name := TmuxSessionName("tgbridge", true); name != "kl-rc-tgbridge" {
 		t.Errorf("expected kl-rc-tgbridge, got %s", name)
 	}
+	if name := TmuxSessionName("stevenlawton.com", true); name != "kl-rc-stevenlawton_com" {
+		t.Errorf("expected kl-rc-stevenlawton_com, got %s", name)
+	}
 }
 
 func TestParseTmuxSessions(t *testing.T) {

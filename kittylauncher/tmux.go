@@ -19,15 +19,29 @@ type TmuxSession struct {
 	RepoKey   string
 }
 
+// sanitizeSessionName replaces chars that tmux doesn't allow in session names
+func sanitizeSessionName(name string) string {
+	return strings.NewReplacer(".", "_", ":", "_", " ", "_").Replace(name)
+}
+
 func TmuxSessionName(dirName string, remote bool) string {
+	safe := sanitizeSessionName(dirName)
 	if remote {
-		return tmuxRemotePrefix + dirName
+		return tmuxRemotePrefix + safe
 	}
-	return tmuxPrefix + dirName
+	return tmuxPrefix + safe
 }
 
 func tmuxNewSessionArgs(sessionName, cwd string) []string {
 	return []string{"new-session", "-d", "-s", sessionName, "-c", cwd}
+}
+
+func tmuxNewSessionWithCmdArgs(sessionName, cwd, command string) []string {
+	return []string{"new-session", "-d", "-s", sessionName, "-c", cwd, command}
+}
+
+func TmuxNewSessionWithCmd(sessionName, cwd, command string) error {
+	return tmuxRun(tmuxNewSessionWithCmdArgs(sessionName, cwd, command)...)
 }
 
 func tmuxSendKeysArgs(sessionName, command string) []string {

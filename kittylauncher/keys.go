@@ -8,6 +8,8 @@ type keyMap struct {
 	Open        key.Binding
 	OpenShell   key.Binding
 	Remote      key.Binding
+	RemoteFlag  key.Binding
+	FavFlag     key.Binding
 	Scratch     key.Binding
 	Promote     key.Binding
 	FocusTab    key.Binding
@@ -39,7 +41,15 @@ func newKeyMap() keyMap {
 		),
 		Remote: key.NewBinding(
 			key.WithKeys("r"),
-			key.WithHelp("r", "toggle remote"),
+			key.WithHelp("r", "open remote"),
+		),
+		RemoteFlag: key.NewBinding(
+			key.WithKeys("R"),
+			key.WithHelp("R", "toggle remote flag"),
+		),
+		FavFlag: key.NewBinding(
+			key.WithKeys("F"),
+			key.WithHelp("F", "toggle favourite"),
 		),
 		Scratch: key.NewBinding(
 			key.WithKeys("s"),

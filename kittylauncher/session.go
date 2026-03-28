@@ -11,7 +11,7 @@ func MapSessionsToItems(items []repoItem, sessions []TmuxSession) {
 	}
 
 	for i := range items {
-		dirName := items[i].repo.DirName
+		dirName := sanitizeSessionName(items[i].repo.DirName)
 		sess, ok := sessionMap[dirName]
 		if !ok {
 			items[i].status = statusNone
@@ -74,6 +74,7 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 
 	KittyLaunchTab(repo.Short, "tmux", "attach", "-t", sessionName)
 	KittySetTabColor(repo.Short, repo.Color)
+	m.rebuildDisplayOrder()
 
 	return nil
 }
@@ -86,28 +87,105 @@ func (m *model) toggleRemote() tea.Cmd {
 
 	repo := item.repo
 	rcName := TmuxSessionName(repo.DirName, true)
+	rcTabTitle := "⟳ " + repo.Short
 
 	if TmuxHasSession(rcName) {
-		TmuxKillSession(rcName)
-		KittyCloseTab("title:^" + repo.Short + " ⟳")
-		if TmuxHasSession(TmuxSessionName(repo.DirName, false)) {
-			item.status = statusClaude
-		} else {
-			item.status = statusNone
+		// Remote is running — focus or open a tab to view it
+		tabs, _ := KittyListTabs()
+		for _, tab := range tabs {
+			if tab.Title == rcTabTitle {
+				// Tab exists, just focus it
+				KittyFocusTab("title:" + rcTabTitle)
+				return nil
+			}
 		}
+		// No tab open — attach to it
+		KittyLaunchTab(rcTabTitle, "tmux", "attach", "-t", rcName)
+		KittySetTabColor(rcTabTitle, repo.Color)
 	} else {
-		if err := TmuxNewSession(rcName, repo.Path); err != nil {
+		// Start remote session + open tab
+		if err := TmuxNewSessionWithCmd(rcName, repo.Path, "claude remote-control"); err != nil {
 			m.err = err
 			return nil
 		}
-		TmuxSendKeys(rcName, "claude remote-control")
-		tabTitle := repo.Short + " ⟳"
-		KittyLaunchTab(tabTitle, "tmux", "attach", "-t", rcName)
-		KittySetTabColor(tabTitle, repo.Color)
-		item.status = statusRemote
+		KittyLaunchTab(rcTabTitle, "tmux", "attach", "-t", rcName)
+		KittySetTabColor(rcTabTitle, repo.Color)
+		if item.status == statusNone {
+			item.status = statusRemote
+		}
 	}
 
+	m.rebuildDisplayOrder()
 	return nil
+}
+
+// startConfiguredRemotes auto-starts remote sessions for repos with remote: true
+func (m *model) startConfiguredRemotes() {
+	for i := range m.items {
+		item := &m.items[i]
+		if !item.repo.Remote {
+			continue
+		}
+		rcName := TmuxSessionName(item.repo.DirName, true)
+		if TmuxHasSession(rcName) {
+			continue // already running
+		}
+		if err := TmuxNewSessionWithCmd(rcName, item.repo.Path, "claude remote-control"); err != nil {
+			continue
+		}
+		if item.status == statusNone {
+			item.status = statusRemote
+		}
+	}
+}
+
+func (m *model) toggleRemoteFlag() {
+	item := m.selectedItem()
+	if item == nil || item.repo.IsScratch {
+		return
+	}
+
+	item.repo.Remote = !item.repo.Remote
+
+	// Update config and save
+	ws := m.cfg.Workspaces[item.repo.DirName]
+	ws.Remote = item.repo.Remote
+	if ws.Name == "" {
+		ws.Name = item.repo.Name
+	}
+	m.cfg.Workspaces[item.repo.DirName] = ws
+	SaveConfig(m.cfgPath, m.cfg)
+
+	// If just enabled, start the remote session
+	if item.repo.Remote {
+		rcName := TmuxSessionName(item.repo.DirName, true)
+		if !TmuxHasSession(rcName) {
+			TmuxNewSessionWithCmd(rcName, item.repo.Path, "claude remote-control")
+			if item.status == statusNone {
+				item.status = statusRemote
+			}
+		}
+	}
+
+	m.rebuildDisplayOrder()
+}
+
+func (m *model) toggleFavouriteFlag() {
+	item := m.selectedItem()
+	if item == nil || item.repo.IsScratch {
+		return
+	}
+
+	item.repo.Favourite = !item.repo.Favourite
+
+	ws := m.cfg.Workspaces[item.repo.DirName]
+	ws.Favourite = item.repo.Favourite
+	if ws.Name == "" {
+		ws.Name = item.repo.Name
+	}
+	m.cfg.Workspaces[item.repo.DirName] = ws
+	SaveConfig(m.cfgPath, m.cfg)
+	m.rebuildDisplayOrder()
 }
 
 func (m *model) focusSelectedTab() tea.Cmd {
@@ -136,13 +214,13 @@ func (m *model) killSelected() tea.Cmd {
 	rcName := TmuxSessionName(repo.DirName, true)
 	if TmuxHasSession(rcName) {
 		TmuxKillSession(rcName)
-		KittyCloseTab("title:^" + repo.Short + " ⟳")
 	}
 
 	item.status = statusNone
 	item.tmuxSes = ""
 	item.title = ""
 	delete(m.alerts, repo.DirName)
+	m.rebuildDisplayOrder()
 
 	return nil
 }
@@ -152,7 +230,9 @@ func (m *model) detachSelected() tea.Cmd {
 	if item == nil || item.status == statusNone {
 		return nil
 	}
+	// Close both interactive and remote tabs (tmux sessions stay alive)
 	KittyCloseTab("title:^" + item.repo.Short)
+	KittyCloseTab("title:^⟳ " + item.repo.Short)
 	return nil
 }
 
@@ -164,6 +244,7 @@ func (m *model) reconnectSessions() {
 
 	MapSessionsToItems(m.items, sessions)
 
+	// Re-attach interactive sessions (not remote — those are background-only)
 	tabs, err := KittyListTabs()
 	if err != nil {
 		return
@@ -175,21 +256,18 @@ func (m *model) reconnectSessions() {
 
 	for i := range m.items {
 		item := &m.items[i]
-		if item.status == statusNone {
+		interactiveName := TmuxSessionName(item.repo.DirName, false)
+		if !TmuxHasSession(interactiveName) {
 			continue
 		}
-
-		if tabTitles[item.repo.Short] || tabTitles[item.repo.Short+" ⟳"] {
-			continue
+		if tabTitles[item.repo.Short] {
+			continue // tab already exists
 		}
-
-		if item.tmuxSes != "" {
-			tabTitle := item.repo.Short
-			if item.status == statusRemote && !TmuxHasSession(TmuxSessionName(item.repo.DirName, false)) {
-				tabTitle = item.repo.Short + " ⟳"
-			}
-			KittyLaunchTab(tabTitle, "tmux", "attach", "-t", item.tmuxSes)
-			KittySetTabColor(tabTitle, item.repo.Color)
-		}
+		KittyLaunchTab(item.repo.Short, "tmux", "attach", "-t", interactiveName)
+		KittySetTabColor(item.repo.Short, item.repo.Color)
 	}
+
+	// Auto-start configured remote sessions
+	m.startConfiguredRemotes()
+	m.rebuildDisplayOrder()
 }

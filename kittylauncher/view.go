@@ -12,7 +12,7 @@ var (
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ff8c00")).Padding(1, 0, 0, 1)
 	subtitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Padding(0, 0, 0, 1)
 	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88")).Bold(true)
-	nameStyle     = lipgloss.NewStyle().Bold(true).Width(24)
+	nameStyle     = lipgloss.NewStyle().Bold(true).Width(36)
 	statusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Width(20)
 	remoteStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00"))
 	scratchStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Italic(true)
@@ -52,37 +52,97 @@ func (m model) viewList() string {
 		b.WriteString("\n")
 	}
 
-	active, favourites, rest := m.groupItems()
-
-	if len(active) > 0 {
-		b.WriteString(sectionStyle.Render("── active ──"))
+	if m.mode == viewPromote {
+		b.WriteString(subtitleStyle.Render("Promote to ~/repos/"))
+		b.WriteString(m.promote.View())
 		b.WriteString("\n")
-		for _, vi := range active {
-			b.WriteString(m.renderItem(vi))
-			b.WriteString("\n")
+	}
+
+	// Build display lines from displayOrder (already sorted: active > favourites > rest)
+	type displayLine struct {
+		text       string
+		cursorPos  int // position in displayOrder, -1 for section headers
+	}
+	var lines []displayLine
+
+	lastSection := ""
+	for cursorPos, itemIdx := range m.displayOrder {
+		item := m.items[itemIdx]
+
+		// Determine section (must match rebuildDisplayOrder logic)
+		hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
+			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
+		var section string
+		switch {
+		case hasInteractiveTab:
+			section = "active"
+		case item.repo.Favourite:
+			section = "favourites"
+		default:
+			section = "repos"
+		}
+
+		// Insert section header on change
+		if section != lastSection {
+			lines = append(lines, displayLine{
+				text:      sectionStyle.Render("── " + section + " ──"),
+				cursorPos: -1,
+			})
+			lastSection = section
+		}
+
+		vi := viewItem{index: cursorPos, item: item}
+		lines = append(lines, displayLine{
+			text:      m.renderItem(vi),
+			cursorPos: cursorPos,
+		})
+	}
+
+	if len(m.displayOrder) == 0 {
+		lines = append(lines, displayLine{text: subtitleStyle.Render("  no matches"), cursorPos: -1})
+	}
+
+	// Calculate visible window: reserve lines for header (3) and footer (3)
+	maxVisible := m.height - 6
+	if maxVisible < 5 {
+		maxVisible = 5
+	}
+
+	// Find which line the cursor is on
+	cursorLine := 0
+	for i, l := range lines {
+		if l.cursorPos == m.cursor {
+			cursorLine = i
+			break
 		}
 	}
 
-	if len(favourites) > 0 {
-		b.WriteString(sectionStyle.Render("── favourites ──"))
-		b.WriteString("\n")
-		for _, vi := range favourites {
-			b.WriteString(m.renderItem(vi))
-			b.WriteString("\n")
+	// Scroll window around cursor
+	start := 0
+	if len(lines) > maxVisible {
+		start = cursorLine - maxVisible/2
+		if start < 0 {
+			start = 0
+		}
+		if start+maxVisible > len(lines) {
+			start = len(lines) - maxVisible
 		}
 	}
-
-	if len(rest) > 0 {
-		b.WriteString(sectionStyle.Render("── repos ──"))
-		b.WriteString("\n")
-		for _, vi := range rest {
-			b.WriteString(m.renderItem(vi))
-			b.WriteString("\n")
-		}
+	end := start + maxVisible
+	if end > len(lines) {
+		end = len(lines)
 	}
 
-	if len(m.filtered) == 0 {
-		b.WriteString(subtitleStyle.Render("  no matches"))
+	// Render visible lines
+	for _, l := range lines[start:end] {
+		b.WriteString(l.text)
+		b.WriteString("\n")
+	}
+
+	// Scroll indicator
+	if len(lines) > maxVisible {
+		pos := fmt.Sprintf(" %d/%d", m.cursor+1, len(m.displayOrder))
+		b.WriteString(subtitleStyle.Render(pos))
 		b.WriteString("\n")
 	}
 
@@ -119,31 +179,6 @@ func (m model) viewHelp() string {
 	return b.String()
 }
 
-func (m model) groupItems() (active, favourites, rest []viewItem) {
-	cursorIdx := 0
-	if m.cursor >= 0 && m.cursor < len(m.filtered) {
-		cursorIdx = m.cursor
-	}
-
-	for listPos, itemIdx := range m.filtered {
-		item := m.items[itemIdx]
-		vi := viewItem{index: listPos, item: item}
-
-		switch {
-		case item.status != statusNone:
-			active = append(active, vi)
-		case item.repo.Favourite:
-			favourites = append(favourites, vi)
-		default:
-			rest = append(rest, vi)
-		}
-	}
-
-	// Suppress unused variable
-	_ = cursorIdx
-
-	return active, favourites, rest
-}
 
 func (m model) renderItem(vi viewItem) string {
 	cursor := "  "

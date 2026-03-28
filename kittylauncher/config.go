@@ -16,11 +16,11 @@ type NotificationConfig struct {
 }
 
 type WorkspaceConfig struct {
-	Name      string `yaml:"name"`
-	Short     string `yaml:"short"`
-	Color     string `yaml:"color"`
-	Remote    bool   `yaml:"remote"`
-	Favourite bool   `yaml:"favourite"`
+	Name      string `yaml:"name,omitempty"`
+	Short     string `yaml:"short,omitempty"`
+	Color     string `yaml:"color,omitempty"`
+	Remote    bool   `yaml:"remote,omitempty"`
+	Favourite bool   `yaml:"favourite,omitempty"`
 }
 
 type Config struct {
@@ -69,6 +69,17 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func SaveConfig(path string, cfg *Config) error {
+	dir := filepath.Dir(path)
+	os.MkdirAll(dir, 0755)
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 type Repo struct {

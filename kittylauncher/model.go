@@ -36,13 +36,15 @@ type repoItem struct {
 
 type model struct {
 	cfg       *Config
+	cfgPath   string
 	items     []repoItem
 	cursor    int
 	mode      viewMode
-	filter    textinput.Model
-	filtering bool
-	filtered  []int // indices into items that match filter
-	promote   textinput.Model
+	filter       textinput.Model
+	filtering    bool
+	filtered     []int // indices into items that match filter
+	displayOrder []int // indices into items, ordered: active > favourites > rest
+	promote      textinput.Model
 	keys      keyMap
 	width     int
 	height    int
@@ -51,7 +53,7 @@ type model struct {
 	flashing  bool
 }
 
-func newModel(cfg *Config) model {
+func newModel(cfg *Config, cfgPath string) model {
 	repos := DiscoverRepos(cfg)
 	scratches := DiscoverScratches(cfg)
 
@@ -71,8 +73,9 @@ func newModel(cfg *Config) model {
 	pr.Prompt = "name: "
 	pr.Placeholder = "new-project-name"
 
-	return model{
+	m := model{
 		cfg:      cfg,
+		cfgPath:  cfgPath,
 		items:    items,
 		keys:     newKeyMap(),
 		filter:   fi,
@@ -80,6 +83,8 @@ func newModel(cfg *Config) model {
 		filtered: allIndicesFor(len(items)),
 		alerts:   make(map[string]string),
 	}
+	m.rebuildDisplayOrder()
+	return m
 }
 
 func allIndicesFor(n int) []int {
@@ -94,14 +99,36 @@ func (m *model) allIndices() []int {
 	return allIndicesFor(len(m.items))
 }
 
+// rebuildDisplayOrder groups filtered items into active > favourites > rest
+func (m *model) rebuildDisplayOrder() {
+	var active, favourites, rest []int
+	for _, idx := range m.filtered {
+		item := m.items[idx]
+		hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
+			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
+		switch {
+		case hasInteractiveTab:
+			active = append(active, idx)
+		case item.repo.Favourite:
+			favourites = append(favourites, idx)
+		default:
+			rest = append(rest, idx)
+		}
+	}
+	m.displayOrder = nil
+	m.displayOrder = append(m.displayOrder, active...)
+	m.displayOrder = append(m.displayOrder, favourites...)
+	m.displayOrder = append(m.displayOrder, rest...)
+}
+
 func (m *model) selectedItem() *repoItem {
-	if len(m.filtered) == 0 {
+	if len(m.displayOrder) == 0 {
 		return nil
 	}
-	if m.cursor < 0 || m.cursor >= len(m.filtered) {
+	if m.cursor < 0 || m.cursor >= len(m.displayOrder) {
 		return nil
 	}
-	return &m.items[m.filtered[m.cursor]]
+	return &m.items[m.displayOrder[m.cursor]]
 }
 
 // --- Messages ---
@@ -216,6 +243,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.filter.SetValue("")
 			m.filter.Blur()
 			m.filtered = m.allIndices()
+			m.rebuildDisplayOrder()
 			m.cursor = 0
 			return m, nil
 		}
@@ -239,7 +267,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.cursor--
 		}
 	case "down", "j":
-		if m.cursor < len(m.filtered)-1 {
+		if m.cursor < len(m.displayOrder)-1 {
 			m.cursor++
 		}
 	case "enter":
@@ -248,6 +276,12 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.openSelected(false)
 	case "r":
 		return m, m.toggleRemote()
+	case "R":
+		m.toggleRemoteFlag()
+		return m, nil
+	case "F":
+		m.toggleFavouriteFlag()
+		return m, nil
 	case "s":
 		return m, m.createScratch()
 	case "p":
@@ -306,19 +340,25 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 	}
 	m.alerts = newAlerts
 
-	// Update tab titles from tmux pane titles
+	// Update tab titles from tmux pane titles (interactive sessions only)
 	for i := range m.items {
 		item := &m.items[i]
-		if (item.status == statusClaude || item.status == statusRemote) && item.tmuxSes != "" {
-			title, err := TmuxPaneTitle(item.tmuxSes)
-			if err == nil && title != item.title {
-				item.title = title
-				newTabTitle := item.repo.Short
-				if title != "" {
-					newTabTitle = item.repo.Short + " — " + title
-				}
-				KittySetTabTitle("title:^"+item.repo.Short, newTabTitle)
+		if item.tmuxSes == "" {
+			continue
+		}
+		// Only update interactive session tabs, not remote-control tabs
+		interactiveName := TmuxSessionName(item.repo.DirName, false)
+		if !TmuxHasSession(interactiveName) {
+			continue
+		}
+		title, err := TmuxPaneTitle(interactiveName)
+		if err == nil && title != item.title {
+			item.title = title
+			newTabTitle := item.repo.Short
+			if title != "" {
+				newTabTitle = item.repo.Short + " — " + title
 			}
+			KittySetTabTitle("title:^"+item.repo.Short, newTabTitle)
 		}
 	}
 
@@ -355,6 +395,7 @@ func (m *model) applyFilter() {
 	query := strings.ToLower(m.filter.Value())
 	if query == "" {
 		m.filtered = m.allIndices()
+		m.rebuildDisplayOrder()
 		m.cursor = 0
 		return
 	}
@@ -367,8 +408,9 @@ func (m *model) applyFilter() {
 		}
 	}
 	m.filtered = matched
-	if m.cursor >= len(m.filtered) {
-		m.cursor = max(0, len(m.filtered)-1)
+	m.rebuildDisplayOrder()
+	if m.cursor >= len(m.displayOrder) {
+		m.cursor = max(0, len(m.displayOrder)-1)
 	}
 }
 
