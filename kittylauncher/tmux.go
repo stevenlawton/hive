@@ -137,6 +137,14 @@ func TmuxPaneTitle(sessionName string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+func TmuxWindowHasBell(sessionName string) bool {
+	out, err := tmuxOutput("list-windows", "-t", sessionName, "-F", "#{window_bell_flag}")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(out) == "1"
+}
+
 func TmuxRenameSession(oldName, newName string) error {
 	return tmuxRun("rename-session", "-t", oldName, newName)
 }

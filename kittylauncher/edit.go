@@ -6,13 +6,15 @@ import (
 )
 
 const (
-	editFieldName  = 0
-	editFieldShort = 1
-	editFieldColor = 2
-	editToggleRemote     = 3
-	editToggleFavourite  = 4
-	editToggleCollection = 5
-	editFieldCount = 6
+	editFieldName   = 0
+	editFieldShort  = 1
+	editFieldColor  = 2
+	editFieldDesc   = 3
+	editToggleYolo       = 4
+	editToggleRemote     = 5
+	editToggleFavourite  = 6
+	editToggleCollection = 7
+	editFieldCount = 8
 )
 
 func (m *model) openEditPanel() tea.Cmd {
@@ -24,7 +26,7 @@ func (m *model) openEditPanel() tea.Cmd {
 	repo := item.repo
 
 	// Create text input fields
-	fields := make([]textinput.Model, 3)
+	fields := make([]textinput.Model, 4)
 
 	nameInput := textinput.New()
 	nameInput.Prompt = "Name:       "
@@ -42,8 +44,14 @@ func (m *model) openEditPanel() tea.Cmd {
 	colorInput.Placeholder = "#hex"
 	fields[editFieldColor] = colorInput
 
+	descInput := textinput.New()
+	descInput.Prompt = "Desc:       "
+	descInput.SetValue(repo.Description)
+	descInput.Placeholder = "short description"
+	fields[editFieldDesc] = descInput
+
 	m.editFields = fields
-	m.editToggles = []bool{repo.Remote, repo.Favourite, repo.IsCollection}
+	m.editToggles = []bool{repo.Yolo, repo.Remote, repo.Favourite, repo.IsCollection}
 	m.editFocus = editFieldName
 	m.editDirName = repo.DirName
 	m.mode = viewEdit
@@ -67,6 +75,7 @@ func (m *model) saveEditPanel() {
 		name := m.editFields[editFieldName].Value()
 		short := m.editFields[editFieldShort].Value()
 		color := m.editFields[editFieldColor].Value()
+		desc := m.editFields[editFieldDesc].Value()
 
 		if name != "" {
 			item.repo.Name = name
@@ -75,15 +84,19 @@ func (m *model) saveEditPanel() {
 			item.repo.Short = short
 		}
 		item.repo.Color = color
-		item.repo.Remote = m.editToggles[0]
-		item.repo.Favourite = m.editToggles[1]
-		item.repo.IsCollection = m.editToggles[2]
+		item.repo.Description = desc
+		item.repo.Yolo = m.editToggles[0]
+		item.repo.Remote = m.editToggles[1]
+		item.repo.Favourite = m.editToggles[2]
+		item.repo.IsCollection = m.editToggles[3]
 
 		// Save to config
 		ws := m.cfg.Workspaces[m.editDirName]
 		ws.Name = item.repo.Name
 		ws.Short = item.repo.Short
 		ws.Color = item.repo.Color
+		ws.Description = item.repo.Description
+		ws.Yolo = item.repo.Yolo
 		ws.Remote = item.repo.Remote
 		ws.Favourite = item.repo.Favourite
 		ws.Collection = item.repo.IsCollection
@@ -118,8 +131,8 @@ func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		// If on a toggle, toggle it
-		if m.editFocus >= editToggleRemote {
-			toggleIdx := m.editFocus - editToggleRemote
+		if m.editFocus >= editToggleYolo {
+			toggleIdx := m.editFocus - editToggleYolo
 			m.editToggles[toggleIdx] = !m.editToggles[toggleIdx]
 			return m, nil
 		}
@@ -149,8 +162,8 @@ func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case " ":
 		// Space toggles on toggle fields
-		if m.editFocus >= editToggleRemote {
-			toggleIdx := m.editFocus - editToggleRemote
+		if m.editFocus >= editToggleYolo {
+			toggleIdx := m.editFocus - editToggleYolo
 			m.editToggles[toggleIdx] = !m.editToggles[toggleIdx]
 			return m, nil
 		}

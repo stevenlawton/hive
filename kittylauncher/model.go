@@ -15,6 +15,7 @@ const (
 	viewHelp
 	viewPromote
 	viewEdit
+	viewConfirm
 )
 
 type sessionStatus int
@@ -26,13 +27,16 @@ const (
 	statusRemote
 	statusDead
 	statusWaiting
+	statusTelegram // driven by Telegram bot
 )
 
 type repoItem struct {
-	repo    Repo
-	status  sessionStatus
-	tmuxSes string // tmux session name if active
-	title   string // claude session title if available
+	repo      Repo
+	status    sessionStatus
+	tmuxSes   string         // tmux session name if active
+	title     string         // claude session title if available
+	richStatus  *SessionStatus // from plugin status file (nil if no status file)
+	bridgeEntry *BridgeEntry   // from bridge-sessions.json (nil if not bridged)
 }
 
 type model struct {
@@ -44,14 +48,22 @@ type model struct {
 	filter       textinput.Model
 	filtering    bool
 	filtered     []int // indices into items that match filter
-	displayOrder []int // indices into items, ordered: active > favourites > rest
+	displayOrder []int            // indices into items, ordered: active > favourites > rest
+	itemSection  map[int]string   // item index → section name ("active", "favourites", "repos", "archived")
 	promote      textinput.Model
 	keys      keyMap
 	width     int
 	height    int
 	err       error
-	alerts    map[string]string
-	flashing  bool
+	alerts      map[string]string
+	flashing    bool
+	tabFlashing map[string]string // session tabs currently flashed (keyed by dirName, value: "bell" or "complete")
+
+	showArchived bool // toggle to show/hide archived repos
+
+	// Confirm dialog state
+	confirmMsg    string
+	confirmAction func()
 
 	// Edit panel state
 	editFields  []textinput.Model
@@ -63,12 +75,16 @@ type model struct {
 func newModel(cfg *Config, cfgPath string) model {
 	repos := DiscoverRepos(cfg)
 	scratches := DiscoverScratches(cfg)
+	archived := DiscoverArchived(cfg)
 
-	items := make([]repoItem, 0, len(repos)+len(scratches))
+	items := make([]repoItem, 0, len(repos)+len(scratches)+len(archived))
 	for _, r := range repos {
 		items = append(items, repoItem{repo: r})
 	}
 	for _, r := range scratches {
+		items = append(items, repoItem{repo: r})
+	}
+	for _, r := range archived {
 		items = append(items, repoItem{repo: r})
 	}
 
@@ -88,7 +104,8 @@ func newModel(cfg *Config, cfgPath string) model {
 		filter:   fi,
 		promote:  pr,
 		filtered: allIndicesFor(len(items)),
-		alerts:   make(map[string]string),
+		alerts:      make(map[string]string),
+		tabFlashing: make(map[string]string),
 	}
 	m.rebuildDisplayOrder()
 	return m
@@ -117,6 +134,7 @@ func (m *model) rebuildDisplayOrder() {
 			continue // skip children in first pass
 		}
 		hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
+			item.status == statusTelegram ||
 			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
 		switch {
 		case hasInteractiveTab:
@@ -128,9 +146,17 @@ func (m *model) rebuildDisplayOrder() {
 		}
 	}
 
-	var active, favourites, rest []int
+	var active, favourites, rest, archived []int
 	for _, idx := range m.filtered {
 		item := m.items[idx]
+
+		// Archived repos go to their own section (or get filtered out)
+		if item.repo.IsArchived {
+			if m.showArchived {
+				archived = append(archived, idx)
+			}
+			continue
+		}
 
 		// Children follow their parent's section
 		if item.repo.Parent != "" {
@@ -146,6 +172,7 @@ func (m *model) rebuildDisplayOrder() {
 		}
 
 		hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
+			item.status == statusTelegram ||
 			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
 		switch {
 		case hasInteractiveTab:
@@ -160,6 +187,22 @@ func (m *model) rebuildDisplayOrder() {
 	m.displayOrder = append(m.displayOrder, active...)
 	m.displayOrder = append(m.displayOrder, favourites...)
 	m.displayOrder = append(m.displayOrder, rest...)
+	m.displayOrder = append(m.displayOrder, archived...)
+
+	// Store section for each item so the view doesn't re-derive it
+	m.itemSection = make(map[int]string, len(m.displayOrder))
+	for _, idx := range active {
+		m.itemSection[idx] = "active"
+	}
+	for _, idx := range favourites {
+		m.itemSection[idx] = "favourites"
+	}
+	for _, idx := range rest {
+		m.itemSection[idx] = "repos"
+	}
+	for _, idx := range archived {
+		m.itemSection[idx] = "archived"
+	}
 }
 
 // reloadItems rescans repos from disk, preserving session state
@@ -216,6 +259,11 @@ func (m *model) selectedItem() *repoItem {
 
 // --- Messages ---
 
+// Mouse interaction messages
+type itemClickMsg struct{ index int }
+type keyBarClickMsg struct{ action string }
+type scrollMsg struct{ dir int }
+
 type tickMsg time.Time
 
 func healthTick() tea.Cmd {
@@ -225,6 +273,17 @@ func healthTick() tea.Cmd {
 }
 
 type flashRestoreMsg struct{}
+
+type sessionFlashRestoreMsg struct {
+	short string
+	color string
+}
+
+func sessionFlashRestore(short, color string) tea.Cmd {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+		return sessionFlashRestoreMsg{short: short, color: color}
+	})
+}
 
 func flashRestore() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
@@ -237,7 +296,7 @@ type reconnectMsg struct{}
 // --- Tea interface ---
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(healthTick(), func() tea.Msg {
+	return tea.Batch(healthTick(), waitForEvent(), func() tea.Msg {
 		return reconnectMsg{}
 	})
 }
@@ -254,10 +313,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTick()
 	case flashRestoreMsg:
 		m.flashing = false
-		KittySetTabColor("KittyLauncher", "#ff8c00")
+		kittyRun("@", "set-tab-color", "--self", "active_bg=#ff8c00")
+		return m, nil
+	case sessionFlashRestoreMsg:
+		if msg.color != "" {
+			KittySetTabColor(msg.short, msg.color)
+		} else {
+			KittyResetTabColor(msg.short)
+		}
 		return m, nil
 	case reconnectMsg:
 		m.reconnectSessions()
+		return m, nil
+	case itemClickMsg:
+		if msg.index >= 0 && msg.index < len(m.displayOrder) {
+			m.cursor = msg.index
+		}
+		return m, nil
+	case keyBarClickMsg:
+		return m.handleAction(msg.action)
+	case sessionEventMsg:
+		cmd := m.handleSessionEvent(SessionEvent(msg))
+		return m, tea.Batch(cmd, waitForEvent()) // listen for next event
+	case scrollMsg:
+		if msg.dir < 0 && m.cursor > 0 {
+			m.cursor--
+		} else if msg.dir > 0 && m.cursor < len(m.displayOrder)-1 {
+			m.cursor++
+		}
 		return m, nil
 	}
 
@@ -303,6 +386,20 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Confirm mode (y/n)
+	if m.mode == viewConfirm {
+		switch key {
+		case "y", "Y", "enter":
+			if m.confirmAction != nil {
+				m.confirmAction()
+			}
+			m.mode = viewList
+		case "n", "N", "escape":
+			m.mode = viewList
+		}
+		return m, nil
+	}
+
 	// Promote mode
 	if m.mode == viewPromote {
 		switch key {
@@ -338,6 +435,16 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.filtered = m.allIndices()
 			m.rebuildDisplayOrder()
 			m.cursor = 0
+			return m, nil
+		case "up":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+			return m, nil
+		case "down":
+			if m.cursor < len(m.displayOrder)-1 {
+				m.cursor++
+			}
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -375,6 +482,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "F":
 		m.toggleFavouriteFlag()
 		return m, nil
+	case "Y":
+		m.toggleYoloFlag()
+		return m, nil
 	case "E":
 		return m, m.openEditPanel()
 	case "s":
@@ -385,6 +495,17 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.mode = viewPromote
 			m.promote.SetValue("")
 			return m, m.promote.Focus()
+		}
+	case "A":
+		return m, m.archiveSelected()
+	case "U":
+		return m, m.unarchiveSelected()
+	case "ctrl+a":
+		m.showArchived = !m.showArchived
+		m.filtered = m.allIndices()
+		m.rebuildDisplayOrder()
+		if m.cursor >= len(m.displayOrder) {
+			m.cursor = max(0, len(m.displayOrder)-1)
 		}
 	case "tab":
 		return m, m.focusSelectedTab()
@@ -398,6 +519,111 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// handleAction dispatches a named action (used by mouse click on key bar).
+func (m model) handleAction(action string) (tea.Model, tea.Cmd) {
+	switch action {
+	case "q":
+		return m, tea.Quit
+	case "?":
+		m.mode = viewHelp
+	case "/":
+		m.filtering = true
+		return m, m.filter.Focus()
+	case "enter":
+		return m, m.openSelected(true)
+	case "shift+enter":
+		return m, m.openSelected(false)
+	case "r":
+		return m, m.toggleRemote()
+	case "R":
+		m.toggleRemoteFlag()
+	case "F":
+		m.toggleFavouriteFlag()
+	case "Y":
+		m.toggleYoloFlag()
+	case "E":
+		return m, m.openEditPanel()
+	case "s":
+		return m, m.createScratch()
+	case "p":
+		item := m.selectedItem()
+		if item != nil && item.repo.IsScratch {
+			m.mode = viewPromote
+			m.promote.SetValue("")
+			return m, m.promote.Focus()
+		}
+	case "tab":
+		return m, m.focusSelectedTab()
+	case "A":
+		return m, m.archiveSelected()
+	case "U":
+		return m, m.unarchiveSelected()
+	case "x":
+		return m, m.killSelected()
+	case "d":
+		return m, m.detachSelected()
+	}
+	return m, nil
+}
+
+func (m *model) handleSessionEvent(ev SessionEvent) tea.Cmd {
+	shouldNotify := NotifySessionEvent(&m.cfg.Notifications, ev)
+
+	// Find the item matching this session
+	for i := range m.items {
+		item := &m.items[i]
+		interactiveName := TmuxSessionName(item.repo.DirName, false)
+		if interactiveName != ev.Session {
+			continue
+		}
+		if item.richStatus == nil {
+			item.richStatus = &SessionStatus{}
+		}
+		rs := item.richStatus
+		rs.Session = ev.Session
+		rs.Repo = ev.Repo
+
+		switch ev.Event {
+		case "started":
+			rs.Status = "running"
+			rs.ToolCount = 0
+			// User started new work — clear completion flash
+			if m.tabFlashing[item.repo.DirName] == "complete" {
+				delete(m.tabFlashing, item.repo.DirName)
+				if item.repo.Color != "" {
+					KittySetTabColor(item.repo.Short, item.repo.Color)
+				} else {
+					KittyResetTabColor(item.repo.Short)
+				}
+			}
+		case "tool":
+			rs.Status = "running"
+			rs.ToolCount++
+			rs.LastTool = ev.ToolName
+			// Tool use means user responded — clear completion flash
+			if m.tabFlashing[item.repo.DirName] == "complete" {
+				delete(m.tabFlashing, item.repo.DirName)
+				if item.repo.Color != "" {
+					KittySetTabColor(item.repo.Short, item.repo.Color)
+				} else {
+					KittyResetTabColor(item.repo.Short)
+				}
+			}
+		case "completed":
+			rs.Status = "completed"
+			// Flash the session's tab green — stays until next interaction
+			if shouldNotify {
+				KittySetTabColor(item.repo.Short, "#00ff88")
+				m.tabFlashing[item.repo.DirName] = "complete"
+			}
+		case "ended":
+			rs.Status = "ended"
+		}
+		return nil
+	}
+	return nil
 }
 
 func (m model) handleTick() (tea.Model, tea.Cmd) {
@@ -435,6 +661,36 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 	}
 	m.alerts = newAlerts
 
+	// Clear rich status for dead sessions
+	for i := range m.items {
+		item := &m.items[i]
+		if item.status == statusNone || item.status == statusDead {
+			item.richStatus = nil
+			item.bridgeEntry = nil
+		}
+	}
+
+	// Read bridge registry and mark telegram-driven sessions
+	bridge := ReadBridgeRegistry()
+	for i := range m.items {
+		item := &m.items[i]
+		dirName := item.repo.DirName
+		if entry, ok := bridge[dirName]; ok && entry.Driver == "telegram" {
+			item.bridgeEntry = &entry
+			// Only show as telegram if not already running interactively
+			if item.status == statusNone || item.status == statusShell {
+				item.status = statusTelegram
+				item.tmuxSes = TmuxSessionName(dirName, false)
+			}
+		} else {
+			// Clear stale bridge entries
+			if item.status == statusTelegram {
+				item.status = statusNone
+			}
+			item.bridgeEntry = nil
+		}
+	}
+
 	// Update tab titles from tmux pane titles (interactive sessions only)
 	for i := range m.items {
 		item := &m.items[i]
@@ -457,11 +713,55 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Flash session tabs: red for bell (waiting for input), green for completion
+	// Check which tab is focused to auto-clear flashes
+	var focusedTabTitle string
+	if len(m.tabFlashing) > 0 {
+		if tabs, err := KittyListTabs(); err == nil {
+			for _, tab := range tabs {
+				if tab.IsFocused {
+					focusedTabTitle = tab.Title
+					break
+				}
+			}
+		}
+	}
+
+	for i := range m.items {
+		item := &m.items[i]
+		flashReason := m.tabFlashing[item.repo.DirName]
+
+		if item.status != statusClaude && item.status != statusTelegram {
+			if flashReason != "" {
+				m.clearFlash(item)
+			}
+			continue
+		}
+
+		// Clear flash if user is currently on this tab
+		if flashReason != "" && focusedTabTitle != "" {
+			if focusedTabTitle == item.repo.Short || strings.HasPrefix(focusedTabTitle, item.repo.Short+" ") {
+				m.clearFlash(item)
+				continue
+			}
+		}
+
+		interactiveName := TmuxSessionName(item.repo.DirName, false)
+		if TmuxWindowHasBell(interactiveName) {
+			if flashReason != "bell" {
+				m.tabFlashing[item.repo.DirName] = "bell"
+				KittySetTabColor(item.repo.Short, "#ff0000")
+			}
+		} else if flashReason == "bell" {
+			m.clearFlash(item)
+		}
+	}
+
 	var cmds []tea.Cmd
 	if hasNewHighSeverity {
 		if m.cfg.Notifications.TabFlash && !m.flashing {
 			m.flashing = true
-			KittySetTabColor("KittyLauncher", "#ff0000")
+			kittyRun("@", "set-tab-color", "--self", "active_bg=#ff0000")
 			cmds = append(cmds, flashRestore())
 		}
 		if m.cfg.Notifications.Desktop {

@@ -18,6 +18,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := startServer(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: event server failed to start: %v\n", err)
+	}
+
 	p := tea.NewProgram(newModel(cfg, cfgPath))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

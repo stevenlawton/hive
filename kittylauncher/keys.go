@@ -10,12 +10,16 @@ type keyMap struct {
 	Remote      key.Binding
 	RemoteFlag  key.Binding
 	FavFlag     key.Binding
+	YoloFlag    key.Binding
 	Edit        key.Binding
 	Scratch     key.Binding
 	Promote     key.Binding
 	FocusTab    key.Binding
 	Kill        key.Binding
 	Detach      key.Binding
+	Archive     key.Binding
+	Unarchive   key.Binding
+	ShowArchive key.Binding
 	Filter      key.Binding
 	Help        key.Binding
 	Quit        key.Binding
@@ -52,6 +56,10 @@ func newKeyMap() keyMap {
 			key.WithKeys("F"),
 			key.WithHelp("F", "toggle favourite"),
 		),
+		YoloFlag: key.NewBinding(
+			key.WithKeys("Y"),
+			key.WithHelp("Y", "toggle yolo"),
+		),
 		Edit: key.NewBinding(
 			key.WithKeys("E"),
 			key.WithHelp("E", "edit repo"),
@@ -75,6 +83,18 @@ func newKeyMap() keyMap {
 		Detach: key.NewBinding(
 			key.WithKeys("d"),
 			key.WithHelp("d", "detach tab"),
+		),
+		Archive: key.NewBinding(
+			key.WithKeys("A"),
+			key.WithHelp("A", "archive repo"),
+		),
+		Unarchive: key.NewBinding(
+			key.WithKeys("U"),
+			key.WithHelp("U", "unarchive repo"),
+		),
+		ShowArchive: key.NewBinding(
+			key.WithKeys("ctrl+a"),
+			key.WithHelp("ctrl+a", "toggle archived"),
 		),
 		Filter: key.NewBinding(
 			key.WithKeys("/"),
@@ -109,6 +129,8 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Open, k.OpenShell, k.Remote},
 		{k.Scratch, k.Promote, k.FocusTab},
 		{k.Kill, k.Detach, k.Filter},
+		{k.RemoteFlag, k.FavFlag, k.YoloFlag, k.Edit},
+		{k.Archive, k.Unarchive, k.ShowArchive},
 		{k.Tab1, k.Help, k.Quit},
 	}
 }

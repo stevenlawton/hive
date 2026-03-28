@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -55,7 +57,32 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 	sessionName := TmuxSessionName(repo.DirName, false)
 
 	if TmuxHasSession(sessionName) {
+		// Telegram session takeover: send claude --resume into existing pane
+		if withClaude && item.bridgeEntry != nil && item.bridgeEntry.SessionID != "" {
+			TmuxSendKeys(sessionName, "C-c")
+			TmuxSendKeys(sessionName, "claude --resume "+item.bridgeEntry.SessionID)
+			item.status = statusClaude
+			item.bridgeEntry = nil
+			// Ensure kitty tab exists
+			tabs, _ := KittyListTabs()
+			hasTab := false
+			for _, tab := range tabs {
+				if tab.Title == repo.Short || strings.HasPrefix(tab.Title, repo.Short+" ") {
+					hasTab = true
+					break
+				}
+			}
+			if !hasTab {
+				KittyLaunchTab(repo.Short, "tmux", "attach", "-t", sessionName)
+				KittySetTabColor(repo.Short, repo.Color)
+			} else {
+				KittyFocusTab("title:^" + repo.Short)
+			}
+			m.rebuildDisplayOrder()
+			return nil
+		}
 		KittyFocusTab("title:^" + repo.Short)
+		m.clearFlash(item)
 		return nil
 	}
 
@@ -65,7 +92,11 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 	}
 
 	if withClaude {
-		TmuxSendKeys(sessionName, "claude")
+		claudeCmd := "claude"
+		if repo.Yolo {
+			claudeCmd = "claude --permission-mode bypassPermissions"
+		}
+		TmuxSendKeys(sessionName, claudeCmd)
 		item.status = statusClaude
 	} else {
 		item.status = statusShell
@@ -188,13 +219,44 @@ func (m *model) toggleFavouriteFlag() {
 	m.rebuildDisplayOrder()
 }
 
+func (m *model) toggleYoloFlag() {
+	item := m.selectedItem()
+	if item == nil || item.repo.IsScratch {
+		return
+	}
+
+	item.repo.Yolo = !item.repo.Yolo
+
+	ws := m.cfg.Workspaces[item.repo.DirName]
+	ws.Yolo = item.repo.Yolo
+	if ws.Name == "" {
+		ws.Name = item.repo.Name
+	}
+	m.cfg.Workspaces[item.repo.DirName] = ws
+	SaveConfig(m.cfgPath, m.cfg)
+}
+
 func (m *model) focusSelectedTab() tea.Cmd {
 	item := m.selectedItem()
 	if item == nil || item.status == statusNone {
 		return nil
 	}
 	KittyFocusTab("title:^" + item.repo.Short)
+	m.clearFlash(item)
 	return nil
+}
+
+// clearFlash restores a tab's color if it's currently flashing.
+func (m *model) clearFlash(item *repoItem) {
+	if m.tabFlashing[item.repo.DirName] == "" {
+		return
+	}
+	delete(m.tabFlashing, item.repo.DirName)
+	if item.repo.Color != "" {
+		KittySetTabColor(item.repo.Short, item.repo.Color)
+	} else {
+		KittyResetTabColor(item.repo.Short)
+	}
 }
 
 func (m *model) killSelected() tea.Cmd {
@@ -249,19 +311,22 @@ func (m *model) reconnectSessions() {
 	if err != nil {
 		return
 	}
-	tabTitles := make(map[string]bool)
-	for _, tab := range tabs {
-		tabTitles[tab.Title] = true
-	}
-
 	for i := range m.items {
 		item := &m.items[i]
 		interactiveName := TmuxSessionName(item.repo.DirName, false)
 		if !TmuxHasSession(interactiveName) {
 			continue
 		}
-		if tabTitles[item.repo.Short] {
-			continue // tab already exists
+		// Check if a tab already exists with this short name (may have suffix like " — task")
+		hasTab := false
+		for _, tab := range tabs {
+			if tab.Title == item.repo.Short || strings.HasPrefix(tab.Title, item.repo.Short+" ") {
+				hasTab = true
+				break
+			}
+		}
+		if hasTab {
+			continue
 		}
 		KittyLaunchTab(item.repo.Short, "tmux", "attach", "-t", interactiveName)
 		KittySetTabColor(item.repo.Short, item.repo.Color)

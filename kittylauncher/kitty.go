@@ -26,7 +26,7 @@ func kittyLaunchTabArgs(tabTitle string, command ...string) []string {
 }
 
 func kittySetTabColorArgs(tabTitle, color string) []string {
-	return []string{"@", "set-tab-color", "--match", "title:^" + tabTitle, "active_bg=" + color}
+	return []string{"@", "set-tab-color", "--match", "title:^" + tabTitle, "active_bg=" + color, "inactive_bg=" + color}
 }
 
 func kittySetTabTitleArgs(match, title string) []string {
@@ -52,6 +52,10 @@ func KittySetTabColor(tabTitle, color string) error {
 	return kittyRun(kittySetTabColorArgs(tabTitle, color)...)
 }
 
+func KittyResetTabColor(tabTitle string) error {
+	return kittyRun("@", "set-tab-color", "--match", "title:^"+tabTitle, "active_bg=NONE", "inactive_bg=NONE")
+}
+
 func KittySetTabTitle(match, title string) error {
 	return kittyRun(kittySetTabTitleArgs(match, title)...)
 }
@@ -65,8 +69,9 @@ func KittyCloseTab(match string) error {
 }
 
 type KittyTabInfo struct {
-	ID    int    `json:"id"`
-	Title string `json:"title"`
+	ID        int    `json:"id"`
+	Title     string `json:"title"`
+	IsFocused bool   `json:"is_focused"`
 }
 
 type kittyOSWindow struct {

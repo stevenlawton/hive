@@ -10,16 +10,23 @@ import (
 )
 
 type NotificationConfig struct {
-	Desktop      bool `yaml:"desktop"`
-	TabFlash     bool `yaml:"tab_flash"`
-	PollInterval int  `yaml:"poll_interval"`
+	Desktop      bool   `yaml:"desktop"`
+	TabFlash     bool   `yaml:"tab_flash"`
+	Sound        bool   `yaml:"sound"`
+	SoundPath    string `yaml:"sound_path,omitempty"`    // custom sound file, empty = system bell
+	PollInterval int    `yaml:"poll_interval"`
+	WebhookURL   string `yaml:"webhook_url,omitempty"`   // POST JSON on events
+	NtfyTopic    string `yaml:"ntfy_topic,omitempty"`    // ntfy.sh topic
+	SlackWebhook string `yaml:"slack_webhook,omitempty"` // Slack incoming webhook URL
 }
 
 type WorkspaceConfig struct {
-	Name       string `yaml:"name,omitempty"`
-	Short      string `yaml:"short,omitempty"`
-	Color      string `yaml:"color,omitempty"`
-	Remote     bool   `yaml:"remote,omitempty"`
+	Name        string `yaml:"name,omitempty"`
+	Short       string `yaml:"short,omitempty"`
+	Color       string `yaml:"color,omitempty"`
+	Description string `yaml:"description,omitempty"`
+	Yolo        bool   `yaml:"yolo,omitempty"`
+	Remote      bool   `yaml:"remote,omitempty"`
 	Favourite  bool   `yaml:"favourite,omitempty"`
 	Collection bool   `yaml:"collection,omitempty"`
 }
@@ -41,6 +48,7 @@ func LoadConfig(path string) (*Config, error) {
 		Notifications: NotificationConfig{
 			Desktop:      true,
 			TabFlash:     true,
+			Sound:        true,
 			PollInterval: 5,
 		},
 		Workspaces: make(map[string]WorkspaceConfig),
@@ -89,10 +97,13 @@ type Repo struct {
 	Name         string
 	Short        string
 	Color        string
+	Description  string
+	Yolo         bool
 	Remote       bool
 	Favourite    bool
 	IsScratch    bool
 	IsCollection bool
+	IsArchived   bool
 	Parent       string // DirName of parent collection, empty if top-level
 }
 
@@ -112,6 +123,8 @@ func applyWorkspaceConfig(repo *Repo, ws WorkspaceConfig) {
 		repo.Short = ws.Short
 	}
 	repo.Color = ws.Color
+	repo.Description = ws.Description
+	repo.Yolo = ws.Yolo
 	repo.Remote = ws.Remote
 	repo.Favourite = ws.Favourite
 	repo.IsCollection = ws.Collection
