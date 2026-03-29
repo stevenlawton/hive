@@ -14,14 +14,14 @@ var (
 	subtitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Padding(0, 0, 0, 1)
 	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88")).Bold(true)
 	nameStyle     = lipgloss.NewStyle().Bold(true).Width(36)
-	claudeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88")).Width(30)
-	shellStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#00bbff")).Width(30)
-	idleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Width(30)
+	claudeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88")).Width(50)
+	shellStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#00bbff")).Width(50)
+	idleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Width(50)
 	remoteStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00"))
 	scratchStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Italic(true)
 	deadStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0000")).Bold(true)
 	waitStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffff00"))
-	telegramStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#0088cc")).Width(30)
+	telegramStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#0088cc")).Width(50)
 	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Padding(1, 0, 0, 1)
 	barKeyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00"))
 	barValStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
@@ -336,7 +336,7 @@ func (m model) viewEdit() string {
 
 func (m model) renderItem(vi viewItem) string {
 	indent := ""
-	if vi.item.repo.Parent != "" {
+	if vi.item.repo.Parent != "" && m.itemSection[m.displayOrder[vi.index]] != "active" {
 		indent = "  "
 	}
 
@@ -432,7 +432,7 @@ func (m model) renderStatusBar() string {
 	return " " + left + strings.Repeat(" ", gap) + right
 }
 
-var completedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Width(30)
+var completedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Width(50)
 
 func (m model) renderStatus(item repoItem) string {
 	// Check for rich status from plugin
@@ -463,11 +463,11 @@ func (m model) renderStatus(item repoItem) string {
 	case statusShell:
 		return shellStyle.Render("● shell")
 	case statusRemote:
-		return remoteStyle.Width(30).Render("● remote")
+		return remoteStyle.Width(50).Render("● remote")
 	case statusDead:
-		return deadStyle.Width(30).Render("✖ dead")
+		return deadStyle.Width(50).Render("✖ dead")
 	case statusWaiting:
-		return waitStyle.Width(30).Render("◌ waiting…")
+		return waitStyle.Width(50).Render("◌ waiting…")
 	case statusNone:
 		return "" // blank for idle — less noise
 	case statusTelegram:

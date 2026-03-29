@@ -127,6 +127,7 @@ func (m *model) allIndices() []int {
 // Children stay with their parent collection regardless of section
 func (m *model) rebuildDisplayOrder() {
 	// First, figure out which section each parent belongs to
+	// A parent promotes to "active" if it or any child has an active session
 	parentSection := make(map[string]int) // 0=active, 1=fav, 2=rest
 	for _, idx := range m.filtered {
 		item := m.items[idx]
@@ -145,12 +146,10 @@ func (m *model) rebuildDisplayOrder() {
 			parentSection[item.repo.DirName] = 2
 		}
 	}
-
 	var active, favourites, rest, archived []int
 	for _, idx := range m.filtered {
 		item := m.items[idx]
 
-		// Archived repos go to their own section (or get filtered out)
 		if item.repo.IsArchived {
 			if m.showArchived {
 				archived = append(archived, idx)
@@ -158,7 +157,17 @@ func (m *model) rebuildDisplayOrder() {
 			continue
 		}
 
-		// Children follow their parent's section
+		// Active children break out of their parent's section
+		hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
+			item.status == statusTelegram ||
+			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
+
+		if hasInteractiveTab {
+			active = append(active, idx)
+			continue
+		}
+
+		// Inactive children follow their parent's section
 		if item.repo.Parent != "" {
 			switch parentSection[item.repo.Parent] {
 			case 0:
@@ -171,12 +180,7 @@ func (m *model) rebuildDisplayOrder() {
 			continue
 		}
 
-		hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
-			item.status == statusTelegram ||
-			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
 		switch {
-		case hasInteractiveTab:
-			active = append(active, idx)
 		case item.repo.Favourite:
 			favourites = append(favourites, idx)
 		default:

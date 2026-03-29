@@ -103,8 +103,21 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 	}
 	item.tmuxSes = sessionName
 
-	KittyLaunchTab(repo.Short, "tmux", "attach", "-t", sessionName)
-	KittySetTabColor(repo.Short, repo.Color)
+	// Only launch a new tab if one doesn't already exist
+	tabs, _ := KittyListTabs()
+	hasTab := false
+	for _, tab := range tabs {
+		if tab.Title == repo.Short || strings.HasPrefix(tab.Title, repo.Short+" ") {
+			hasTab = true
+			break
+		}
+	}
+	if hasTab {
+		KittyFocusTab("title:^" + repo.Short)
+	} else {
+		KittyLaunchTab(repo.Short, "tmux", "attach", "-t", sessionName)
+		KittySetTabColor(repo.Short, repo.Color)
+	}
 	m.rebuildDisplayOrder()
 
 	return nil

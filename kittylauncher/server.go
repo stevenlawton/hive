@@ -64,9 +64,43 @@ func startServer() error {
 		fmt.Fprint(w, "ok")
 	})
 
-	// Health check for hooks to verify server is up
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
+		fmt.Fprint(w, "ok")
+	})
+
+	mux.HandleFunc("GET /tabs", func(w http.ResponseWriter, r *http.Request) {
+		tabs, err := KittyListTabs()
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(tabs)
+	})
+
+	mux.HandleFunc("POST /tabs/close", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID    int    `json:"id"`
+			Match string `json:"match"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json", 400)
+			return
+		}
+		var match string
+		if req.ID > 0 {
+			match = fmt.Sprintf("id:%d", req.ID)
+		} else if req.Match != "" {
+			match = req.Match
+		} else {
+			http.Error(w, "need id or match", 400)
+			return
+		}
+		if err := KittyCloseTab(match); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
 		fmt.Fprint(w, "ok")
 	})
 
