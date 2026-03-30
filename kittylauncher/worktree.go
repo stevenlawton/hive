@@ -1,0 +1,262 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+)
+
+const (
+	wtFieldBranch = 0
+	wtFieldPrompt = 1
+	wtFieldCount  = 2 // text fields only; yolo is a toggle
+)
+
+// openWorktreePanel shows the worktree creation prompt for the selected repo.
+func (m *model) openWorktreePanel() tea.Cmd {
+	item := m.selectedItem()
+	if item == nil || item.repo.IsScratch || item.repo.IsCollection || item.repo.IsWorktree {
+		return nil
+	}
+
+	m.wtParent = item.repo.DirName
+
+	fields := make([]textinput.Model, wtFieldCount)
+
+	branchInput := textinput.New()
+	branchInput.Prompt = "Branch: "
+	branchInput.Placeholder = "feature-name"
+	fields[wtFieldBranch] = branchInput
+
+	promptInput := textinput.New()
+	promptInput.Prompt = "Prompt: "
+	promptInput.Placeholder = "optional task for Claude"
+	fields[wtFieldPrompt] = promptInput
+
+	m.wtFields = fields
+	m.wtYolo = item.repo.Yolo // inherit parent's yolo setting
+	m.wtFocus = 0
+	m.mode = viewWorktree
+
+	return m.wtFields[0].Focus()
+}
+
+// handleWorktreeKey handles keypresses in the worktree prompt panel.
+func (m *model) handleWorktreeKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "ctrl+s", "ctrl+enter":
+		return m, m.createWorktree()
+	case "escape":
+		m.mode = viewList
+		return m, nil
+	case "tab", "down":
+		m.wtFields[m.wtFocus].Blur()
+		m.wtFocus++
+		if m.wtFocus > wtFieldCount { // wtFieldCount = yolo toggle
+			m.wtFocus = 0
+		}
+		if m.wtFocus < wtFieldCount {
+			return m, m.wtFields[m.wtFocus].Focus()
+		}
+		return m, nil
+	case "shift+tab", "up":
+		m.wtFields[m.wtFocus].Blur()
+		m.wtFocus--
+		if m.wtFocus < 0 {
+			m.wtFocus = wtFieldCount // yolo toggle
+		}
+		if m.wtFocus < wtFieldCount {
+			return m, m.wtFields[m.wtFocus].Focus()
+		}
+		return m, nil
+	case "enter":
+		if m.wtFocus < wtFieldCount {
+			// Move to next field
+			m.wtFields[m.wtFocus].Blur()
+			m.wtFocus++
+			if m.wtFocus < wtFieldCount {
+				return m, m.wtFields[m.wtFocus].Focus()
+			}
+			return m, nil
+		}
+		// On yolo toggle, toggle it
+		m.wtYolo = !m.wtYolo
+		return m, nil
+	case " ":
+		if m.wtFocus == wtFieldCount {
+			m.wtYolo = !m.wtYolo
+			return m, nil
+		}
+	}
+
+	// Pass to text input
+	if m.wtFocus < wtFieldCount {
+		var cmd tea.Cmd
+		m.wtFields[m.wtFocus], cmd = m.wtFields[m.wtFocus].Update(tea.KeyPressMsg{})
+		return m, cmd
+	}
+	return m, nil
+}
+
+// createWorktree creates a git worktree, tmux session, and kitty split.
+func (m *model) createWorktree() tea.Cmd {
+	branch := strings.TrimSpace(m.wtFields[wtFieldBranch].Value())
+	if branch == "" {
+		m.err = fmt.Errorf("branch name required")
+		return nil
+	}
+
+	prompt := strings.TrimSpace(m.wtFields[wtFieldPrompt].Value())
+	yolo := m.wtYolo
+
+	// Find parent item
+	var parent *repoItem
+	for i := range m.items {
+		if m.items[i].repo.DirName == m.wtParent {
+			parent = &m.items[i]
+			break
+		}
+	}
+	if parent == nil {
+		m.err = fmt.Errorf("parent repo not found")
+		return nil
+	}
+
+	// Create git worktree
+	wtDir := filepath.Join(parent.repo.Path, ".worktrees", branch)
+	cmd := exec.Command("git", "-C", parent.repo.Path, "worktree", "add", "-b", branch, wtDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// Branch might already exist, try without -b
+		cmd = exec.Command("git", "-C", parent.repo.Path, "worktree", "add", wtDir, branch)
+		if out2, err2 := cmd.CombinedOutput(); err2 != nil {
+			m.err = fmt.Errorf("worktree: %s %s", string(out), string(out2))
+			m.mode = viewList
+			return nil
+		}
+		_ = out
+	}
+
+	// Create tmux session in the worktree dir
+	sessionName := TmuxSessionName(m.wtParent+"-wt-"+branch, false)
+	if err := TmuxNewSession(sessionName, wtDir); err != nil {
+		m.err = fmt.Errorf("tmux: %w", err)
+		m.mode = viewList
+		return nil
+	}
+
+	// Launch as a kitty split in the parent's tab
+	kittyRun("@", "launch",
+		"--type=window",
+		"--match", "title:^"+parent.repo.Short,
+		"--title", parent.repo.Short+"/"+branch,
+		"tmux", "attach", "-t", sessionName)
+
+	// Launch Claude in the worktree
+	claudeCmd := "claude"
+	if yolo {
+		claudeCmd = "claude --permission-mode bypassPermissions"
+	}
+	if prompt != "" {
+		claudeCmd += " -p " + shellQuote(prompt)
+	}
+	TmuxSendKeys(sessionName, claudeCmd)
+
+	// Add worktree item to the model
+	wtRepo := Repo{
+		DirName:        m.wtParent + "-wt-" + branch,
+		Path:           wtDir,
+		Name:           "wt: " + branch,
+		Short:          parent.repo.Short + "/" + branch,
+		Color:          parent.repo.Color,
+		IsWorktree:     true,
+		WorktreeBranch: branch,
+		Parent:         m.wtParent,
+		Yolo:           yolo,
+	}
+
+	m.items = append(m.items, repoItem{
+		repo:    wtRepo,
+		status:  statusClaude,
+		tmuxSes: sessionName,
+	})
+
+	m.mode = viewList
+	m.filtered = m.allIndices()
+	m.rebuildDisplayOrder()
+
+	return nil
+}
+
+// DiscoverWorktrees finds existing git worktrees for a repo.
+func DiscoverWorktrees(parentRepo Repo) []Repo {
+	wtDir := filepath.Join(parentRepo.Path, ".worktrees")
+	entries, err := os.ReadDir(wtDir)
+	if err != nil {
+		return nil
+	}
+
+	var repos []Repo
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		branch := entry.Name()
+		// Verify it's still a valid worktree
+		wtPath := filepath.Join(wtDir, branch)
+		if _, err := os.Stat(filepath.Join(wtPath, ".git")); err != nil {
+			continue
+		}
+		repos = append(repos, Repo{
+			DirName:        parentRepo.DirName + "-wt-" + branch,
+			Path:           wtPath,
+			Name:           "wt: " + branch,
+			Short:          parentRepo.Short + "/" + branch,
+			Color:          parentRepo.Color,
+			IsWorktree:     true,
+			WorktreeBranch: branch,
+			Parent:         parentRepo.DirName,
+		})
+	}
+	return repos
+}
+
+// killWorktreeSession kills the tmux session and kitty split for a worktree.
+// Does NOT remove the worktree from disk.
+func (m *model) killWorktreeSession() tea.Cmd {
+	item := m.selectedItem()
+	if item == nil || !item.repo.IsWorktree {
+		return nil
+	}
+
+	sessionName := TmuxSessionName(item.repo.DirName, false)
+	if TmuxHasSession(sessionName) {
+		TmuxKillSession(sessionName)
+	}
+
+	// Close the kitty split (window within the tab)
+	kittyRun("@", "close-window", "--match", "title:^"+item.repo.Short)
+
+	// Remove from items
+	for i := range m.items {
+		if m.items[i].repo.DirName == item.repo.DirName {
+			m.items = append(m.items[:i], m.items[i+1:]...)
+			break
+		}
+	}
+
+	m.filtered = m.allIndices()
+	m.rebuildDisplayOrder()
+	if m.cursor >= len(m.displayOrder) {
+		m.cursor = max(0, len(m.displayOrder)-1)
+	}
+	return nil
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}

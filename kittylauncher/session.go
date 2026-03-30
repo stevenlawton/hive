@@ -278,6 +278,11 @@ func (m *model) killSelected() tea.Cmd {
 		return nil
 	}
 
+	// Worktrees have their own kill logic (close split, keep worktree on disk)
+	if item.repo.IsWorktree {
+		return m.killWorktreeSession()
+	}
+
 	repo := item.repo
 
 	interactiveName := TmuxSessionName(repo.DirName, false)

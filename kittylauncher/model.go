@@ -16,6 +16,7 @@ const (
 	viewPromote
 	viewEdit
 	viewConfirm
+	viewWorktree
 )
 
 type sessionStatus int
@@ -61,6 +62,12 @@ type model struct {
 
 	showArchived bool // toggle to show/hide archived repos
 
+	// Worktree prompt state
+	wtFields  []textinput.Model // 0=branch, 1=prompt
+	wtYolo    bool
+	wtFocus   int // focused field index
+	wtParent  string // DirName of parent repo
+
 	// Confirm dialog state
 	confirmMsg    string
 	confirmAction func()
@@ -80,6 +87,10 @@ func newModel(cfg *Config, cfgPath string) model {
 	items := make([]repoItem, 0, len(repos)+len(scratches)+len(archived))
 	for _, r := range repos {
 		items = append(items, repoItem{repo: r})
+		// Discover worktrees for this repo
+		for _, wt := range DiscoverWorktrees(r) {
+			items = append(items, repoItem{repo: wt})
+		}
 	}
 	for _, r := range scratches {
 		items = append(items, repoItem{repo: r})
@@ -348,6 +359,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Worktree panel
+	if m.mode == viewWorktree {
+		// Pass to text inputs first
+		if m.wtFocus < wtFieldCount {
+			var cmd tea.Cmd
+			m.wtFields[m.wtFocus], cmd = m.wtFields[m.wtFocus].Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	}
+
 	// Pass through to sub-components
 	if m.filtering {
 		var cmd tea.Cmd
@@ -380,6 +402,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Edit mode
 	if m.mode == viewEdit {
 		return m.handleEditKey(msg)
+	}
+
+	// Worktree mode
+	if m.mode == viewWorktree {
+		return m.handleWorktreeKey(key)
 	}
 
 	// Help mode
@@ -489,6 +516,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "Y":
 		m.toggleYoloFlag()
 		return m, nil
+	case "w":
+		return m, m.openWorktreePanel()
 	case "E":
 		return m, m.openEditPanel()
 	case "s":
@@ -549,6 +578,8 @@ func (m model) handleAction(action string) (tea.Model, tea.Cmd) {
 		m.toggleYoloFlag()
 	case "E":
 		return m, m.openEditPanel()
+	case "w":
+		return m, m.openWorktreePanel()
 	case "s":
 		return m, m.createScratch()
 	case "p":

@@ -103,8 +103,10 @@ type Repo struct {
 	Favourite    bool
 	IsScratch    bool
 	IsCollection bool
-	IsArchived   bool
-	Parent       string // DirName of parent collection, empty if top-level
+	IsArchived     bool
+	IsWorktree     bool
+	WorktreeBranch string
+	Parent         string // DirName of parent collection or worktree parent, empty if top-level
 }
 
 func defaultShort(dirName string) string {

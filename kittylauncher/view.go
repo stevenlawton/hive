@@ -121,6 +121,30 @@ func (m model) viewList() (string, listLayout) {
 		inner.WriteString("\n")
 	}
 
+	if m.mode == viewWorktree {
+		inner.WriteString(subtitleStyle.UnsetPadding().Render("  New worktree"))
+		inner.WriteString("\n")
+		for i, f := range m.wtFields {
+			prefix := "  "
+			if i == m.wtFocus {
+				prefix = "> "
+			}
+			inner.WriteString(prefix + f.View() + "\n")
+		}
+		// Yolo toggle
+		check := "[ ]"
+		if m.wtYolo {
+			check = "[x]"
+		}
+		prefix := "  "
+		if m.wtFocus == wtFieldCount {
+			prefix = "> "
+		}
+		inner.WriteString(prefix + check + " Yolo\n")
+		inner.WriteString(subtitleStyle.UnsetPadding().Render("  ctrl+s to create, esc to cancel"))
+		inner.WriteString("\n")
+	}
+
 	// Build display lines from displayOrder (already sorted: active > favourites > rest)
 	type displayLine struct {
 		text      string
@@ -495,7 +519,7 @@ func (m model) renderKeyBar() (string, []keyBarButton) {
 	var buttons []keyBarButton
 	row1 := []struct{ key, val, action string }{
 		{"enter", "open", "enter"}, {"⇧↵", "shell", "shift+enter"}, {"r", "remote", "r"},
-		{"s", "scratch", "s"}, {"tab", "focus", "tab"}, {"/", "filter", "/"},
+		{"s", "scratch", "s"}, {"w", "worktree", "w"}, {"tab", "focus", "tab"}, {"/", "filter", "/"},
 	}
 	row2 := []struct{ key, val, action string }{
 		{"x", "kill", "x"}, {"d", "detach", "d"}, {"E", "edit", "E"},
