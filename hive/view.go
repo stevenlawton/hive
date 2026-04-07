@@ -42,10 +42,19 @@ func (m model) View() tea.View {
 		v = tea.NewView(m.viewHelp())
 	case viewEdit:
 		v = tea.NewView(m.viewEdit())
+	case viewWorkspace:
+		m.workspace.SetSize(m.width, m.height)
+		statusBar := m.renderWorkspaceStatusBar()
+		v = tea.NewView(m.workspace.View(statusBar))
+	case viewAttach:
+		v = tea.NewView("") // TUI hidden during attach
 	default:
-		content, l := m.viewList()
+		// Manager view — two-pane layout
+		listContent, l := m.viewList()
 		layout = l
-		v = tea.NewView(content)
+		m.manager.SetSize(m.width, m.height)
+		statusBar := m.renderStatusBar() + "\n" + m.renderKeyBarString()
+		v = tea.NewView(m.manager.View(listContent, statusBar))
 	}
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
@@ -513,6 +522,11 @@ type keyBarButton struct {
 	xStart, xEnd int
 	row          int
 	action       string // key name to simulate
+}
+
+func (m model) renderKeyBarString() string {
+	s, _ := m.renderKeyBar()
+	return s
 }
 
 func (m model) renderKeyBar() (string, []keyBarButton) {

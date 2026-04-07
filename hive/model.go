@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"hive/ui"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -11,7 +14,9 @@ import (
 type viewMode int
 
 const (
-	viewList viewMode = iota
+	viewManager   viewMode = iota // main list + preview pane
+	viewWorkspace                 // tabbed workspace with splits
+	viewAttach                    // full-screen PTY attach
 	viewHelp
 	viewPromote
 	viewEdit
@@ -32,12 +37,13 @@ const (
 )
 
 type repoItem struct {
-	repo      Repo
-	status    sessionStatus
-	tmuxSes   string         // tmux session name if active
-	title     string         // claude session title if available
+	repo        Repo
+	status      sessionStatus
+	tmuxSes     string         // tmux session name if active
+	title       string         // claude session title if available
 	richStatus  *SessionStatus // from plugin status file (nil if no status file)
 	bridgeEntry *BridgeEntry   // from bridge-sessions.json (nil if not bridged)
+	diffStats   string         // "+42/-13" or ""
 }
 
 type model struct {
@@ -61,6 +67,11 @@ type model struct {
 	tabFlashing map[string]string // session tabs currently flashed (keyed by dirName, value: "bell" or "complete")
 
 	showArchived bool // toggle to show/hide archived repos
+
+	// New UI components
+	manager   *ui.ManagerView
+	workspace *ui.WorkspaceView
+	chord     *ChordHandler
 
 	// Worktree prompt state
 	wtFields  []textinput.Model // 0=branch, 1=prompt
@@ -108,15 +119,19 @@ func newModel(cfg *Config, cfgPath string) model {
 	pr.Placeholder = "new-project-name"
 
 	m := model{
-		cfg:      cfg,
-		cfgPath:  cfgPath,
-		items:    items,
-		keys:     newKeyMap(),
-		filter:   fi,
-		promote:  pr,
-		filtered: allIndicesFor(len(items)),
+		cfg:         cfg,
+		cfgPath:     cfgPath,
+		items:       items,
+		keys:        newKeyMap(),
+		filter:      fi,
+		promote:     pr,
+		filtered:    allIndicesFor(len(items)),
 		alerts:      make(map[string]string),
 		tabFlashing: make(map[string]string),
+		manager:     ui.NewManagerView(),
+		workspace:   ui.NewWorkspaceView(),
+		chord:       NewChordHandler(500 * time.Millisecond),
+		mode:        viewManager,
 	}
 	m.rebuildDisplayOrder()
 	return m
@@ -307,11 +322,27 @@ func flashRestore() tea.Cmd {
 }
 
 type reconnectMsg struct{}
+type captureTickMsg struct{}
+
+func captureTick() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+		return captureTickMsg{}
+	})
+}
+
+func gitDiff(repoPath string) (string, error) {
+	cmd := exec.Command("git", "-C", repoPath, "diff")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
 
 // --- Tea interface ---
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(healthTick(), waitForEvent(), func() tea.Msg {
+	return tea.Batch(healthTick(), waitForEvent(), captureTick(), func() tea.Msg {
 		return reconnectMsg{}
 	})
 }
@@ -321,7 +352,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.manager.SetSize(msg.Width, msg.Height)
+		m.workspace.SetSize(msg.Width, msg.Height)
 		return m, nil
+	case captureTickMsg:
+		m.updateCaptures()
+		return m, captureTick()
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tickMsg:
@@ -393,6 +429,34 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	// Workspace mode: chord handling and key forwarding
+	if m.mode == viewWorkspace {
+		if m.chord.Pending() {
+			action, ok := m.chord.Complete(key)
+			if ok {
+				return m.handleChordAction(action)
+			}
+			// Unknown chord key — forward to session
+			m.chord.Cancel()
+			sesName := m.workspace.FocusedSessionName()
+			if sesName != "" {
+				TmuxSendRawKeys(sesName, key)
+			}
+			return m, nil
+		}
+		// Ctrl+Space (NUL byte) starts a chord
+		if key == "ctrl+@" || key == "ctrl+space" {
+			m.chord.Start()
+			return m, nil
+		}
+		// Forward all other keys to focused session
+		sesName := m.workspace.FocusedSessionName()
+		if sesName != "" {
+			TmuxSendRawKeys(sesName, key)
+		}
+		return m, nil
+	}
+
 	// Edit mode
 	if m.mode == viewEdit {
 		return m.handleEditKey(msg)
@@ -406,7 +470,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Help mode
 	if m.mode == viewHelp {
 		if key == "?" || key == "escape" {
-			m.mode = viewList
+			m.mode = viewManager
 		}
 		return m, nil
 	}
@@ -418,9 +482,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.confirmAction != nil {
 				m.confirmAction()
 			}
-			m.mode = viewList
+			m.mode = viewManager
 		case "n", "N", "escape":
-			m.mode = viewList
+			m.mode = viewManager
 		}
 		return m, nil
 	}
@@ -433,11 +497,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if name != "" {
 				m.promoteSelected(name)
 			}
-			m.mode = viewList
+			m.mode = viewManager
 			m.promote.SetValue("")
 			return m, nil
 		case "escape":
-			m.mode = viewList
+			m.mode = viewManager
 			m.promote.SetValue("")
 			return m, nil
 		}
@@ -535,7 +599,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.cursor = max(0, len(m.displayOrder)-1)
 		}
 	case "tab":
-		return m, m.focusSelectedTab()
+		m.manager.Preview.ToggleTab()
+		return m, nil
 	case "x":
 		return m, m.killSelected()
 	case "d":
@@ -583,7 +648,8 @@ func (m model) handleAction(action string) (tea.Model, tea.Cmd) {
 			return m, m.promote.Focus()
 		}
 	case "tab":
-		return m, m.focusSelectedTab()
+		m.manager.Preview.ToggleTab()
+		return m, nil
 	case "A":
 		return m, m.archiveSelected()
 	case "U":
@@ -796,5 +862,111 @@ func fuzzyMatch(query, target string) bool {
 		}
 	}
 	return qi == len(query)
+}
+
+// handleChordAction executes a workspace chord action.
+func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
+	switch action {
+	case ChordReturnManager:
+		m.mode = viewManager
+	case ChordNextTab:
+		m.workspace.TabBar.Next()
+	case ChordPrevTab:
+		m.workspace.TabBar.Prev()
+	case ChordJumpTab:
+		m.workspace.TabBar.SetActive(m.chord.TabIndex - 1)
+	case ChordFocusLeft:
+		if tab := m.workspace.ActiveTab(); tab != nil {
+			tab.SplitPane.FocusLeft()
+		}
+	case ChordFocusRight:
+		if tab := m.workspace.ActiveTab(); tab != nil {
+			tab.SplitPane.FocusRight()
+		}
+	case ChordCloseSplit:
+		if tab := m.workspace.ActiveTab(); tab != nil {
+			if split := tab.SplitPane.FocusedSplit(); split != nil {
+				tab.SplitPane.RemoveSplit(split.Label)
+			}
+			if len(tab.SplitPane.Splits) == 0 {
+				m.workspace.CloseTab(tab.ID)
+				if len(m.workspace.Tabs) == 0 {
+					m.mode = viewManager
+				}
+			}
+		}
+	case ChordFullScreen:
+		// Full-screen attach is handled separately
+		sesName := m.workspace.FocusedSessionName()
+		if sesName != "" {
+			m.mode = viewAttach
+			return m, func() tea.Msg {
+				ui.AttachSession(sesName)
+				return reconnectMsg{} // return to workspace after detach
+			}
+		}
+	}
+	return m, nil
+}
+
+// updateCaptures polls tmux capture-pane for visible sessions.
+func (m *model) updateCaptures() {
+	// Update preview in manager view
+	if m.mode == viewManager {
+		if sel := m.selectedItem(); sel != nil && sel.tmuxSes != "" {
+			m.manager.Preview.SetSession(sel.tmuxSes)
+			if content, err := TmuxCapturePane(sel.tmuxSes); err == nil {
+				m.manager.Preview.Terminal.SetContent(content)
+			}
+			if sel.repo.Path != "" {
+				if diff, err := gitDiff(sel.repo.Path); err == nil {
+					m.manager.Preview.DiffView.SetDiff(diff)
+				}
+			}
+		}
+	}
+
+	// Update workspace splits
+	if m.mode == viewWorkspace {
+		tab := m.workspace.ActiveTab()
+		if tab != nil {
+			for i := range tab.SplitPane.Splits {
+				s := &tab.SplitPane.Splits[i]
+				if content, err := TmuxCapturePane(s.SessionName); err == nil {
+					s.Terminal.SetContent(content)
+				}
+			}
+		}
+	}
+
+	// Update diff stats for active sessions
+	for i := range m.items {
+		item := &m.items[i]
+		if item.status == statusClaude || item.status == statusShell {
+			if diff, err := gitDiff(item.repo.Path); err == nil {
+				added, removed := ui.ParseDiffStats(diff)
+				if added > 0 || removed > 0 {
+					item.diffStats = fmt.Sprintf("+%d/-%d", added, removed)
+				} else {
+					item.diffStats = ""
+				}
+			}
+		} else {
+			item.diffStats = ""
+		}
+	}
+}
+
+// renderWorkspaceStatusBar renders the status bar for workspace view.
+func (m model) renderWorkspaceStatusBar() string {
+	keys := []string{
+		"Ctrl+Space q:manager",
+		"n:next-tab",
+		"p:prev-tab",
+		"←→:focus",
+		"x:close",
+		"f:fullscreen",
+	}
+	return ui.StatusBarStyle.Render(strings.Join(keys, "  "))
 }
 

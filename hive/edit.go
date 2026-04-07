@@ -126,7 +126,7 @@ func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "escape":
-		m.mode = viewList
+		m.mode = viewManager
 		return m, nil
 
 	case "enter":
@@ -141,7 +141,7 @@ func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.editFocus >= editFieldCount {
 			// Save and close
 			m.saveEditPanel()
-			m.mode = viewList
+			m.mode = viewManager
 			return m, nil
 		}
 		return m, m.focusEditField()
@@ -170,7 +170,7 @@ func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+s":
 		m.saveEditPanel()
-		m.mode = viewList
+		m.mode = viewManager
 		return m, nil
 	}
 

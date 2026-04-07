@@ -52,7 +52,7 @@ func (m *model) handleWorktreeKey(key string) (tea.Model, tea.Cmd) {
 	case "ctrl+s", "ctrl+enter":
 		return m, m.createWorktree()
 	case "escape":
-		m.mode = viewList
+		m.mode = viewManager
 		return m, nil
 	case "tab", "down":
 		m.wtFields[m.wtFocus].Blur()
@@ -135,7 +135,7 @@ func (m *model) createWorktree() tea.Cmd {
 		cmd = exec.Command("git", "-C", parent.repo.Path, "worktree", "add", wtDir, branch)
 		if out2, err2 := cmd.CombinedOutput(); err2 != nil {
 			m.err = fmt.Errorf("worktree: %s %s", string(out), string(out2))
-			m.mode = viewList
+			m.mode = viewManager
 			return nil
 		}
 		_ = out
@@ -145,7 +145,7 @@ func (m *model) createWorktree() tea.Cmd {
 	sessionName := TmuxSessionName(m.wtParent+"-wt-"+branch, false)
 	if err := TmuxNewSession(sessionName, wtDir); err != nil {
 		m.err = fmt.Errorf("tmux: %w", err)
-		m.mode = viewList
+		m.mode = viewManager
 		return nil
 	}
 
@@ -178,7 +178,7 @@ func (m *model) createWorktree() tea.Cmd {
 		tmuxSes: sessionName,
 	})
 
-	m.mode = viewList
+	m.mode = viewManager
 	m.filtered = m.allIndices()
 	m.rebuildDisplayOrder()
 

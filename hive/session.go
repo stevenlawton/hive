@@ -65,6 +65,9 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 			return nil
 		}
 		m.clearFlash(item)
+		// Switch to workspace tab if it exists, or create one
+		m.workspace.OpenTab(repo.DirName, repo.Short, sessionName, "main")
+		m.mode = viewWorkspace
 		return nil
 	}
 
@@ -85,6 +88,10 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 	}
 	item.tmuxSes = sessionName
 	m.rebuildDisplayOrder()
+
+	// Open workspace tab
+	m.workspace.OpenTab(repo.DirName, repo.Short, sessionName, "main")
+	m.mode = viewWorkspace
 
 	return nil
 }
