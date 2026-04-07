@@ -328,14 +328,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTick()
 	case flashRestoreMsg:
 		m.flashing = false
-		kittyRun("@", "set-tab-color", "--self", "active_bg=#ff8c00")
 		return m, nil
 	case sessionFlashRestoreMsg:
-		if msg.color != "" {
-			KittySetTabColor(msg.short, msg.color)
-		} else {
-			KittyResetTabColor(msg.short)
-		}
 		return m, nil
 	case reconnectMsg:
 		m.reconnectSessions()
@@ -547,8 +541,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		return m, m.detachSelected()
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		idx := int(key[0] - '0')
-		KittyFocusTabByIndex(idx)
+		// Number keys reserved for future use
 	}
 
 	return m, nil
@@ -627,11 +620,6 @@ func (m *model) handleSessionEvent(ev SessionEvent) tea.Cmd {
 			// User started new work — clear completion flash
 			if m.tabFlashing[item.repo.DirName] == "complete" {
 				delete(m.tabFlashing, item.repo.DirName)
-				if item.repo.Color != "" {
-					KittySetTabColor(item.repo.Short, item.repo.Color)
-				} else {
-					KittyResetTabColor(item.repo.Short)
-				}
 			}
 		case "tool":
 			rs.Status = "running"
@@ -640,17 +628,10 @@ func (m *model) handleSessionEvent(ev SessionEvent) tea.Cmd {
 			// Tool use means user responded — clear completion flash
 			if m.tabFlashing[item.repo.DirName] == "complete" {
 				delete(m.tabFlashing, item.repo.DirName)
-				if item.repo.Color != "" {
-					KittySetTabColor(item.repo.Short, item.repo.Color)
-				} else {
-					KittyResetTabColor(item.repo.Short)
-				}
 			}
 		case "completed":
 			rs.Status = "completed"
-			// Flash the session's tab green — stays until next interaction
 			if shouldNotify {
-				KittySetTabColor(item.repo.Short, "#00ff88")
 				m.tabFlashing[item.repo.DirName] = "complete"
 			}
 		case "ended":
@@ -740,28 +721,10 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		title, err := TmuxPaneTitle(interactiveName)
 		if err == nil && title != item.title {
 			item.title = title
-			newTabTitle := item.repo.Short
-			if title != "" {
-				newTabTitle = item.repo.Short + " — " + title
-			}
-			KittySetTabTitle("title:^"+item.repo.Short, newTabTitle)
 		}
 	}
 
-	// Flash session tabs: red for bell (waiting for input), green for completion
-	// Check which tab is focused to auto-clear flashes
-	var focusedTabTitle string
-	if len(m.tabFlashing) > 0 {
-		if tabs, err := KittyListTabs(); err == nil {
-			for _, tab := range tabs {
-				if tab.IsFocused {
-					focusedTabTitle = tab.Title
-					break
-				}
-			}
-		}
-	}
-
+	// Track bell state for sessions
 	for i := range m.items {
 		item := &m.items[i]
 		flashReason := m.tabFlashing[item.repo.DirName]
@@ -773,19 +736,10 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 			continue
 		}
 
-		// Clear flash if user is currently on this tab
-		if flashReason != "" && focusedTabTitle != "" {
-			if focusedTabTitle == item.repo.Short || strings.HasPrefix(focusedTabTitle, item.repo.Short+" ") {
-				m.clearFlash(item)
-				continue
-			}
-		}
-
 		interactiveName := TmuxSessionName(item.repo.DirName, false)
 		if TmuxWindowHasBell(interactiveName) {
 			if flashReason != "bell" {
 				m.tabFlashing[item.repo.DirName] = "bell"
-				KittySetTabColor(item.repo.Short, "#ff0000")
 			}
 		} else if flashReason == "bell" {
 			m.clearFlash(item)
@@ -796,22 +750,12 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 	if hasNewHighSeverity {
 		if m.cfg.Notifications.TabFlash && !m.flashing {
 			m.flashing = true
-			kittyRun("@", "set-tab-color", "--self", "active_bg=#ff0000")
 			cmds = append(cmds, flashRestore())
 		}
 		if m.cfg.Notifications.Desktop {
 			for k, v := range newAlerts {
 				if _, existed := m.alerts[k]; !existed {
 					sendDesktopNotification(k, v)
-				}
-			}
-		}
-		for k := range newAlerts {
-			if _, existed := m.alerts[k]; !existed {
-				for _, item := range m.items {
-					if item.repo.DirName == k {
-						KittySetTabTitle("title:^"+item.repo.Short, "⚠ "+item.repo.Short)
-					}
 				}
 			}
 		}

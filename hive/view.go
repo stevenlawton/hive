@@ -102,7 +102,7 @@ func (m model) viewList() (string, listLayout) {
 	var inner strings.Builder
 
 	// Title inside box
-	inner.WriteString(titleStyle.UnsetPadding().Render("⚡ KittyLauncher"))
+	inner.WriteString(titleStyle.UnsetPadding().Render("⚡ Hive"))
 	inner.WriteString("\n")
 
 	if m.filtering {
@@ -279,7 +279,7 @@ func (m model) viewList() (string, listLayout) {
 func (m model) viewHelp() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("⚡ KittyLauncher — Help"))
+	b.WriteString(titleStyle.Render("⚡ Hive — Help"))
 	b.WriteString("\n\n")
 
 	bindings := m.keys.FullHelp()

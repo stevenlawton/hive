@@ -38,7 +38,7 @@ func DetectDeadRemotes(items []repoItem, liveSessions map[string]bool) map[strin
 }
 
 // NotifySessionEvent dispatches notifications for a session event based on config.
-// Returns true if the KittyLauncher tab should flash.
+// Returns true if the tab should flash.
 func NotifySessionEvent(cfg *NotificationConfig, ev SessionEvent) bool {
 	// Only notify on meaningful events
 	switch ev.Event {
@@ -48,7 +48,7 @@ func NotifySessionEvent(cfg *NotificationConfig, ev SessionEvent) bool {
 		return false
 	}
 
-	title := fmt.Sprintf("KittyLauncher: %s", ev.Repo)
+	title := fmt.Sprintf("Hive: %s", ev.Repo)
 	message := fmt.Sprintf("Claude session %s", ev.Event)
 
 	if cfg.Sound {

@@ -44,7 +44,6 @@ func (m *model) doArchive(dirName string) {
 	interactiveName := TmuxSessionName(dirName, false)
 	if TmuxHasSession(interactiveName) {
 		TmuxKillSession(interactiveName)
-		KittyCloseTab("title:^" + item.repo.Short)
 	}
 	rcName := TmuxSessionName(dirName, true)
 	if TmuxHasSession(rcName) {

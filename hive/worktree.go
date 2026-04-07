@@ -103,7 +103,7 @@ func (m *model) handleWorktreeKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// createWorktree creates a git worktree, tmux session, and kitty split.
+// createWorktree creates a git worktree and tmux session.
 func (m *model) createWorktree() tea.Cmd {
 	branch := strings.TrimSpace(m.wtFields[wtFieldBranch].Value())
 	if branch == "" {
@@ -148,13 +148,6 @@ func (m *model) createWorktree() tea.Cmd {
 		m.mode = viewList
 		return nil
 	}
-
-	// Launch as a kitty split in the parent's tab
-	kittyRun("@", "launch",
-		"--type=window",
-		"--match", "title:^"+parent.repo.Short,
-		"--title", parent.repo.Short+"/"+branch,
-		"tmux", "attach", "-t", sessionName)
 
 	// Launch Claude in the worktree
 	claudeCmd := "claude"
@@ -225,7 +218,7 @@ func DiscoverWorktrees(parentRepo Repo) []Repo {
 	return repos
 }
 
-// killWorktreeSession kills the tmux session and kitty split for a worktree.
+// killWorktreeSession kills the tmux session for a worktree.
 // Does NOT remove the worktree from disk.
 func (m *model) killWorktreeSession() tea.Cmd {
 	item := m.selectedItem()
@@ -237,9 +230,6 @@ func (m *model) killWorktreeSession() tea.Cmd {
 	if TmuxHasSession(sessionName) {
 		TmuxKillSession(sessionName)
 	}
-
-	// Close the kitty split (window within the tab)
-	kittyRun("@", "close-window", "--match", "title:^"+item.repo.Short)
 
 	// Remove from items
 	for i := range m.items {

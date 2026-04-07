@@ -15,8 +15,8 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.ReposDir != filepath.Join(home, "repos") {
 		t.Errorf("expected default repos_dir %s/repos, got %s", home, cfg.ReposDir)
 	}
-	if cfg.ScratchDir != "/tmp/kl-scratch" {
-		t.Errorf("expected default scratch_dir /tmp/kl-scratch, got %s", cfg.ScratchDir)
+	if cfg.ScratchDir != "/tmp/hive-scratch" {
+		t.Errorf("expected default scratch_dir /tmp/hive-scratch, got %s", cfg.ScratchDir)
 	}
 	if cfg.DefaultAction != "claude" {
 		t.Errorf("expected default_action claude, got %s", cfg.DefaultAction)

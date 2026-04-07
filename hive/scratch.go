@@ -132,8 +132,6 @@ func (m *model) createScratch() tea.Cmd {
 	tabTitle := fmt.Sprintf("SCR-%d", scratchCount+1)
 	item.repo.Short = tabTitle
 
-	KittyLaunchTab(tabTitle, "tmux", "attach", "-t", sessionName)
-
 	m.items = append(m.items, item)
 	m.filtered = m.allIndices()
 	m.applyFilter()
@@ -168,5 +166,5 @@ func (m *model) promoteSelected(name string) {
 		item.tmuxSes = newSessionName
 	}
 
-	KittySetTabTitle("title:^"+oldShort, item.repo.Short)
+	_ = oldShort // previously used for kitty tab title
 }
