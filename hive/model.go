@@ -699,9 +699,12 @@ func (m *model) handleSessionEvent(ev SessionEvent) tea.Cmd {
 			rs.Status = "completed"
 			if shouldNotify {
 				m.tabFlashing[item.repo.DirName] = "complete"
+				m.manager.NotifyLog.Add(item.repo.DirName, "completed", time.Now())
+				m.workspace.TabBar.SetFlashing(item.repo.DirName, true)
 			}
 		case "ended":
 			rs.Status = "ended"
+			m.manager.NotifyLog.Add(item.repo.DirName, "ended", time.Now())
 		}
 		return nil
 	}
@@ -734,6 +737,8 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 	for k, v := range newAlerts {
 		if _, existed := m.alerts[k]; !existed {
 			hasNewHighSeverity = true
+			m.manager.NotifyLog.Add(k, "crashed", time.Now())
+			m.workspace.TabBar.SetFlashing(k, true)
 			for i := range m.items {
 				if m.items[i].repo.DirName == k && v == "session crashed" {
 					m.items[i].status = statusDead
@@ -806,6 +811,8 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		if TmuxWindowHasBell(interactiveName) {
 			if flashReason != "bell" {
 				m.tabFlashing[item.repo.DirName] = "bell"
+				m.manager.NotifyLog.Add(item.repo.DirName, "waiting", time.Now())
+				m.workspace.TabBar.SetFlashing(item.repo.DirName, true)
 			}
 		} else if flashReason == "bell" {
 			m.clearFlash(item)

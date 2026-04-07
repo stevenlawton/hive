@@ -411,12 +411,17 @@ func (m model) renderItem(vi viewItem) string {
 
 	status := m.renderStatus(vi.item)
 
+	diffStats := ""
+	if vi.item.diffStats != "" {
+		diffStats = " " + idleStyle.UnsetWidth().Render(vi.item.diffStats)
+	}
+
 	desc := ""
 	if vi.item.repo.Description != "" {
 		desc = "  " + idleStyle.UnsetWidth().Render(vi.item.repo.Description)
 	}
 
-	return cursor + name + "  " + flagStr + status + desc
+	return cursor + name + "  " + flagStr + status + diffStats + desc
 }
 
 func (m model) renderStatusBar() string {
