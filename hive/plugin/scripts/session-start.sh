@@ -7,9 +7,13 @@ if [ -n "${TMUX:-}" ]; then
   SESSION_NAME=$(tmux display-message -p '#{session_name}' 2>/dev/null || true)
 fi
 
-[[ "$SESSION_NAME" =~ ^kl- ]] || exit 0
+[[ "$SESSION_NAME" =~ ^(kl|hive)- ]] || exit 0
 
-REPO="${SESSION_NAME#kl-}"
+if [[ "$SESSION_NAME" =~ ^hive- ]]; then
+  REPO="${SESSION_NAME#hive-}"
+else
+  REPO="${SESSION_NAME#kl-}"
+fi
 
 curl -s -X POST "http://127.0.0.1:9199/event" \
   -H "Content-Type: application/json" \
