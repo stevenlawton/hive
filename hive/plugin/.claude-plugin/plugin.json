@@ -1,0 +1,8 @@
+{
+  "name": "kittylauncher",
+  "version": "0.1.0",
+  "description": "Bridges Claude Code sessions with KittyLauncher TUI — reports session lifecycle events via status files for notifications, tracking, and tab management.",
+  "author": {
+    "name": "Steve"
+  }
+}
