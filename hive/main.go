@@ -9,8 +9,10 @@ import (
 )
 
 func main() {
+	RunMigration()
+
 	home, _ := os.UserHomeDir()
-	cfgPath := filepath.Join(home, ".config", "kittylauncher", "config.yaml")
+	cfgPath := filepath.Join(home, ".config", "hive", "config.yaml")
 
 	cfg, err := LoadConfig(cfgPath)
 	if err != nil {
