@@ -1,15 +1,15 @@
-# KittyLauncher configuration
-# Place at: ~/.config/kittylauncher/config.yaml
+# Hive configuration
+# Place at: ~/.config/hive/config.yaml
 
 # Global settings
 repos_dir: ~/repos              # Directory to scan for repos
-scratch_dir: /tmp/kl-scratch    # Where scratch instances are created
+scratch_dir: /tmp/hive-scratch  # Where scratch instances are created
 default_action: claude           # "claude" (start claude on open) or "shell" (just a shell)
 
 # Notification settings
 notifications:
   desktop: true                  # Send desktop notifications for high-severity events
-  tab_flash: true                # Flash TUI tab on alerts
+  tab_flash: true                # Flash tabs on alerts
   poll_interval: 5               # Seconds between health checks
 
 # Per-workspace overrides
@@ -18,7 +18,7 @@ notifications:
 workspaces:
   SliceWise:
     name: "SliceWize"            # Display name in TUI list
-    short: "SW"                  # Short name for kitty tab title
+    short: "SW"                  # Short name for tab title
     color: "#ff6b6b"             # Tab color (hex)
     remote: true                 # Auto-start claude remote-control session
     favourite: true              # Pin to favourites section
