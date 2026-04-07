@@ -43,7 +43,7 @@ func LoadConfig(path string) (*Config, error) {
 	home, _ := os.UserHomeDir()
 	cfg := &Config{
 		ReposDir:      filepath.Join(home, "repos"),
-		ScratchDir:    "/tmp/kl-scratch",
+		ScratchDir:    "/tmp/hive-scratch",
 		DefaultAction: "claude",
 		Notifications: NotificationConfig{
 			Desktop:      true,

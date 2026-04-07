@@ -7,9 +7,12 @@ import (
 )
 
 const (
-	tmuxPrefix       = "kl-"
-	tmuxRemotePrefix = "kl-rc-"
-	tmuxScratchPfx   = "kl-scratch-"
+	tmuxPrefix         = "hive-"
+	tmuxRemotePrefix   = "hive-rc-"
+	tmuxScratchPfx     = "hive-scratch-"
+	legacyPrefix       = "kl-"
+	legacyRemotePrefix = "kl-rc-"
+	legacyScratchPfx   = "kl-scratch-"
 )
 
 type TmuxSession struct {
@@ -60,8 +63,16 @@ func tmuxListSessionsArgs() []string {
 	return []string{"list-sessions"}
 }
 
-func tmuxCapturePaneArgs(sessionName string) []string {
+func tmuxPaneTitleArgs(sessionName string) []string {
 	return []string{"display-message", "-t", sessionName, "-p", "#{pane_title}"}
+}
+
+func tmuxCapturePaneArgs(sessionName string) []string {
+	return []string{"capture-pane", "-p", "-e", "-t", sessionName}
+}
+
+func tmuxCapturePaneFullArgs(sessionName string) []string {
+	return []string{"capture-pane", "-p", "-e", "-S", "-", "-E", "-", "-t", sessionName}
 }
 
 func ParseTmuxSessions(output string) []TmuxSession {
@@ -71,20 +82,31 @@ func ParseTmuxSessions(output string) []TmuxSession {
 			continue
 		}
 		name := strings.SplitN(line, ":", 2)[0]
-		if !strings.HasPrefix(name, tmuxPrefix) {
+
+		var ses TmuxSession
+		ses.Name = name
+
+		switch {
+		case strings.HasPrefix(name, tmuxRemotePrefix):
+			ses.IsRemote = true
+			ses.RepoKey = strings.TrimPrefix(name, tmuxRemotePrefix)
+		case strings.HasPrefix(name, legacyRemotePrefix):
+			ses.IsRemote = true
+			ses.RepoKey = strings.TrimPrefix(name, legacyRemotePrefix)
+		case strings.HasPrefix(name, tmuxScratchPfx):
+			ses.IsScratch = true
+			ses.RepoKey = strings.TrimPrefix(name, tmuxScratchPfx)
+		case strings.HasPrefix(name, legacyScratchPfx):
+			ses.IsScratch = true
+			ses.RepoKey = strings.TrimPrefix(name, legacyScratchPfx)
+		case strings.HasPrefix(name, tmuxPrefix):
+			ses.RepoKey = strings.TrimPrefix(name, tmuxPrefix)
+		case strings.HasPrefix(name, legacyPrefix):
+			ses.RepoKey = strings.TrimPrefix(name, legacyPrefix)
+		default:
 			continue
 		}
-		s := TmuxSession{Name: name}
-		if strings.HasPrefix(name, tmuxRemotePrefix) {
-			s.IsRemote = true
-			s.RepoKey = strings.TrimPrefix(name, tmuxRemotePrefix)
-		} else if strings.HasPrefix(name, tmuxScratchPfx) {
-			s.IsScratch = true
-			s.RepoKey = strings.TrimPrefix(name, tmuxPrefix)
-		} else {
-			s.RepoKey = strings.TrimPrefix(name, tmuxPrefix)
-		}
-		sessions = append(sessions, s)
+		sessions = append(sessions, ses)
 	}
 	return sessions
 }
@@ -130,11 +152,28 @@ func TmuxListSessions() ([]TmuxSession, error) {
 }
 
 func TmuxPaneTitle(sessionName string) (string, error) {
-	out, err := tmuxOutput(tmuxCapturePaneArgs(sessionName)...)
+	out, err := tmuxOutput(tmuxPaneTitleArgs(sessionName)...)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+func TmuxCapturePane(sessionName string) (string, error) {
+	return tmuxOutput(tmuxCapturePaneArgs(sessionName)...)
+}
+
+func TmuxCapturePaneFull(sessionName string) (string, error) {
+	return tmuxOutput(tmuxCapturePaneFullArgs(sessionName)...)
+}
+
+func TmuxSendRawKeys(sessionName string, keys ...string) error {
+	args := append([]string{"send-keys", "-t", sessionName}, keys...)
+	return tmuxRun(args...)
+}
+
+func TmuxResizePane(sessionName string, width, height int) error {
+	return tmuxRun("resize-window", "-t", sessionName, "-x", fmt.Sprintf("%d", width), "-y", fmt.Sprintf("%d", height))
 }
 
 func TmuxWindowHasBell(sessionName string) bool {
