@@ -82,6 +82,11 @@ type model struct {
 	wtSplitMode   bool   // true = add as split pane, false = return to manager
 	wtOrientation ui.SplitOrientation // orientation for the split
 
+	// Key batching — accumulate printable chars, flush as one send-keys -l
+	keyBuf      strings.Builder
+	keyBufSes   string
+	keyBufTimer bool // true if flush timer is pending
+
 	// Confirm dialog state
 	confirmMsg    string
 	confirmAction func()
@@ -327,6 +332,7 @@ func flashRestore() tea.Cmd {
 
 type reconnectMsg struct{}
 type captureTickMsg struct{}
+type keyFlushMsg struct{}
 
 func captureTick() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
@@ -370,6 +376,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				TmuxSendLiteral(sesName, msg.Content)
 			}
 		}
+		return m, nil
+	case keyFlushMsg:
+		if m.keyBuf.Len() > 0 && m.keyBufSes != "" {
+			TmuxSendLiteral(m.keyBufSes, m.keyBuf.String())
+			m.keyBuf.Reset()
+		}
+		m.keyBufTimer = false
 		return m, nil
 	case tickMsg:
 		return m.handleTick()
@@ -483,9 +496,33 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if term := m.focusedTerminal(); term != nil && term.IsScrolledUp() {
 			term.ScrollOffset = 0
 		}
-		// Forward all other keys to focused session
+		// Forward keys to focused session — batch printable chars, send specials immediately
 		sesName := m.workspace.FocusedSessionName()
 		if sesName != "" {
+			if len(key) == 1 && key[0] >= ' ' && key[0] <= '~' {
+				// Printable ASCII — buffer it
+				if m.keyBufSes != sesName {
+					// Session changed, flush old buffer
+					if m.keyBuf.Len() > 0 {
+						TmuxSendLiteral(m.keyBufSes, m.keyBuf.String())
+						m.keyBuf.Reset()
+					}
+					m.keyBufSes = sesName
+				}
+				m.keyBuf.WriteByte(key[0])
+				if !m.keyBufTimer {
+					m.keyBufTimer = true
+					return m, tea.Tick(8*time.Millisecond, func(t time.Time) tea.Msg {
+						return keyFlushMsg{}
+					})
+				}
+				return m, nil
+			}
+			// Special key — flush buffer first, then send
+			if m.keyBuf.Len() > 0 {
+				TmuxSendLiteral(m.keyBufSes, m.keyBuf.String())
+				m.keyBuf.Reset()
+			}
 			TmuxSendRawKeys(sesName, key)
 		}
 		return m, nil
