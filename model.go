@@ -85,6 +85,7 @@ type model struct {
 	// Confirm dialog state
 	confirmMsg    string
 	confirmAction func()
+	confirmReturn viewMode // mode to return to after confirm (0 = manager)
 
 	// Edit panel state
 	editFields  []textinput.Model
@@ -515,9 +516,19 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.confirmAction != nil {
 				m.confirmAction()
 			}
-			m.mode = viewManager
+			if m.confirmReturn != 0 {
+				m.mode = m.confirmReturn
+				m.confirmReturn = 0
+			} else {
+				m.mode = viewManager
+			}
 		case "n", "N", "escape":
-			m.mode = viewManager
+			if m.confirmReturn != 0 {
+				m.mode = m.confirmReturn
+				m.confirmReturn = 0
+			} else {
+				m.mode = viewManager
+			}
 		}
 		return m, nil
 	}
@@ -986,27 +997,7 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 	case ChordCloseSplit:
 		if tab := m.workspace.ActiveTab(); tab != nil {
 			if split := tab.SplitPane.FocusedSplit(); split != nil {
-				// Kill the tmux session
-				if split.SessionName != "" {
-					TmuxKillSession(split.SessionName)
-				}
-				// Update item status
-				for i := range m.items {
-					if m.items[i].tmuxSes == split.SessionName {
-						m.items[i].status = statusNone
-						m.items[i].tmuxSes = ""
-						break
-					}
-				}
-				tab.SplitPane.RemoveSplit(split.Label)
-			}
-			if len(tab.SplitPane.Splits) == 0 {
-				m.workspace.CloseTab(tab.ID)
-				m.rebuildDisplayOrder()
-				if len(m.workspace.Tabs) == 0 {
-					m.mode = viewManager
-					m.manager.Preview.Terminal.InvalidateResize()
-				}
+				return m.closeSplit(tab, split)
 			}
 		}
 	case ChordFullScreen:
@@ -1085,6 +1076,95 @@ func (m *model) updateCaptures() {
 			}
 		} else {
 			item.diffStats = ""
+		}
+	}
+}
+
+// closeSplit handles the smart cleanup flow for closing a workspace split.
+func (m model) closeSplit(tab *ui.WorkspaceTab, split *ui.Split) (tea.Model, tea.Cmd) {
+	// Find the item for this split
+	var item *repoItem
+	for i := range m.items {
+		if m.items[i].tmuxSes == split.SessionName {
+			item = &m.items[i]
+			break
+		}
+	}
+
+	// Non-worktree split: just kill and remove
+	if item == nil || !item.repo.IsWorktree {
+		m.doCloseSplit(tab, split, item, false)
+		return m, nil
+	}
+
+	// Worktree split: check status
+	ws := checkWorktreeStatus(item.repo)
+
+	if !ws.exists {
+		// Worktree already gone — just clean up the pane
+		m.doCloseSplit(tab, split, item, false)
+		return m, nil
+	}
+
+	if ws.hasUncommitted {
+		// Uncommitted changes — ask user
+		repo := item.repo
+		m.confirmMsg = fmt.Sprintf("wt:%s has %s — commit & merge? (y=commit+merge, n=abandon)", ws.branch, ws.uncommittedDesc)
+		m.confirmReturn = viewWorkspace
+		m.confirmAction = func() {
+			// Auto-commit
+			exec.Command("git", "-C", repo.Path, "add", "-A").Run()
+			exec.Command("git", "-C", repo.Path, "commit", "-m", "wip: auto-commit from hive cleanup").Run()
+			// Merge and clean
+			if err := mergeWorktree(repo); err != nil {
+				m.err = err
+			}
+			removeWorktree(repo)
+			m.doCloseSplit(tab, split, item, true)
+		}
+		m.mode = viewConfirm
+		return m, nil
+	}
+
+	if ws.hasUnmerged {
+		// Unmerged commits — auto-merge
+		if err := mergeWorktree(item.repo); err != nil {
+			m.err = err
+			return m, nil
+		}
+	}
+
+	// Clean: remove worktree and close
+	removeWorktree(item.repo)
+	m.doCloseSplit(tab, split, item, true)
+	return m, nil
+}
+
+// doCloseSplit performs the actual split removal.
+func (m *model) doCloseSplit(tab *ui.WorkspaceTab, split *ui.Split, item *repoItem, removeItem bool) {
+	if split.SessionName != "" {
+		TmuxKillSession(split.SessionName)
+	}
+	if item != nil {
+		item.status = statusNone
+		item.tmuxSes = ""
+	}
+	if removeItem && item != nil {
+		for i := range m.items {
+			if m.items[i].repo.DirName == item.repo.DirName {
+				m.items = append(m.items[:i], m.items[i+1:]...)
+				break
+			}
+		}
+		m.filtered = m.allIndices()
+	}
+	tab.SplitPane.RemoveSplit(split.Label)
+	if len(tab.SplitPane.Splits) == 0 {
+		m.workspace.CloseTab(tab.ID)
+		m.rebuildDisplayOrder()
+		if len(m.workspace.Tabs) == 0 {
+			m.mode = viewManager
+			m.manager.Preview.Terminal.InvalidateResize()
 		}
 	}
 }

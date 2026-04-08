@@ -261,6 +261,79 @@ func (m *model) killWorktreeSession() tea.Cmd {
 	return nil
 }
 
+// worktreeStatus checks the state of a worktree for cleanup decisions.
+type worktreeStatus struct {
+	exists          bool
+	hasUncommitted  bool
+	hasUnmerged     bool
+	uncommittedDesc string // e.g. "3 modified, 1 untracked"
+	unmergedCount   int
+	branch          string
+	parentPath      string
+}
+
+func checkWorktreeStatus(repo Repo) worktreeStatus {
+	ws := worktreeStatus{
+		branch: repo.WorktreeBranch,
+	}
+
+	// Check if worktree directory still exists
+	if _, err := os.Stat(repo.Path); err != nil {
+		return ws
+	}
+	ws.exists = true
+
+	// Find parent path
+	for _, part := range []string{".worktrees", repo.WorktreeBranch} {
+		_ = part
+	}
+	ws.parentPath = filepath.Dir(filepath.Dir(repo.Path)) // up from .worktrees/<branch>
+
+	// Check for uncommitted changes
+	out, err := exec.Command("git", "-C", repo.Path, "status", "--porcelain").Output()
+	if err == nil && len(strings.TrimSpace(string(out))) > 0 {
+		ws.hasUncommitted = true
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		ws.uncommittedDesc = fmt.Sprintf("%d changed files", len(lines))
+	}
+
+	// Check for unmerged commits (commits on branch not in main)
+	out, err = exec.Command("git", "-C", repo.Path, "log", "--oneline", "main..HEAD").Output()
+	if err == nil && len(strings.TrimSpace(string(out))) > 0 {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		ws.unmergedCount = len(lines)
+		ws.hasUnmerged = true
+	}
+
+	return ws
+}
+
+// mergeWorktree merges the worktree branch into main and cleans up.
+func mergeWorktree(repo Repo) error {
+	parentPath := filepath.Dir(filepath.Dir(repo.Path))
+
+	// Merge branch into main from the parent repo
+	out, err := exec.Command("git", "-C", parentPath, "merge", repo.WorktreeBranch, "--no-edit").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("merge failed: %s", strings.TrimSpace(string(out)))
+	}
+
+	return nil
+}
+
+// removeWorktree deletes the git worktree and its branch.
+func removeWorktree(repo Repo) error {
+	parentPath := filepath.Dir(filepath.Dir(repo.Path))
+
+	// Remove worktree
+	exec.Command("git", "-C", parentPath, "worktree", "remove", repo.Path, "--force").Run()
+
+	// Delete branch
+	exec.Command("git", "-C", parentPath, "branch", "-D", repo.WorktreeBranch).Run()
+
+	return nil
+}
+
 func (m *model) wtReturnMode() viewMode {
 	if m.wtSplitMode {
 		m.wtSplitMode = false
