@@ -4,6 +4,9 @@ import (
 	"strings"
 )
 
+// HomeTabID is the reserved ID for the "main page" tab.
+const HomeTabID = "__home__"
+
 // WorkspaceTab holds the splits for one project tab.
 type WorkspaceTab struct {
 	ID        string
@@ -21,10 +24,13 @@ type WorkspaceView struct {
 
 // NewWorkspaceView creates an empty workspace view.
 func NewWorkspaceView() *WorkspaceView {
-	return &WorkspaceView{
+	wv := &WorkspaceView{
 		TabBar: NewTabBar(),
 		Tabs:   make(map[string]*WorkspaceTab),
 	}
+	// Add the persistent home tab as the first entry.
+	wv.TabBar.Add(HomeTabID, "⚡")
+	return wv
 }
 
 // SetSize updates layout dimensions.
@@ -66,8 +72,11 @@ func (wv *WorkspaceView) OpenTab(id, label, sessionName, splitLabel string) {
 	wv.TabBar.FocusOrAdd(id, label)
 }
 
-// CloseTab removes a tab.
+// CloseTab removes a tab. The home tab cannot be closed.
 func (wv *WorkspaceView) CloseTab(id string) {
+	if id == HomeTabID {
+		return
+	}
 	delete(wv.Tabs, id)
 	wv.TabBar.Remove(id)
 }
@@ -79,6 +88,12 @@ func (wv *WorkspaceView) ActiveTab() *WorkspaceTab {
 		return nil
 	}
 	return wv.Tabs[tab.ID]
+}
+
+// IsHomeActive returns true when the home tab is the selected tab.
+func (wv *WorkspaceView) IsHomeActive() bool {
+	tab := wv.TabBar.ActiveTab()
+	return tab != nil && tab.ID == HomeTabID
 }
 
 // AddSplitToActive adds a split to the currently active tab.

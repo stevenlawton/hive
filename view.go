@@ -43,6 +43,8 @@ func (m model) View() tea.View {
 		v = tea.NewView(m.viewHelp())
 	case viewEdit:
 		v = tea.NewView(m.viewEdit())
+	case viewConfirm:
+		v = tea.NewView(m.viewConfirmModal())
 	case viewWorkspace:
 		m.workspace.SetSize(m.width, m.height)
 		statusBar := m.renderWorkspaceStatusBar()
@@ -61,11 +63,31 @@ func (m model) View() tea.View {
 		v = tea.NewView("") // TUI hidden during attach
 	default:
 		// Manager view — two-pane layout
+		hasWorkspaceTabs := len(m.workspace.TabBar.Tabs) > 1
+		managerHeight := m.height
+		var tabBar string
+		if hasWorkspaceTabs {
+			m.workspace.TabBar.Width = m.width
+			tabBar = m.workspace.TabBar.View()
+			managerHeight-- // reserve one line for the tab bar
+		}
 		listContent, l := m.viewList()
 		layout = l
-		m.manager.SetSize(m.width, m.height)
+		m.manager.SetSize(m.width, managerHeight)
 		statusBar := m.renderStatusBar() + "\n" + m.renderKeyBarString()
-		v = tea.NewView(m.manager.View(listContent, statusBar))
+		managerContent := m.manager.View(listContent, statusBar)
+		if hasWorkspaceTabs {
+			v = tea.NewView(tabBar + "\n" + managerContent)
+		} else {
+			v = tea.NewView(managerContent)
+		}
+		// Shift layout Y positions down when tab bar is shown
+		if hasWorkspaceTabs {
+			for k, y := range layout.itemY {
+				layout.itemY[k] = y + 1
+			}
+			layout.keyBarY++
+		}
 	}
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
@@ -158,11 +180,6 @@ func (m model) viewList() (string, listLayout) {
 	if m.mode == viewPromote {
 		content.WriteString(subtitleStyle.UnsetPadding().Render(" Promote to ~/repos/"))
 		content.WriteString(m.promote.View())
-		content.WriteString("\n")
-	}
-
-	if m.mode == viewConfirm {
-		content.WriteString(waitStyle.Render("  " + m.confirmMsg))
 		content.WriteString("\n")
 	}
 
@@ -328,6 +345,40 @@ var (
 	editActiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00"))
 	editBoxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#555555")).Padding(1, 2).Width(50)
 )
+
+func (m model) viewConfirmModal() string {
+	var form strings.Builder
+
+	form.WriteString(titleStyle.UnsetPadding().Render("⚡ Confirm"))
+	form.WriteString("\n\n")
+	form.WriteString(waitStyle.Render("  " + m.confirmMsg))
+	form.WriteString("\n\n")
+	form.WriteString(helpStyle.UnsetPadding().Render("y confirm  n cancel"))
+
+	box := editBoxStyle.Render(form.String())
+
+	// Center vertically and horizontally
+	boxLines := strings.Split(box, "\n")
+	padTop := (m.height - len(boxLines)) / 2
+	padLeft := (m.width - lipgloss.Width(boxLines[0])) / 2
+	if padTop < 0 {
+		padTop = 0
+	}
+	if padLeft < 0 {
+		padLeft = 0
+	}
+
+	var out strings.Builder
+	for range padTop {
+		out.WriteString("\n")
+	}
+	leftPad := strings.Repeat(" ", padLeft)
+	for _, line := range boxLines {
+		out.WriteString(leftPad + line + "\n")
+	}
+
+	return out.String()
+}
 
 func (m model) viewWorktreeSplit() string {
 	var form strings.Builder

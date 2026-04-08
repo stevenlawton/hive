@@ -42,6 +42,11 @@ var (
 			Background(ColorRed).
 			Padding(0, 1)
 
+	TabHomeStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorOrange).
+			Padding(0, 1)
+
 	SectionHeaderStyle = lipgloss.NewStyle().
 				Foreground(ColorOrange).
 				Bold(true)

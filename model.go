@@ -576,6 +576,22 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Manager mode: chord handling for tab navigation back to workspace
+	if m.mode == viewManager && len(m.workspace.TabBar.Tabs) > 1 {
+		if m.chord.Pending() {
+			action, ok := m.chord.Complete(key)
+			if ok {
+				return m.handleChordAction(action)
+			}
+			m.chord.Cancel()
+			return m, nil
+		}
+		if key == "ctrl+@" || key == "ctrl+space" {
+			m.chord.Start()
+			return m, nil
+		}
+	}
+
 	// Filter mode
 	if m.filtering {
 		switch key {
@@ -937,18 +953,32 @@ func fuzzyMatch(query, target string) bool {
 	return qi == len(query)
 }
 
+// syncModeFromActiveTab switches between manager and workspace based on which tab is selected.
+func (m *model) syncModeFromActiveTab() {
+	if m.workspace.IsHomeActive() {
+		m.mode = viewManager
+		m.manager.Preview.Terminal.InvalidateResize()
+	} else {
+		m.mode = viewWorkspace
+	}
+}
+
 // handleChordAction executes a workspace chord action.
 func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 	switch action {
 	case ChordReturnManager:
+		m.workspace.TabBar.SetActiveByID(ui.HomeTabID)
 		m.mode = viewManager
 		m.manager.Preview.Terminal.InvalidateResize()
 	case ChordNextTab:
 		m.workspace.TabBar.Next()
+		m.syncModeFromActiveTab()
 	case ChordPrevTab:
 		m.workspace.TabBar.Prev()
+		m.syncModeFromActiveTab()
 	case ChordJumpTab:
 		m.workspace.TabBar.SetActive(m.chord.TabIndex - 1)
+		m.syncModeFromActiveTab()
 	case ChordFocusLeft:
 		if tab := m.workspace.ActiveTab(); tab != nil {
 			tab.SplitPane.FocusLeft()

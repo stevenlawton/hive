@@ -130,6 +130,8 @@ func (tb *TabBar) View() string {
 		switch {
 		case tab.Flashing:
 			style = TabFlashStyle
+		case tab.ID == HomeTabID:
+			style = TabHomeStyle
 		case i == tb.ActiveIdx:
 			style = TabActiveStyle
 		default:
