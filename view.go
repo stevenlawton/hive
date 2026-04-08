@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"hive/ui"
+	"github.com/stevenlawton/hive/ui"
 	"os"
 	"strings"
 

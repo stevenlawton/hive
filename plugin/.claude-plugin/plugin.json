@@ -1,8 +1,8 @@
 {
-  "name": "kittylauncher",
+  "name": "hive",
   "version": "0.1.0",
-  "description": "Bridges Claude Code sessions with KittyLauncher TUI — reports session lifecycle events via status files for notifications, tracking, and tab management.",
+  "description": "Bridges Claude Code sessions with Hive TUI — reports session lifecycle events via status files for notifications, tracking, and tab management.",
   "author": {
-    "name": "Steve"
+    "name": "stevenlawton"
   }
 }

@@ -1,4 +1,4 @@
-module hive
+module github.com/stevenlawton/hive
 
 go 1.25.6
 

@@ -1,15 +1,15 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "kittylauncher",
-  "description": "KittyLauncher plugins for Claude Code integration",
+  "name": "hive",
+  "description": "Hive plugins for Claude Code integration",
   "owner": {
-    "name": "Steve"
+    "name": "stevenlawton"
   },
   "plugins": [
     {
-      "name": "kittylauncher",
-      "description": "Bridges Claude Code sessions with KittyLauncher TUI — reports session lifecycle events for notifications, tracking, and tab management.",
-      "source": "./plugins/kittylauncher",
+      "name": "hive",
+      "description": "Bridges Claude Code sessions with Hive TUI — reports session lifecycle events for notifications, tracking, and tab management.",
+      "source": "./plugins/hive",
       "category": "productivity"
     }
   ]

@@ -5,8 +5,8 @@ import (
 )
 
 func TestTmuxNewSessionArgs(t *testing.T) {
-	args := tmuxNewSessionArgs("hive-slicewise", "/home/steve/repos/SliceWise")
-	expected := []string{"new-session", "-d", "-s", "hive-slicewise", "-c", "/home/steve/repos/SliceWise"}
+	args := tmuxNewSessionArgs("hive-myproject", "/tmp/repos/myproject")
+	expected := []string{"new-session", "-d", "-s", "hive-myproject", "-c", "/tmp/repos/myproject"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
 	}
@@ -18,8 +18,8 @@ func TestTmuxNewSessionArgs(t *testing.T) {
 }
 
 func TestTmuxSendKeysArgs(t *testing.T) {
-	args := tmuxSendKeysArgs("hive-slicewise", "claude")
-	expected := []string{"send-keys", "-t", "hive-slicewise", "claude", "Enter"}
+	args := tmuxSendKeysArgs("hive-myproject", "claude")
+	expected := []string{"send-keys", "-t", "hive-myproject", "claude", "Enter"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
 	}
@@ -31,14 +31,14 @@ func TestTmuxSendKeysArgs(t *testing.T) {
 }
 
 func TestTmuxSessionName(t *testing.T) {
-	if name := TmuxSessionName("SliceWise", false); name != "hive-SliceWise" {
-		t.Errorf("expected hive-SliceWise, got %s", name)
+	if name := TmuxSessionName("myproject", false); name != "hive-myproject" {
+		t.Errorf("expected hive-myproject, got %s", name)
 	}
-	if name := TmuxSessionName("tgbridge", true); name != "hive-rc-tgbridge" {
-		t.Errorf("expected hive-rc-tgbridge, got %s", name)
+	if name := TmuxSessionName("remote-app", true); name != "hive-rc-remote-app" {
+		t.Errorf("expected hive-rc-remote-app, got %s", name)
 	}
-	if name := TmuxSessionName("stevenlawton.com", true); name != "hive-rc-stevenlawton_com" {
-		t.Errorf("expected hive-rc-stevenlawton_com, got %s", name)
+	if name := TmuxSessionName("my.domain.com", true); name != "hive-rc-my_domain_com" {
+		t.Errorf("expected hive-rc-my_domain_com, got %s", name)
 	}
 }
 

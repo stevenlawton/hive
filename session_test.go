@@ -6,23 +6,23 @@ import (
 
 func TestMapTmuxSessionsToItems(t *testing.T) {
 	items := []repoItem{
-		{repo: Repo{DirName: "SliceWise", Short: "SW"}},
-		{repo: Repo{DirName: "lom2", Short: "LOM"}},
+		{repo: Repo{DirName: "project-a", Short: "PA"}},
+		{repo: Repo{DirName: "project-b", Short: "PB"}},
 	}
 	sessions := []TmuxSession{
-		{Name: "kl-SliceWise", RepoKey: "SliceWise"},
-		{Name: "kl-rc-SliceWise", RepoKey: "SliceWise", IsRemote: true},
+		{Name: "kl-project-a", RepoKey: "project-a"},
+		{Name: "kl-rc-project-a", RepoKey: "project-a", IsRemote: true},
 	}
 
 	MapSessionsToItems(items, sessions)
 
 	if items[0].status != statusRemote {
-		t.Errorf("SliceWise should be statusRemote, got %d", items[0].status)
+		t.Errorf("project-a should be statusRemote, got %d", items[0].status)
 	}
-	if items[0].tmuxSes != "kl-SliceWise" {
-		t.Errorf("expected kl-SliceWise, got %s", items[0].tmuxSes)
+	if items[0].tmuxSes != "kl-project-a" {
+		t.Errorf("expected kl-project-a, got %s", items[0].tmuxSes)
 	}
 	if items[1].status != statusNone {
-		t.Errorf("lom2 should have no session, got %d", items[1].status)
+		t.Errorf("project-b should have no session, got %d", items[1].status)
 	}
 }

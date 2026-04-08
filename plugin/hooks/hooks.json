@@ -1,5 +1,5 @@
 {
-  "description": "KittyLauncher session lifecycle hooks — writes status files for TUI integration",
+  "description": "Hive session lifecycle hooks — writes status files for TUI integration",
   "hooks": {
     "SessionStart": [
       {

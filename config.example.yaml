@@ -16,20 +16,20 @@ notifications:
 # Key = directory name inside repos_dir
 # All fields are optional — unconfigured repos use defaults
 workspaces:
-  SliceWise:
-    name: "SliceWize"            # Display name in TUI list
-    short: "SW"                  # Short name for tab title
+  my-project:
+    name: "My Project"           # Display name in TUI list
+    short: "MP"                  # Short name for tab title
     color: "#ff6b6b"             # Tab color (hex)
     remote: true                 # Auto-start claude remote-control session
     favourite: true              # Pin to favourites section
-  tgclaudebridge:
-    name: "Telegram Bridge"
-    short: "TGB"
+  another-app:
+    name: "Another App"
+    short: "AA"
     color: "#0088cc"
     remote: true
     favourite: true
-  lom2:
-    name: "Legend of Mir"
-    short: "LOM"
+  side-project:
+    name: "Side Project"
+    short: "SP"
     color: "#c792ea"
     favourite: true
