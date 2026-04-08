@@ -185,8 +185,8 @@ func (m model) viewList() (string, listLayout) {
 	}
 
 	// Calculate visible window
-	// Reserved: border top/bottom (2) + title line (1) + status bar (1) + key bar (2)
-	reserved := 6
+	// Reserved: border top/bottom (2) + title (1) + status bar (1) + key bar (2) + manager chrome (4)
+	reserved := 10
 	if m.filtering {
 		reserved++
 	}
@@ -253,11 +253,16 @@ func (m model) viewList() (string, listLayout) {
 		inner.WriteString("\n")
 	}
 
-	// Wrap in bordered box
+	// Wrap in bordered box — constrain height to available space
+	availH := m.height - 4 // 4 lines for status bar + key bar below
+	if availH < 5 {
+		availH = 5
+	}
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#555555")).
 		Width(w - 2).
+		Height(availH - 2). // -2 for border top/bottom
 		Padding(0, 1)
 
 	var b strings.Builder
