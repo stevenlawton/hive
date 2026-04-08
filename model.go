@@ -483,13 +483,10 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if term := m.focusedTerminal(); term != nil && term.IsScrolledUp() {
 			term.ScrollOffset = 0
 		}
-		// Forward all other keys directly to tmux PTY (no process spawn)
+		// Forward all other keys to focused session
 		sesName := m.workspace.FocusedSessionName()
 		if sesName != "" {
-			if err := TmuxWriteToPTY(sesName, bubbleteaKeyToBytes(key)); err != nil {
-				// Fallback to send-keys if PTY write fails
-				TmuxSendRawKeys(sesName, key)
-			}
+			TmuxSendRawKeys(sesName, key)
 		}
 		return m, nil
 	}
@@ -1146,7 +1143,6 @@ func (m model) closeSplit(tab *ui.WorkspaceTab, split *ui.Split) (tea.Model, tea
 // doCloseSplit performs the actual split removal.
 func (m *model) doCloseSplit(tab *ui.WorkspaceTab, split *ui.Split, item *repoItem, removeItem bool) {
 	if split.SessionName != "" {
-		InvalidatePTYCache(split.SessionName)
 		TmuxKillSession(split.SessionName)
 	}
 	if item != nil {
