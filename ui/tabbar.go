@@ -125,7 +125,7 @@ func (tb *TabBar) View() string {
 
 	var parts []string
 	for i, tab := range tb.Tabs {
-		label := "[" + tab.Label + "]"
+		label := " " + tab.Label + " "
 		var style lipgloss.Style
 		switch {
 		case tab.Flashing:
@@ -138,7 +138,7 @@ func (tb *TabBar) View() string {
 		parts = append(parts, style.Render(label))
 	}
 
-	tabs := strings.Join(parts, " ")
+	tabs := strings.Join(parts, "")
 	remaining := tb.Width - lipgloss.Width(tabs)
 	if remaining < 0 {
 		remaining = 0

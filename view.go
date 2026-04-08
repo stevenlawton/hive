@@ -79,8 +79,7 @@ func (m model) View() tea.View {
 				if mouse.Y == 0 {
 					x := 0
 					for i, tab := range m.workspace.TabBar.Tabs {
-						label := "[" + tab.Label + "]"
-						w := len(label) + 1 // +1 for space between tabs
+						w := len(tab.Label) + 4 // " label " + 1 padding each side
 						if mouse.X >= x && mouse.X < x+w {
 							idx := i
 							return func() tea.Msg { return tabClickMsg{index: idx} }

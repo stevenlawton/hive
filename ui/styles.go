@@ -27,16 +27,19 @@ var (
 
 	TabActiveStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorGreen).
+			Foreground(lipgloss.Color("#1a1a2e")).
+			Background(ColorGreen).
 			Padding(0, 1)
 
 	TabInactiveStyle = lipgloss.NewStyle().
 				Foreground(ColorGray).
+				Background(lipgloss.Color("#1a1a2e")).
 				Padding(0, 1)
 
 	TabFlashStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorRed).
+			Foreground(ColorWhite).
+			Background(ColorRed).
 			Padding(0, 1)
 
 	SectionHeaderStyle = lipgloss.NewStyle().
