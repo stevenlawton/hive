@@ -1229,32 +1229,45 @@ func (m model) renderWorkspaceStatusBar() string {
 		}
 	}
 
-	var keys []string
-	keys = append(keys, "^Space q:back")
+	var status string
 
-	if tabCount > 1 {
-		keys = append(keys, "n/p:tabs")
+	if m.chord.Pending() {
+		// Stage 2: chord is active — show available actions
+		var keys []string
+		keys = append(keys, ui.KeyStyle.Render("^Space")+" "+ui.WaitStyle.Render("…"))
+		keys = append(keys, "q:back")
+		if tabCount > 1 {
+			keys = append(keys, "n:next", "p:prev", "1-9:jump")
+		}
+		if splitCount > 1 {
+			keys = append(keys, "←→:focus")
+		}
+		keys = append(keys, "v:vsplit", "h:hsplit")
+		if focusedItem != nil && focusedItem.repo.IsWorktree {
+			keys = append(keys, "x:merge+close")
+		} else if splitCount > 1 {
+			keys = append(keys, "x:close")
+		}
+		keys = append(keys, "f:fullscreen")
+		status = strings.Join(keys, "  ")
+	} else {
+		// Stage 1: normal — show hint to start chord
+		var parts []string
+		parts = append(parts, ui.KeyStyle.Render("^Space")+" for commands")
+		if term := m.focusedTerminal(); term != nil && term.IsScrolledUp() {
+			parts = append(parts, ui.WaitStyle.Render("SCROLL"))
+		}
+		// Show focused session info
+		if focusedItem != nil {
+			label := focusedItem.repo.Short
+			if focusedItem.repo.IsWorktree {
+				label = "wt:" + focusedItem.repo.WorktreeBranch
+			}
+			parts = append(parts, ui.ValStyle.Render(label))
+		}
+		status = strings.Join(parts, "  ")
 	}
-	if splitCount > 1 {
-		keys = append(keys, "←→:focus")
-	}
 
-	keys = append(keys, "v:vsplit", "h:hsplit")
-
-	if focusedItem != nil && focusedItem.repo.IsWorktree {
-		keys = append(keys, "x:merge+close")
-	} else if splitCount > 1 {
-		keys = append(keys, "x:close")
-	}
-
-	keys = append(keys, "f:fullscreen")
-
-	// Scrolled indicator
-	if term := m.focusedTerminal(); term != nil && term.IsScrolledUp() {
-		keys = append(keys, ui.WaitStyle.Render("SCROLL"))
-	}
-
-	status := strings.Join(keys, "  ")
 	if m.err != nil {
 		status += "  " + ui.DeadStyle.Render(m.err.Error())
 	}
