@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/stevenlawton/hive/ui"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/stevenlawton/hive/ui"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/textinput"
@@ -971,13 +974,17 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 			m.wtOrientation = ui.SplitVertical
 		}
 
-		wtCount := 0
-		for _, it := range m.items {
-			if it.repo.Parent == item.repo.DirName && it.repo.IsWorktree {
-				wtCount++
+		// Find next available split number by checking disk
+		wtCount := 1
+		wtBase := filepath.Join(item.repo.Path, ".worktrees")
+		for {
+			candidate := filepath.Join(wtBase, fmt.Sprintf("split-%d", wtCount))
+			if _, err := os.Stat(candidate); err != nil {
+				break
 			}
+			wtCount++
 		}
-		defaultBranch := fmt.Sprintf("split-%d", wtCount+1)
+		defaultBranch := fmt.Sprintf("split-%d", wtCount)
 
 		fields := make([]textinput.Model, wtFieldCount)
 		branchInput := textinput.New()
