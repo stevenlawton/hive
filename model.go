@@ -48,6 +48,7 @@ type repoItem struct {
 	richStatus  *SessionStatus // from plugin status file (nil if no status file)
 	bridgeEntry *BridgeEntry   // from bridge-sessions.json (nil if not bridged)
 	diffStats   string         // "+42/-13" or ""
+	attention   AttentionState // notification escalation tracking
 }
 
 type model struct {
@@ -1076,6 +1077,14 @@ func (m *model) updateCaptures() {
 				}
 				if content, err := TmuxCapturePane(s.SessionName); err == nil {
 					s.Terminal.SetContent(content)
+					// Check attention state for this session
+					for j := range m.items {
+						if m.items[j].tmuxSes == s.SessionName {
+							level := CheckAttention(&m.items[j].attention, content, &m.cfg.Notifications)
+							m.handleAttention(&m.items[j], level)
+							break
+						}
+					}
 				}
 				// Fetch full scrollback when scrolled up
 				if s.Terminal.IsScrolledUp() {
@@ -1084,6 +1093,34 @@ func (m *model) updateCaptures() {
 					}
 				}
 			}
+		}
+	}
+
+	// Check attention for all active sessions (not just visible ones)
+	for i := range m.items {
+		item := &m.items[i]
+		if item.tmuxSes == "" || item.status == statusRemote {
+			continue
+		}
+		// Skip if already checked in workspace loop above
+		if m.mode == viewWorkspace {
+			tab := m.workspace.ActiveTab()
+			if tab != nil {
+				inView := false
+				for _, s := range tab.SplitPane.Splits {
+					if s.SessionName == item.tmuxSes {
+						inView = true
+						break
+					}
+				}
+				if inView {
+					continue
+				}
+			}
+		}
+		if content, err := TmuxCapturePane(item.tmuxSes); err == nil {
+			level := CheckAttention(&item.attention, content, &m.cfg.Notifications)
+			m.handleAttention(item, level)
 		}
 	}
 
@@ -1101,6 +1138,48 @@ func (m *model) updateCaptures() {
 			}
 		} else {
 			item.diffStats = ""
+		}
+	}
+}
+
+// handleAttention fires the appropriate notification for the escalation level.
+func (m *model) handleAttention(item *repoItem, level int) {
+	label := item.repo.Short
+	if item.repo.IsWorktree {
+		label = "wt:" + item.repo.WorktreeBranch
+	}
+
+	switch level {
+	case -1: // Was notified, user responded — clear flash
+		delete(m.tabFlashing, item.repo.DirName)
+		m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
+		return
+	case 0:
+		return
+	case 1: // Tab flash
+		m.tabFlashing[item.repo.DirName] = "waiting"
+		m.workspace.TabBar.SetFlashing(item.repo.DirName, true)
+		m.manager.NotifyLog.Add(label, "waiting", time.Now())
+	case 2: // Desktop notification
+		go sendDesktopNotification("Hive: "+label, "Claude is waiting for input")
+		if m.cfg.Notifications.Sound {
+			go playSound(m.cfg.Notifications.SoundPath)
+		}
+	case 3: // External (telegram, ntfy, slack, webhook)
+		title := "Hive: " + label
+		message := "Claude has been waiting for input for 5+ minutes"
+		if m.cfg.Notifications.NtfyTopic != "" {
+			go sendNtfy(m.cfg.Notifications.NtfyTopic, title, message)
+		}
+		if m.cfg.Notifications.SlackWebhook != "" {
+			go sendSlack(m.cfg.Notifications.SlackWebhook, title, message)
+		}
+		if m.cfg.Notifications.WebhookURL != "" {
+			go sendWebhook(m.cfg.Notifications.WebhookURL, SessionEvent{
+				Session: item.tmuxSes,
+				Repo:    item.repo.DirName,
+				Event:   "waiting",
+			})
 		}
 	}
 }
