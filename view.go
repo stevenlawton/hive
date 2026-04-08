@@ -75,6 +75,19 @@ func (m model) View() tea.View {
 		switch msg.(type) {
 		case tea.MouseClickMsg:
 			if m.mode == viewWorkspace {
+				// Click on tab bar (row 0) → switch tab
+				if mouse.Y == 0 {
+					x := 0
+					for i, tab := range m.workspace.TabBar.Tabs {
+						label := "[" + tab.Label + "]"
+						w := len(label) + 1 // +1 for space between tabs
+						if mouse.X >= x && mouse.X < x+w {
+							idx := i
+							return func() tea.Msg { return tabClickMsg{index: idx} }
+						}
+						x += w
+					}
+				}
 				// Click on split pane → focus it
 				if tab := m.workspace.ActiveTab(); tab != nil {
 					x := mouse.X

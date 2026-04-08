@@ -301,6 +301,7 @@ type itemClickMsg struct{ index int }
 type keyBarClickMsg struct{ action string }
 type scrollMsg struct{ dir int }
 type splitClickMsg struct{ index int }
+type tabClickMsg struct{ index int }
 
 type tickMsg time.Time
 
@@ -395,6 +396,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionEventMsg:
 		cmd := m.handleSessionEvent(SessionEvent(msg))
 		return m, tea.Batch(cmd, waitForEvent()) // listen for next event
+	case tabClickMsg:
+		if m.mode == viewWorkspace {
+			if msg.index >= 0 && msg.index < len(m.workspace.TabBar.Tabs) {
+				m.workspace.TabBar.ActiveIdx = msg.index
+			}
+		}
+		return m, nil
 	case splitClickMsg:
 		if m.mode == viewWorkspace {
 			if tab := m.workspace.ActiveTab(); tab != nil {
