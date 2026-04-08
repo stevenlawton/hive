@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 const (
@@ -111,6 +113,71 @@ func ParseTmuxSessions(output string) []TmuxSession {
 	return sessions
 }
 
+// tmuxControl is a persistent control-mode connection to tmux.
+// Commands are sent over stdin — no process spawning per key.
+var tmuxControl struct {
+	sync.Mutex
+	stdin   io.Writer
+	cmd     *exec.Cmd
+	started bool
+}
+
+// StartTmuxControl opens a persistent tmux control-mode connection.
+func StartTmuxControl() error {
+	tmuxControl.Lock()
+	defer tmuxControl.Unlock()
+	if tmuxControl.started {
+		return nil
+	}
+
+	cmd := exec.Command("tmux", "-C")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	// Discard stdout/stderr — we don't need responses
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	// Drain any initial output
+	tmuxControl.cmd = cmd
+	tmuxControl.stdin = stdin
+	tmuxControl.started = true
+	return nil
+}
+
+// TmuxControlSend sends a command through the persistent control connection.
+// Falls back to spawning a process if control mode isn't available.
+func TmuxControlSend(command string) error {
+	tmuxControl.Lock()
+	if tmuxControl.started && tmuxControl.stdin != nil {
+		_, err := fmt.Fprintf(tmuxControl.stdin, "%s\n", command)
+		tmuxControl.Unlock()
+		return err
+	}
+	tmuxControl.Unlock()
+	// Fallback: parse and run as regular command
+	args := strings.Fields(command)
+	return tmuxRun(args...)
+}
+
+// StopTmuxControl closes the persistent connection.
+func StopTmuxControl() {
+	tmuxControl.Lock()
+	defer tmuxControl.Unlock()
+	if tmuxControl.cmd != nil {
+		if tmuxControl.stdin != nil {
+			fmt.Fprintf(tmuxControl.stdin, "detach\n")
+		}
+		tmuxControl.cmd.Wait()
+		tmuxControl.started = false
+	}
+}
+
 // Exec helpers
 
 func tmuxRun(args ...string) error {
@@ -174,7 +241,7 @@ func bubbleteaToTmuxKey(key string) string {
 	switch key {
 	case "backspace":
 		return "BSpace"
-	case "escape":
+	case "escape", "esc":
 		return "Escape"
 	case "enter":
 		return "Enter"
@@ -229,12 +296,14 @@ func TmuxSendRawKeys(sessionName string, keys ...string) error {
 	for i, k := range keys {
 		translated[i] = bubbleteaToTmuxKey(k)
 	}
-	args := append([]string{"send-keys", "-t", sessionName}, translated...)
-	return tmuxRun(args...)
+	cmd := "send-keys -t " + sessionName + " " + strings.Join(translated, " ")
+	return TmuxControlSend(cmd)
 }
 
 func TmuxSendLiteral(sessionName, text string) error {
-	return tmuxRun("send-keys", "-t", sessionName, "-l", text)
+	// Use control mode for literal text — quote it for the tmux command parser
+	cmd := fmt.Sprintf("send-keys -t %s -l %q", sessionName, text)
+	return TmuxControlSend(cmd)
 }
 
 // TmuxCopyModeScroll enters copy-mode (if needed) and scrolls up or down.
