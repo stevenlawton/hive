@@ -13,9 +13,9 @@ import (
 var (
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ff8c00")).Padding(1, 0, 0, 1)
 	subtitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Padding(0, 0, 0, 1)
-	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88")).Bold(true)
+	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00")).Bold(true)
 	nameStyle     = lipgloss.NewStyle().Bold(true).Width(36)
-	claudeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88")).Width(50)
+	claudeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00")).Width(50)
 	shellStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#00bbff")).Width(50)
 	idleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Width(50)
 	remoteStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00"))
@@ -325,7 +325,7 @@ func (m model) viewHelp() string {
 
 var (
 	editLabelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Width(14)
-	editActiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88"))
+	editActiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00"))
 	editBoxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#555555")).Padding(1, 2).Width(50)
 )
 

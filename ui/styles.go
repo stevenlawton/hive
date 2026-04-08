@@ -23,12 +23,12 @@ var (
 
 	FocusedBorderStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(ColorGreen)
+				BorderForeground(ColorOrange)
 
 	TabActiveStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#1a1a2e")).
-			Background(ColorGreen).
+			Background(ColorOrange).
 			Padding(0, 1)
 
 	TabInactiveStyle = lipgloss.NewStyle().
@@ -59,7 +59,7 @@ var (
 
 // Status styles
 var (
-	ClaudeStyle   = lipgloss.NewStyle().Foreground(ColorGreen)
+	ClaudeStyle   = lipgloss.NewStyle().Foreground(ColorOrange)
 	ShellStyle    = lipgloss.NewStyle().Foreground(ColorBlue)
 	RemoteStyle   = lipgloss.NewStyle().Foreground(ColorCyan)
 	DeadStyle     = lipgloss.NewStyle().Foreground(ColorRed)
