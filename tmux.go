@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 const (
@@ -165,6 +167,142 @@ func TmuxCapturePane(sessionName string) (string, error) {
 
 func TmuxCapturePaneFull(sessionName string) (string, error) {
 	return tmuxOutput(tmuxCapturePaneFullArgs(sessionName)...)
+}
+
+// ptyCache caches open file handles to tmux pane TTYs for direct writes.
+var ptyCache struct {
+	sync.Mutex
+	files map[string]*os.File // session name → open TTY file
+	ttys  map[string]string   // session name → TTY path
+}
+
+func init() {
+	ptyCache.files = make(map[string]*os.File)
+	ptyCache.ttys = make(map[string]string)
+}
+
+// TmuxPaneTTY returns the TTY device path for a tmux session's active pane.
+func TmuxPaneTTY(sessionName string) (string, error) {
+	ptyCache.Lock()
+	if tty, ok := ptyCache.ttys[sessionName]; ok {
+		ptyCache.Unlock()
+		return tty, nil
+	}
+	ptyCache.Unlock()
+
+	out, err := tmuxOutput("display-message", "-t", sessionName, "-p", "#{pane_tty}")
+	if err != nil {
+		return "", err
+	}
+	tty := strings.TrimSpace(out)
+
+	ptyCache.Lock()
+	ptyCache.ttys[sessionName] = tty
+	ptyCache.Unlock()
+	return tty, nil
+}
+
+// TmuxWriteToPTY writes bytes directly to a tmux pane's TTY — no process spawn.
+func TmuxWriteToPTY(sessionName string, data []byte) error {
+	ptyCache.Lock()
+	f, ok := ptyCache.files[sessionName]
+	ptyCache.Unlock()
+
+	if !ok || f == nil {
+		tty, err := TmuxPaneTTY(sessionName)
+		if err != nil {
+			return err
+		}
+		f, err = os.OpenFile(tty, os.O_WRONLY, 0)
+		if err != nil {
+			return err
+		}
+		ptyCache.Lock()
+		ptyCache.files[sessionName] = f
+		ptyCache.Unlock()
+	}
+
+	_, err := f.Write(data)
+	if err != nil {
+		// TTY might have changed — invalidate cache and retry once
+		ptyCache.Lock()
+		delete(ptyCache.files, sessionName)
+		delete(ptyCache.ttys, sessionName)
+		ptyCache.Unlock()
+		f.Close()
+	}
+	return err
+}
+
+// InvalidatePTYCache removes cached PTY handles for a session (call on kill/resize).
+func InvalidatePTYCache(sessionName string) {
+	ptyCache.Lock()
+	defer ptyCache.Unlock()
+	if f, ok := ptyCache.files[sessionName]; ok {
+		f.Close()
+		delete(ptyCache.files, sessionName)
+	}
+	delete(ptyCache.ttys, sessionName)
+}
+
+// bubbleteaKeyToBytes converts a Bubbletea key string to raw bytes for PTY write.
+func bubbleteaKeyToBytes(key string) []byte {
+	switch key {
+	case "enter":
+		return []byte{'\r'}
+	case "tab":
+		return []byte{'\t'}
+	case "backspace":
+		return []byte{0x7f}
+	case "escape":
+		return []byte{0x1b}
+	case "space":
+		return []byte{' '}
+	case "up":
+		return []byte{0x1b, '[', 'A'}
+	case "down":
+		return []byte{0x1b, '[', 'B'}
+	case "right":
+		return []byte{0x1b, '[', 'C'}
+	case "left":
+		return []byte{0x1b, '[', 'D'}
+	case "home":
+		return []byte{0x1b, '[', 'H'}
+	case "end":
+		return []byte{0x1b, '[', 'F'}
+	case "delete":
+		return []byte{0x1b, '[', '3', '~'}
+	case "pgup":
+		return []byte{0x1b, '[', '5', '~'}
+	case "pgdown":
+		return []byte{0x1b, '[', '6', '~'}
+	}
+
+	// Ctrl combinations: ctrl+a → 0x01, ctrl+z → 0x1a
+	if strings.HasPrefix(key, "ctrl+") {
+		ch := strings.TrimPrefix(key, "ctrl+")
+		if len(ch) == 1 && ch[0] >= 'a' && ch[0] <= 'z' {
+			return []byte{ch[0] - 'a' + 1}
+		}
+	}
+
+	// Function keys
+	if strings.HasPrefix(key, "f") && len(key) >= 2 {
+		fkeys := map[string][]byte{
+			"f1": {0x1b, 'O', 'P'}, "f2": {0x1b, 'O', 'Q'},
+			"f3": {0x1b, 'O', 'R'}, "f4": {0x1b, 'O', 'S'},
+			"f5": {0x1b, '[', '1', '5', '~'}, "f6": {0x1b, '[', '1', '7', '~'},
+			"f7": {0x1b, '[', '1', '8', '~'}, "f8": {0x1b, '[', '1', '9', '~'},
+			"f9": {0x1b, '[', '2', '0', '~'}, "f10": {0x1b, '[', '2', '1', '~'},
+			"f11": {0x1b, '[', '2', '3', '~'}, "f12": {0x1b, '[', '2', '4', '~'},
+		}
+		if b, ok := fkeys[key]; ok {
+			return b
+		}
+	}
+
+	// Regular character
+	return []byte(key)
 }
 
 // bubbleteaToTmuxKey translates a Bubbletea v2 key string to the
