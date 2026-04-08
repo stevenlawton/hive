@@ -72,6 +72,17 @@ func (tb *TabBar) FocusOrAdd(id, label string) {
 	tb.ActiveIdx = len(tb.Tabs) - 1
 }
 
+// FocusByID focuses the tab with the given ID. Returns true if found.
+func (tb *TabBar) FocusByID(id string) bool {
+	for i, tab := range tb.Tabs {
+		if tab.ID == id {
+			tb.ActiveIdx = i
+			return true
+		}
+	}
+	return false
+}
+
 // Next moves to the next tab (wrapping).
 func (tb *TabBar) Next() {
 	if len(tb.Tabs) == 0 {

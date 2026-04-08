@@ -52,10 +52,17 @@ func (m *model) handleWorktreeKey(key string) (tea.Model, tea.Cmd) {
 	case "ctrl+s", "ctrl+enter":
 		return m, m.createWorktree()
 	case "escape":
-		m.mode = viewManager
+		if m.wtSplitMode {
+			m.mode = viewWorkspace
+			m.wtSplitMode = false
+		} else {
+			m.mode = viewManager
+		}
 		return m, nil
 	case "tab", "down":
-		m.wtFields[m.wtFocus].Blur()
+		if m.wtFocus < wtFieldCount {
+			m.wtFields[m.wtFocus].Blur()
+		}
 		m.wtFocus++
 		if m.wtFocus > wtFieldCount { // wtFieldCount = yolo toggle
 			m.wtFocus = 0
@@ -65,7 +72,9 @@ func (m *model) handleWorktreeKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "shift+tab", "up":
-		m.wtFields[m.wtFocus].Blur()
+		if m.wtFocus < wtFieldCount {
+			m.wtFields[m.wtFocus].Blur()
+		}
 		m.wtFocus--
 		if m.wtFocus < 0 {
 			m.wtFocus = wtFieldCount // yolo toggle
@@ -75,18 +84,13 @@ func (m *model) handleWorktreeKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "enter":
-		if m.wtFocus < wtFieldCount {
-			// Move to next field
-			m.wtFields[m.wtFocus].Blur()
-			m.wtFocus++
-			if m.wtFocus < wtFieldCount {
-				return m, m.wtFields[m.wtFocus].Focus()
-			}
+		if m.wtFocus == wtFieldCount {
+			// On yolo toggle, toggle it
+			m.wtYolo = !m.wtYolo
 			return m, nil
 		}
-		// On yolo toggle, toggle it
-		m.wtYolo = !m.wtYolo
-		return m, nil
+		// Enter submits the form (branch has a default, prompt is optional)
+		return m, m.createWorktree()
 	case " ":
 		if m.wtFocus == wtFieldCount {
 			m.wtYolo = !m.wtYolo
@@ -106,7 +110,7 @@ func (m *model) handleWorktreeKey(key string) (tea.Model, tea.Cmd) {
 // createWorktree creates a git worktree and tmux session.
 func (m *model) createWorktree() tea.Cmd {
 	branch := strings.TrimSpace(m.wtFields[wtFieldBranch].Value())
-	if branch == "" {
+if branch == "" {
 		m.err = fmt.Errorf("branch name required")
 		return nil
 	}
@@ -124,6 +128,7 @@ func (m *model) createWorktree() tea.Cmd {
 	}
 	if parent == nil {
 		m.err = fmt.Errorf("parent repo not found")
+		m.mode = m.wtReturnMode()
 		return nil
 	}
 
@@ -135,7 +140,7 @@ func (m *model) createWorktree() tea.Cmd {
 		cmd = exec.Command("git", "-C", parent.repo.Path, "worktree", "add", wtDir, branch)
 		if out2, err2 := cmd.CombinedOutput(); err2 != nil {
 			m.err = fmt.Errorf("worktree: %s %s", string(out), string(out2))
-			m.mode = viewManager
+			m.mode = m.wtReturnMode()
 			return nil
 		}
 		_ = out
@@ -145,7 +150,7 @@ func (m *model) createWorktree() tea.Cmd {
 	sessionName := TmuxSessionName(m.wtParent+"-wt-"+branch, false)
 	if err := TmuxNewSession(sessionName, wtDir); err != nil {
 		m.err = fmt.Errorf("tmux: %w", err)
-		m.mode = viewManager
+		m.mode = m.wtReturnMode()
 		return nil
 	}
 
@@ -178,7 +183,16 @@ func (m *model) createWorktree() tea.Cmd {
 		tmuxSes: sessionName,
 	})
 
-	m.mode = viewManager
+	if m.wtSplitMode {
+		if tab := m.workspace.ActiveTab(); tab != nil {
+			tab.SplitPane.Orientation = m.wtOrientation
+		}
+		m.workspace.AddSplitToActive("wt:"+branch, sessionName)
+		m.mode = viewWorkspace
+		m.wtSplitMode = false
+	} else {
+		m.mode = viewManager
+	}
 	m.filtered = m.allIndices()
 	m.rebuildDisplayOrder()
 
@@ -245,6 +259,14 @@ func (m *model) killWorktreeSession() tea.Cmd {
 		m.cursor = max(0, len(m.displayOrder)-1)
 	}
 	return nil
+}
+
+func (m *model) wtReturnMode() viewMode {
+	if m.wtSplitMode {
+		m.wtSplitMode = false
+		return viewWorkspace
+	}
+	return viewManager
 }
 
 func shellQuote(s string) string {

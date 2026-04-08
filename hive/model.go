@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 )
 
+
 type viewMode int
 
 const (
@@ -74,10 +75,12 @@ type model struct {
 	chord     *ChordHandler
 
 	// Worktree prompt state
-	wtFields  []textinput.Model // 0=branch, 1=prompt
-	wtYolo    bool
-	wtFocus   int // focused field index
-	wtParent  string // DirName of parent repo
+	wtFields      []textinput.Model // 0=branch, 1=prompt
+	wtYolo        bool
+	wtFocus       int    // focused field index
+	wtParent      string // DirName of parent repo
+	wtSplitMode   bool   // true = add as split pane, false = return to manager
+	wtOrientation ui.SplitOrientation // orientation for the split
 
 	// Confirm dialog state
 	confirmMsg    string
@@ -360,6 +363,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, captureTick()
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+	case tea.PasteMsg:
+		if m.mode == viewWorkspace {
+			if sesName := m.workspace.FocusedSessionName(); sesName != "" {
+				TmuxSendLiteral(sesName, msg.Content)
+			}
+		}
+		return m, nil
 	case tickMsg:
 		return m.handleTick()
 	case flashRestoreMsg:
@@ -381,6 +391,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.handleSessionEvent(SessionEvent(msg))
 		return m, tea.Batch(cmd, waitForEvent()) // listen for next event
 	case scrollMsg:
+		if m.mode == viewWorkspace {
+			if term := m.focusedTerminal(); term != nil {
+				if msg.dir < 0 {
+					// First scroll up: grab full scrollback
+					if !term.IsScrolledUp() {
+						sesName := m.workspace.FocusedSessionName()
+						if sesName != "" {
+							if content, err := TmuxCapturePaneFull(sesName); err == nil {
+								term.SetFullContent(content)
+							}
+						}
+					}
+					term.ScrollUp(3)
+				} else {
+					term.ScrollDown(3)
+				}
+			}
+			return m, nil
+		}
 		if msg.dir < 0 && m.cursor > 0 {
 			m.cursor--
 		} else if msg.dir > 0 && m.cursor < len(m.displayOrder)-1 {
@@ -448,6 +477,10 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if key == "ctrl+@" || key == "ctrl+space" {
 			m.chord.Start()
 			return m, nil
+		}
+		// If scrolled up, snap to live on any keypress
+		if term := m.focusedTerminal(); term != nil && term.IsScrolledUp() {
+			term.ScrollOffset = 0
 		}
 		// Forward all other keys to focused session
 		sesName := m.workspace.FocusedSessionName()
@@ -876,6 +909,7 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 	switch action {
 	case ChordReturnManager:
 		m.mode = viewManager
+		m.manager.Preview.Terminal.InvalidateResize()
 	case ChordNextTab:
 		m.workspace.TabBar.Next()
 	case ChordPrevTab:
@@ -890,15 +924,88 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 		if tab := m.workspace.ActiveTab(); tab != nil {
 			tab.SplitPane.FocusRight()
 		}
+	case ChordVSplit, ChordHSplit:
+		tab := m.workspace.ActiveTab()
+		if tab == nil {
+			m.err = fmt.Errorf("no active tab")
+			break
+		}
+		// Find the repo for this tab — look for the tab ID or its parent
+		var item *repoItem
+		for i := range m.items {
+			if m.items[i].repo.DirName == tab.ID {
+				item = &m.items[i]
+				break
+			}
+		}
+		// If tab is for a worktree, use its parent for creating new worktrees
+		if item != nil && item.repo.IsWorktree && item.repo.Parent != "" {
+			for i := range m.items {
+				if m.items[i].repo.DirName == item.repo.Parent {
+					item = &m.items[i]
+					break
+				}
+			}
+		}
+		if item == nil {
+			m.err = fmt.Errorf("repo not found for tab %q", tab.ID)
+			break
+		}
+
+		m.wtSplitMode = true
+		m.wtParent = item.repo.DirName
+		if action == ChordHSplit {
+			m.wtOrientation = ui.SplitHorizontal
+		} else {
+			m.wtOrientation = ui.SplitVertical
+		}
+
+		wtCount := 0
+		for _, it := range m.items {
+			if it.repo.Parent == item.repo.DirName && it.repo.IsWorktree {
+				wtCount++
+			}
+		}
+		defaultBranch := fmt.Sprintf("split-%d", wtCount+1)
+
+		fields := make([]textinput.Model, wtFieldCount)
+		branchInput := textinput.New()
+		branchInput.Prompt = "Branch: "
+		branchInput.Placeholder = defaultBranch
+		branchInput.SetValue(defaultBranch)
+		fields[wtFieldBranch] = branchInput
+		promptInput := textinput.New()
+		promptInput.Prompt = "Prompt: "
+		promptInput.Placeholder = "optional task for Claude"
+		fields[wtFieldPrompt] = promptInput
+		m.wtFields = fields
+		m.wtYolo = item.repo.Yolo
+		m.wtFocus = 0
+		m.mode = viewWorktree
+		return m, m.wtFields[0].Focus()
 	case ChordCloseSplit:
 		if tab := m.workspace.ActiveTab(); tab != nil {
 			if split := tab.SplitPane.FocusedSplit(); split != nil {
+				// Kill the tmux session
+				if split.SessionName != "" {
+					TmuxKillSession(split.SessionName)
+				}
+				// Update item status
+				for i := range m.items {
+					if m.items[i].tmuxSes == split.SessionName {
+						m.items[i].status = statusNone
+						m.items[i].tmuxSes = ""
+						break
+					}
+				}
 				tab.SplitPane.RemoveSplit(split.Label)
 			}
 			if len(tab.SplitPane.Splits) == 0 {
 				m.workspace.CloseTab(tab.ID)
+				m.rebuildDisplayOrder()
 				if len(m.workspace.Tabs) == 0 {
 					m.mode = viewManager
+					m.manager.Preview.Terminal.InvalidateResize()
 				}
 			}
 		}
@@ -925,7 +1032,7 @@ func (m *model) updateCaptures() {
 			// Resize tmux pane to match preview dimensions
 			tp := m.manager.Preview.Terminal
 			if tp.NeedsResize() {
-				TmuxResizePane(sel.tmuxSes, tp.Width, tp.Height)
+				TmuxResizePane(sel.tmuxSes, tp.InnerWidth(), tp.InnerHeight())
 				tp.MarkResized()
 			}
 			if content, err := TmuxCapturePane(sel.tmuxSes); err == nil {
@@ -947,11 +1054,18 @@ func (m *model) updateCaptures() {
 				s := &tab.SplitPane.Splits[i]
 				// Resize tmux pane to match split dimensions
 				if s.Terminal.NeedsResize() {
-					TmuxResizePane(s.SessionName, s.Terminal.Width, s.Terminal.Height)
+					iw, ih := s.Terminal.InnerWidth(), s.Terminal.InnerHeight()
+					TmuxResizePane(s.SessionName, iw, ih)
 					s.Terminal.MarkResized()
 				}
 				if content, err := TmuxCapturePane(s.SessionName); err == nil {
 					s.Terminal.SetContent(content)
+				}
+				// Fetch full scrollback when scrolled up
+				if s.Terminal.IsScrolledUp() {
+					if content, err := TmuxCapturePaneFull(s.SessionName); err == nil {
+						s.Terminal.SetFullContent(content)
+					}
 				}
 			}
 		}
@@ -975,6 +1089,19 @@ func (m *model) updateCaptures() {
 	}
 }
 
+// focusedTerminal returns the TerminalPane of the focused split, or nil.
+func (m *model) focusedTerminal() *ui.TerminalPane {
+	tab := m.workspace.ActiveTab()
+	if tab == nil {
+		return nil
+	}
+	split := tab.SplitPane.FocusedSplit()
+	if split == nil {
+		return nil
+	}
+	return split.Terminal
+}
+
 // renderWorkspaceStatusBar renders the status bar for workspace view.
 func (m model) renderWorkspaceStatusBar() string {
 	keys := []string{
@@ -985,6 +1112,10 @@ func (m model) renderWorkspaceStatusBar() string {
 		"x:close",
 		"f:fullscreen",
 	}
-	return ui.StatusBarStyle.Render(strings.Join(keys, "  "))
+	status := strings.Join(keys, "  ")
+	if m.err != nil {
+		status += "  " + ui.DeadStyle.Render(m.err.Error())
+	}
+	return ui.StatusBarStyle.Render(status)
 }
 

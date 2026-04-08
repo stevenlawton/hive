@@ -167,9 +167,89 @@ func TmuxCapturePaneFull(sessionName string) (string, error) {
 	return tmuxOutput(tmuxCapturePaneFullArgs(sessionName)...)
 }
 
+// bubbleteaToTmuxKey translates a Bubbletea v2 key string to the
+// equivalent tmux send-keys key name.
+func bubbleteaToTmuxKey(key string) string {
+	// Named keys
+	switch key {
+	case "backspace":
+		return "BSpace"
+	case "escape":
+		return "Escape"
+	case "enter":
+		return "Enter"
+	case "tab":
+		return "Tab"
+	case "space":
+		return "Space"
+	case "up":
+		return "Up"
+	case "down":
+		return "Down"
+	case "left":
+		return "Left"
+	case "right":
+		return "Right"
+	case "home":
+		return "Home"
+	case "end":
+		return "End"
+	case "pgup":
+		return "PPage"
+	case "pgdown":
+		return "NPage"
+	case "delete":
+		return "DC"
+	case "insert":
+		return "IC"
+	}
+
+	// Function keys: f1 → F1
+	if strings.HasPrefix(key, "f") && len(key) >= 2 && len(key) <= 3 {
+		if n := key[1:]; n[0] >= '1' && n[0] <= '9' {
+			return "F" + n
+		}
+	}
+
+	// Ctrl combinations: ctrl+a → C-a
+	if strings.HasPrefix(key, "ctrl+") {
+		return "C-" + strings.TrimPrefix(key, "ctrl+")
+	}
+
+	// Alt combinations: alt+a → M-a
+	if strings.HasPrefix(key, "alt+") {
+		return "M-" + strings.TrimPrefix(key, "alt+")
+	}
+
+	return key
+}
+
 func TmuxSendRawKeys(sessionName string, keys ...string) error {
-	args := append([]string{"send-keys", "-t", sessionName}, keys...)
+	translated := make([]string, len(keys))
+	for i, k := range keys {
+		translated[i] = bubbleteaToTmuxKey(k)
+	}
+	args := append([]string{"send-keys", "-t", sessionName}, translated...)
 	return tmuxRun(args...)
+}
+
+func TmuxSendLiteral(sessionName, text string) error {
+	return tmuxRun("send-keys", "-t", sessionName, "-l", text)
+}
+
+// TmuxCopyModeScroll enters copy-mode (if needed) and scrolls up or down.
+// The -e flag auto-exits copy-mode when scrolling hits the bottom.
+func TmuxCopyModeScroll(sessionName string, up bool) {
+	tmuxRun("copy-mode", "-t", sessionName, "-e")
+	if up {
+		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-up")
+		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-up")
+		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-up")
+	} else {
+		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-down")
+		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-down")
+		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-down")
+	}
 }
 
 func TmuxResizePane(sessionName string, width, height int) error {

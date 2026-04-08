@@ -10,6 +10,7 @@ func TestSplitPaneAddRemove(t *testing.T) {
 	if len(sp.Splits) != 1 {
 		t.Fatalf("expected 1 split, got %d", len(sp.Splits))
 	}
+	// Full width for single split (lipgloss Width = total including border)
 	if sp.Splits[0].Terminal.Width != 80 {
 		t.Errorf("single split should use full width, got %d", sp.Splits[0].Terminal.Width)
 	}

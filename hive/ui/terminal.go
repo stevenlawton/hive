@@ -4,17 +4,18 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // TerminalPane renders tmux pane output and optionally forwards input.
 type TerminalPane struct {
 	SessionName  string
-	Content      string
+	Content      string // live capture (visible portion)
 	Width        int
 	Height       int
 	Focused      bool
-	ScrollMode   bool
-	scrollPos    int
+	HasBorder    bool // true if rendered inside a lipgloss border
+	ScrollOffset int  // 0 = live/bottom, >0 = lines scrolled up from bottom
 	fullContent  string
 	lastResizeW  int // last width we resized tmux to
 	lastResizeH  int // last height we resized tmux to
@@ -45,6 +46,34 @@ func (t *TerminalPane) MarkResized() {
 	t.lastResizeH = t.Height
 }
 
+// InnerWidth returns the usable content width (subtracts border if present).
+func (t *TerminalPane) InnerWidth() int {
+	if !t.HasBorder {
+		return t.Width
+	}
+	if t.Width < 2 {
+		return 0
+	}
+	return t.Width - 2
+}
+
+// InnerHeight returns the usable content height (subtracts border if present).
+func (t *TerminalPane) InnerHeight() int {
+	if !t.HasBorder {
+		return t.Height
+	}
+	if t.Height < 2 {
+		return 0
+	}
+	return t.Height - 2
+}
+
+// InvalidateResize forces the next NeedsResize check to return true.
+func (t *TerminalPane) InvalidateResize() {
+	t.lastResizeW = 0
+	t.lastResizeH = 0
+}
+
 // SetContent updates the rendered content from capture-pane output.
 func (t *TerminalPane) SetContent(content string) {
 	t.Content = content
@@ -55,82 +84,75 @@ func (t *TerminalPane) SetFullContent(content string) {
 	t.fullContent = content
 }
 
-// EnterScrollMode switches to scroll mode with full history.
-func (t *TerminalPane) EnterScrollMode() {
-	t.ScrollMode = true
-	lines := strings.Split(t.fullContent, "\n")
-	if len(lines) > t.Height {
-		t.scrollPos = len(lines) - t.Height
-	} else {
-		t.scrollPos = 0
-	}
-}
-
-// ExitScrollMode returns to normal mode.
-func (t *TerminalPane) ExitScrollMode() {
-	t.ScrollMode = false
-	t.scrollPos = 0
-}
-
-// ScrollUp moves the viewport up.
+// ScrollUp scrolls the viewport up by n lines.
 func (t *TerminalPane) ScrollUp(n int) {
-	t.scrollPos -= n
-	if t.scrollPos < 0 {
-		t.scrollPos = 0
+	t.ScrollOffset += n
+	// Clamp to max scrollback
+	if t.fullContent != "" {
+		lines := strings.Split(t.fullContent, "\n")
+		maxOffset := len(lines) - t.InnerHeight()
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		if t.ScrollOffset > maxOffset {
+			t.ScrollOffset = maxOffset
+		}
 	}
 }
 
-// ScrollDown moves the viewport down.
+// ScrollDown scrolls the viewport down by n lines. Snaps to live at bottom.
 func (t *TerminalPane) ScrollDown(n int) {
-	lines := strings.Split(t.fullContent, "\n")
-	maxPos := len(lines) - t.Height
-	if maxPos < 0 {
-		maxPos = 0
+	t.ScrollOffset -= n
+	if t.ScrollOffset < 0 {
+		t.ScrollOffset = 0
 	}
-	t.scrollPos += n
-	if t.scrollPos > maxPos {
-		t.scrollPos = maxPos
-	}
+}
+
+// IsScrolledUp returns true if the pane is showing history, not live.
+func (t *TerminalPane) IsScrolledUp() bool {
+	return t.ScrollOffset > 0
 }
 
 // View renders the terminal pane content.
+// Width/Height are the total allocation including border; content uses inner dimensions.
 func (t *TerminalPane) View() string {
-	if t.Content == "" && !t.ScrollMode {
+	iw, ih := t.InnerWidth(), t.InnerHeight()
+
+	if t.Content == "" && t.fullContent == "" {
 		return lipgloss.NewStyle().
-			Width(t.Width).
-			Height(t.Height).
+			Width(iw).
+			Height(ih).
 			Foreground(ColorGray).
 			Render("No session")
 	}
 
 	var rendered string
-	if t.ScrollMode {
-		rendered = t.viewScrollMode()
+	if t.ScrollOffset > 0 && t.fullContent != "" {
+		// Scrolled up — show slice of full scrollback
+		lines := strings.Split(t.fullContent, "\n")
+		end := len(lines) - t.ScrollOffset
+		if end < 0 {
+			end = 0
+		}
+		start := end - ih
+		if start < 0 {
+			start = 0
+		}
+		rendered = strings.Join(lines[start:end], "\n")
 	} else {
-		rendered = TruncateToHeight(t.Content, t.Height)
+		// Live view — show bottom of current capture
+		rendered = TruncateToHeight(t.Content, ih)
 	}
 
-	// Clamp each line to width
+	// Clamp each line to inner width
 	lines := strings.Split(rendered, "\n")
 	for i, line := range lines {
-		lines[i] = ClampToWidth(line, t.Width)
+		lines[i] = ClampToWidth(line, iw)
 	}
 
 	return strings.Join(lines, "\n")
 }
 
-func (t *TerminalPane) viewScrollMode() string {
-	lines := strings.Split(t.fullContent, "\n")
-	end := t.scrollPos + t.Height
-	if end > len(lines) {
-		end = len(lines)
-	}
-	start := t.scrollPos
-	if start < 0 {
-		start = 0
-	}
-	return strings.Join(lines[start:end], "\n")
-}
 
 // TruncateToHeight returns the last `height` lines of content.
 func TruncateToHeight(content string, height int) string {
@@ -144,14 +166,10 @@ func TruncateToHeight(content string, height int) string {
 	return strings.Join(lines[len(lines)-height:], "\n")
 }
 
-// ClampToWidth truncates a line to max visible width.
+// ClampToWidth truncates a line to max visible width, preserving ANSI sequences.
 func ClampToWidth(line string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	runes := []rune(line)
-	if len(runes) <= width {
-		return line
-	}
-	return string(runes[:width])
+	return ansi.Truncate(line, width, "")
 }

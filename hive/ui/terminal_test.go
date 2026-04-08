@@ -49,36 +49,34 @@ func TestClampToWidthShort(t *testing.T) {
 	}
 }
 
-func TestTerminalPaneScrollMode(t *testing.T) {
+func TestTerminalPaneScroll(t *testing.T) {
 	tp := NewTerminalPane("test-session")
-	tp.SetSize(80, 5)
-	tp.SetFullContent("a\nb\nc\nd\ne\nf\ng\nh\ni\nj")
-
-	tp.EnterScrollMode()
-	if !tp.ScrollMode {
-		t.Error("expected scroll mode on")
-	}
-	if tp.scrollPos != 5 { // 10 lines - 5 height
-		t.Errorf("expected scrollPos 5, got %d", tp.scrollPos)
-	}
+	tp.SetSize(80, 5) // InnerHeight = 5 (no border)
+	tp.SetFullContent("a\nb\nc\nd\ne\nf\ng\nh\ni\nj") // 10 lines
 
 	tp.ScrollUp(3)
-	if tp.scrollPos != 2 {
-		t.Errorf("expected scrollPos 2, got %d", tp.scrollPos)
+	if tp.ScrollOffset != 3 {
+		t.Errorf("expected ScrollOffset 3, got %d", tp.ScrollOffset)
+	}
+	if !tp.IsScrolledUp() {
+		t.Error("expected IsScrolledUp true")
 	}
 
-	tp.ScrollUp(10) // should clamp to 0
-	if tp.scrollPos != 0 {
-		t.Errorf("expected scrollPos 0, got %d", tp.scrollPos)
+	tp.ScrollUp(100) // should clamp to max (10 - 5 = 5)
+	if tp.ScrollOffset != 5 {
+		t.Errorf("expected ScrollOffset 5, got %d", tp.ScrollOffset)
 	}
 
-	tp.ScrollDown(100) // should clamp to max
-	if tp.scrollPos != 5 {
-		t.Errorf("expected scrollPos 5, got %d", tp.scrollPos)
+	tp.ScrollDown(3)
+	if tp.ScrollOffset != 2 {
+		t.Errorf("expected ScrollOffset 2, got %d", tp.ScrollOffset)
 	}
 
-	tp.ExitScrollMode()
-	if tp.ScrollMode {
-		t.Error("expected scroll mode off")
+	tp.ScrollDown(100) // should clamp to 0 (live)
+	if tp.ScrollOffset != 0 {
+		t.Errorf("expected ScrollOffset 0, got %d", tp.ScrollOffset)
+	}
+	if tp.IsScrolledUp() {
+		t.Error("expected IsScrolledUp false at bottom")
 	}
 }

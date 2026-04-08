@@ -11,12 +11,21 @@ type Split struct {
 	Terminal    *TerminalPane
 }
 
-// SplitPane manages a horizontal row of terminal splits.
+// SplitOrientation controls the split layout direction.
+type SplitOrientation int
+
+const (
+	SplitVertical   SplitOrientation = iota // side by side (ctrl+space v)
+	SplitHorizontal                         // stacked top/bottom (ctrl+space h)
+)
+
+// SplitPane manages terminal splits in a given orientation.
 type SplitPane struct {
-	Splits   []Split
-	FocusIdx int
-	Width    int
-	Height   int
+	Splits      []Split
+	FocusIdx    int
+	Orientation SplitOrientation
+	Width       int
+	Height      int
 }
 
 // NewSplitPane creates an empty split pane layout.
@@ -34,6 +43,7 @@ func (sp *SplitPane) SetSize(w, h int) {
 // AddSplit adds a new split with a terminal pane.
 func (sp *SplitPane) AddSplit(label, sessionName string) {
 	term := NewTerminalPane(sessionName)
+	term.HasBorder = true
 	sp.Splits = append(sp.Splits, Split{
 		Label:       label,
 		SessionName: sessionName,
@@ -84,25 +94,43 @@ func (sp *SplitPane) recalcWidths() {
 		return
 	}
 
-	// Account for border separators between splits (1 char each)
-	separators := n - 1
-	available := sp.Width - separators
-	if available < n {
-		available = n
-	}
-	splitWidth := available / n
-
-	for i := range sp.Splits {
-		w := splitWidth
-		if i == n-1 {
-			w = available - splitWidth*(n-1)
+	if sp.Orientation == SplitHorizontal {
+		// Stacked top/bottom: each split gets full width, split height
+		available := sp.Height
+		if available < n {
+			available = n
 		}
-		sp.Splits[i].Terminal.SetSize(w, sp.Height)
-		sp.Splits[i].Terminal.Focused = (i == sp.FocusIdx)
+		splitHeight := available / n
+
+		for i := range sp.Splits {
+			h := splitHeight
+			if i == n-1 {
+				h = available - splitHeight*(n-1)
+			}
+			sp.Splits[i].Terminal.SetSize(sp.Width, h)
+			sp.Splits[i].Terminal.Focused = (i == sp.FocusIdx)
+		}
+	} else {
+		// Side by side: each split gets full height, split width
+		separators := n - 1
+		available := sp.Width - separators
+		if available < n {
+			available = n
+		}
+		splitWidth := available / n
+
+		for i := range sp.Splits {
+			w := splitWidth
+			if i == n-1 {
+				w = available - splitWidth*(n-1)
+			}
+			sp.Splits[i].Terminal.SetSize(w, sp.Height)
+			sp.Splits[i].Terminal.Focused = (i == sp.FocusIdx)
+		}
 	}
 }
 
-// View renders all splits side by side with borders.
+// View renders splits with borders in the configured orientation.
 func (sp *SplitPane) View() string {
 	if len(sp.Splits) == 0 {
 		return ""
@@ -123,12 +151,15 @@ func (sp *SplitPane) View() string {
 
 		rendered := borderStyle.
 			Width(split.Terminal.Width).
-			Height(sp.Height).
+			Height(split.Terminal.Height).
 			Render(content)
 
 		panes = append(panes, rendered)
 	}
 
+	if sp.Orientation == SplitHorizontal {
+		return lipgloss.JoinVertical(lipgloss.Left, panes...)
+	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, panes...)
 }
 

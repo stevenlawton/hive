@@ -50,14 +50,24 @@ func (mv *ManagerView) SetSize(w, h int) {
 func (mv *ManagerView) View(listContent, statusBar string) string {
 	previewContent := mv.Preview.View()
 
+	// Only reserve notify space if there are actual notifications
 	notifyHeight := mv.Height / 5
 	if notifyHeight > 6 {
 		notifyHeight = 6
 	}
+	var notifyContent string
+	if notifyHeight > 0 && len(mv.NotifyLog.Entries) > 0 {
+		notifyContent = mv.NotifyLog.View(mv.ListWidth, notifyHeight)
+	}
+	if notifyContent == "" {
+		notifyHeight = 0
+	}
+
 	listHeight := mv.Height - 4 - notifyHeight // 4 = status + key bar rows + separator
 	if listHeight < 5 {
 		listHeight = 5
 		notifyHeight = 0
+		notifyContent = ""
 	}
 
 	listLines := strings.Split(listContent, "\n")
@@ -68,11 +78,8 @@ func (mv *ManagerView) View(listContent, statusBar string) string {
 		listLines = append(listLines, "")
 	}
 
-	if notifyHeight > 0 {
-		notifyContent := mv.NotifyLog.View(mv.ListWidth, notifyHeight)
-		if notifyContent != "" {
-			listLines = append(listLines, strings.Split(notifyContent, "\n")...)
-		}
+	if notifyContent != "" {
+		listLines = append(listLines, strings.Split(notifyContent, "\n")...)
 	}
 
 	leftPane := strings.Join(listLines, "\n")

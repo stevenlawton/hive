@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"hive/ui"
 	"os"
 	"strings"
 
@@ -46,6 +47,16 @@ func (m model) View() tea.View {
 		m.workspace.SetSize(m.width, m.height)
 		statusBar := m.renderWorkspaceStatusBar()
 		v = tea.NewView(m.workspace.View(statusBar))
+	case viewWorktree:
+		if m.wtSplitMode {
+			v = tea.NewView(m.viewWorktreeSplit())
+		} else {
+			listContent, l := m.viewList()
+			layout = l
+			m.manager.SetSize(m.width, m.height)
+			statusBar := m.renderStatusBar() + "\n" + m.renderKeyBarString()
+			v = tea.NewView(m.manager.View(listContent, statusBar))
+		}
 	case viewAttach:
 		v = tea.NewView("") // TUI hidden during attach
 	default:
@@ -85,7 +96,7 @@ func (m model) View() tea.View {
 			if mouse.Button == tea.MouseWheelUp {
 				dir = -1
 			}
-			return func() tea.Msg { return scrollMsg{dir: dir} }
+return func() tea.Msg { return scrollMsg{dir: dir} }
 		}
 		return nil
 	}
@@ -102,45 +113,43 @@ type listLayout struct {
 func (m model) viewList() (string, listLayout) {
 	layout := listLayout{itemY: make(map[int]int)}
 
-	w := m.width
-	if w < 40 {
-		w = 40
+	w := m.manager.ListWidth
+	if w < 28 {
+		w = 28
 	}
 
-	// Build box inner content
-	var inner strings.Builder
+	var content strings.Builder
 
-	// Title inside box
-	inner.WriteString(titleStyle.UnsetPadding().Render("⚡ Hive"))
-	inner.WriteString("\n")
+	// Title
+	content.WriteString(titleStyle.UnsetPadding().Render(" ⚡ Hive"))
+	content.WriteString("\n")
 
 	if m.filtering {
-		inner.WriteString(subtitleStyle.UnsetPadding().Render(m.filter.View()))
-		inner.WriteString("\n")
+		content.WriteString(subtitleStyle.UnsetPadding().Render(" " + m.filter.View()))
+		content.WriteString("\n")
 	}
 
 	if m.mode == viewPromote {
-		inner.WriteString(subtitleStyle.UnsetPadding().Render("Promote to ~/repos/"))
-		inner.WriteString(m.promote.View())
-		inner.WriteString("\n")
+		content.WriteString(subtitleStyle.UnsetPadding().Render(" Promote to ~/repos/"))
+		content.WriteString(m.promote.View())
+		content.WriteString("\n")
 	}
 
 	if m.mode == viewConfirm {
-		inner.WriteString(waitStyle.Render("  " + m.confirmMsg))
-		inner.WriteString("\n")
+		content.WriteString(waitStyle.Render("  " + m.confirmMsg))
+		content.WriteString("\n")
 	}
 
 	if m.mode == viewWorktree {
-		inner.WriteString(subtitleStyle.UnsetPadding().Render("  New worktree"))
-		inner.WriteString("\n")
+		content.WriteString(subtitleStyle.UnsetPadding().Render("  New worktree"))
+		content.WriteString("\n")
 		for i, f := range m.wtFields {
 			prefix := "  "
 			if i == m.wtFocus {
 				prefix = "> "
 			}
-			inner.WriteString(prefix + f.View() + "\n")
+			content.WriteString(prefix + f.View() + "\n")
 		}
-		// Yolo toggle
 		check := "[ ]"
 		if m.wtYolo {
 			check = "[x]"
@@ -149,9 +158,9 @@ func (m model) viewList() (string, listLayout) {
 		if m.wtFocus == wtFieldCount {
 			prefix = "> "
 		}
-		inner.WriteString(prefix + check + " Yolo\n")
-		inner.WriteString(subtitleStyle.UnsetPadding().Render("  ctrl+s to create, esc to cancel"))
-		inner.WriteString("\n")
+		content.WriteString(prefix + check + " Yolo\n")
+		content.WriteString(subtitleStyle.UnsetPadding().Render("  ctrl+s to create, esc to cancel"))
+		content.WriteString("\n")
 	}
 
 	// Build display lines from displayOrder (already sorted: active > favourites > rest)
@@ -167,7 +176,7 @@ func (m model) viewList() (string, listLayout) {
 
 		if section != lastSection {
 			lines = append(lines, displayLine{
-				text:      sectionStyle.UnsetPadding().Render("── " + section + " ──"),
+				text:      sectionStyle.UnsetPadding().Render(" ── " + section + " ──"),
 				cursorPos: -1,
 			})
 			lastSection = section
@@ -185,15 +194,15 @@ func (m model) viewList() (string, listLayout) {
 	}
 
 	// Calculate visible window
-	// Reserved: border top/bottom (2) + title (1) + status bar (1) + key bar (2) + manager chrome (4)
-	reserved := 10
+	// Reserved: title (1) + status bar (1) + key bar (2)
+	reserved := 4
 	if m.filtering {
 		reserved++
 	}
 	if m.mode == viewPromote {
 		reserved++
 	}
-	if len(lines) > (m.height - reserved) {
+	if len(lines) > (m.height - reserved - 1) {
 		reserved++ // scroll indicator
 	}
 	maxVisible := m.height - reserved
@@ -227,9 +236,7 @@ func (m model) viewList() (string, listLayout) {
 	}
 
 	// Track Y positions for mouse support
-	// Y=0 is the border top, Y=1 is the title, then filter/promote, then items
-	yOffset := 1 // border top line
-	yOffset++     // title line
+	yOffset := 1 // title line
 	if m.filtering {
 		yOffset++
 	}
@@ -237,10 +244,10 @@ func (m model) viewList() (string, listLayout) {
 		yOffset++
 	}
 
-	// Render visible lines
+	// Render visible lines, clamping to column width
 	for i, l := range lines[start:end] {
-		inner.WriteString(l.text)
-		inner.WriteString("\n")
+		content.WriteString(ui.ClampToWidth(l.text, w))
+		content.WriteString("\n")
 		if l.cursorPos >= 0 {
 			layout.itemY[l.cursorPos] = yOffset + i
 		}
@@ -249,39 +256,22 @@ func (m model) viewList() (string, listLayout) {
 	// Scroll indicator
 	if len(lines) > maxVisible {
 		pos := fmt.Sprintf(" %d/%d", m.cursor+1, len(m.displayOrder))
-		inner.WriteString(subtitleStyle.UnsetPadding().Render(pos))
-		inner.WriteString("\n")
+		content.WriteString(subtitleStyle.UnsetPadding().Render(pos))
 	}
 
-	// Wrap in bordered box — constrain height to available space
-	availH := m.height - 4 // 4 lines for status bar + key bar below
-	if availH < 5 {
-		availH = 5
-	}
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#555555")).
-		Width(w - 2).
-		Height(availH - 2). // -2 for border top/bottom
-		Padding(0, 1)
-
-	var b strings.Builder
-	boxRendered := boxStyle.Render(inner.String())
-	b.WriteString(boxRendered)
-
-	// Track key bar Y for mouse support (status bar + key bar added by manager view)
-	boxHeight := strings.Count(boxRendered, "\n") + 1
-	layout.keyBarY = boxHeight + 1 // +1 for status bar line
+	// Track key bar Y for mouse support
+	totalLines := strings.Count(content.String(), "\n") + 1
+	layout.keyBarY = totalLines + 1 // +1 for status bar line
 
 	_, buttons := m.renderKeyBar()
 	layout.keyButtons = buttons
 
 	if m.err != nil {
-		b.WriteString("\n")
-		b.WriteString(deadStyle.Render(fmt.Sprintf("  error: %v", m.err)))
+		content.WriteString("\n")
+		content.WriteString(deadStyle.Render(fmt.Sprintf("  error: %v", m.err)))
 	}
 
-	return b.String(), layout
+	return content.String(), layout
 }
 
 func (m model) viewHelp() string {
@@ -312,6 +302,56 @@ var (
 	editActiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88"))
 	editBoxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#555555")).Padding(1, 2).Width(50)
 )
+
+func (m model) viewWorktreeSplit() string {
+	var form strings.Builder
+
+	form.WriteString(titleStyle.UnsetPadding().Render("⚡ New Worktree Split"))
+	form.WriteString("\n\n")
+
+	for i, f := range m.wtFields {
+		marker := "  "
+		if i == m.wtFocus {
+			marker = editActiveStyle.Render("> ")
+		}
+		form.WriteString(marker + f.View() + "\n")
+	}
+
+	check := "[ ]"
+	if m.wtYolo {
+		check = editActiveStyle.Render("[✓]")
+	}
+	prefix := "  "
+	if m.wtFocus == wtFieldCount {
+		prefix = editActiveStyle.Render("> ")
+	}
+	form.WriteString("\n" + prefix + check + " Yolo\n")
+	form.WriteString("\n" + helpStyle.UnsetPadding().Render("enter create  tab next  esc cancel"))
+
+	box := editBoxStyle.Render(form.String())
+
+	// Center vertically and horizontally
+	boxLines := strings.Split(box, "\n")
+	padTop := (m.height - len(boxLines)) / 2
+	padLeft := (m.width - lipgloss.Width(boxLines[0])) / 2
+	if padTop < 0 {
+		padTop = 0
+	}
+	if padLeft < 0 {
+		padLeft = 0
+	}
+
+	var out strings.Builder
+	for range padTop {
+		out.WriteString("\n")
+	}
+	leftPad := strings.Repeat(" ", padLeft)
+	for _, line := range boxLines {
+		out.WriteString(leftPad + line + "\n")
+	}
+
+	return out.String()
+}
 
 func (m model) viewEdit() string {
 	var b strings.Builder

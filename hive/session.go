@@ -55,7 +55,6 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 	sessionName := TmuxSessionName(repo.DirName, false)
 
 	if TmuxHasSession(sessionName) {
-		// Telegram session takeover: send claude --resume into existing pane
 		if withClaude && item.bridgeEntry != nil && item.bridgeEntry.SessionID != "" {
 			TmuxSendKeys(sessionName, "C-c")
 			TmuxSendKeys(sessionName, "claude --resume "+item.bridgeEntry.SessionID)
@@ -65,9 +64,7 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 			return nil
 		}
 		m.clearFlash(item)
-		// Switch to workspace tab if it exists, or create one
-		m.workspace.OpenTab(repo.DirName, repo.Short, sessionName, "main")
-		m.mode = viewWorkspace
+		m.openAsTab(repo, sessionName)
 		return nil
 	}
 
@@ -89,11 +86,37 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 	item.tmuxSes = sessionName
 	m.rebuildDisplayOrder()
 
-	// Open workspace tab
+	m.openAsTab(repo, sessionName)
+	return nil
+}
+
+// openAsTab opens a repo in the workspace. Worktrees become splits on parent tab.
+func (m *model) openAsTab(repo Repo, sessionName string) {
+	if repo.IsWorktree && repo.Parent != "" {
+		// Check if parent tab already exists (e.g. from reconnect)
+		if _, exists := m.workspace.Tabs[repo.Parent]; exists {
+			m.workspace.TabBar.FocusByID(repo.Parent)
+			m.mode = viewWorkspace
+			return
+		}
+		// Find parent's session and create parent tab
+		for _, it := range m.items {
+			if it.repo.DirName == repo.Parent && it.tmuxSes != "" {
+				m.workspace.OpenTab(repo.Parent, it.repo.Short, it.tmuxSes, "main")
+				m.workspace.AddSplitToActive("wt:"+repo.WorktreeBranch, sessionName)
+				m.mode = viewWorkspace
+				return
+			}
+		}
+	}
+	// Check if a tab already exists for this repo
+	if _, exists := m.workspace.Tabs[repo.DirName]; exists {
+		m.workspace.TabBar.FocusByID(repo.DirName)
+		m.mode = viewWorkspace
+		return
+	}
 	m.workspace.OpenTab(repo.DirName, repo.Short, sessionName, "main")
 	m.mode = viewWorkspace
-
-	return nil
 }
 
 func (m *model) toggleRemote() tea.Cmd {
@@ -263,6 +286,44 @@ func (m *model) reconnectSessions() {
 	}
 
 	MapSessionsToItems(m.items, sessions)
+
+	// Rebuild workspace tabs: parents first, then worktrees as splits
+	for _, item := range m.items {
+		if item.tmuxSes == "" || item.status == statusRemote || item.repo.IsWorktree {
+			continue
+		}
+		m.workspace.OpenTab(item.repo.DirName, item.repo.Short, item.tmuxSes, "main")
+	}
+	for _, item := range m.items {
+		if item.tmuxSes == "" || item.status == statusRemote || !item.repo.IsWorktree {
+			continue
+		}
+		if item.repo.Parent == "" {
+			continue
+		}
+		// Ensure parent tab exists — create it from the first worktree if parent has no session
+		if _, exists := m.workspace.Tabs[item.repo.Parent]; !exists {
+			// Find parent for label
+			parentLabel := item.repo.Parent
+			for _, p := range m.items {
+				if p.repo.DirName == item.repo.Parent {
+					parentLabel = p.repo.Short
+					if p.tmuxSes != "" {
+						// Parent has a session — use it as the primary split
+						m.workspace.OpenTab(p.repo.DirName, p.repo.Short, p.tmuxSes, "main")
+					}
+					break
+				}
+			}
+			// If parent tab still doesn't exist, create it with this worktree as primary
+			if _, exists := m.workspace.Tabs[item.repo.Parent]; !exists {
+				m.workspace.OpenTab(item.repo.Parent, parentLabel, item.tmuxSes, "wt:"+item.repo.WorktreeBranch)
+				continue // this worktree is already the primary split
+			}
+		}
+		m.workspace.TabBar.FocusByID(item.repo.Parent)
+		m.workspace.AddSplitToActive("wt:"+item.repo.WorktreeBranch, item.tmuxSes)
+	}
 
 	// Auto-start configured remote sessions
 	m.startConfiguredRemotes()

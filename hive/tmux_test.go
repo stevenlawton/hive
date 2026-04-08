@@ -83,6 +83,41 @@ func TestParseTmuxSessionsDualPrefix(t *testing.T) {
 	}
 }
 
+func TestBubbleteaToTmuxKey(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"backspace", "BSpace"},
+		{"escape", "Escape"},
+		{"enter", "Enter"},
+		{"tab", "Tab"},
+		{"space", "Space"},
+		{"up", "Up"},
+		{"down", "Down"},
+		{"left", "Left"},
+		{"right", "Right"},
+		{"home", "Home"},
+		{"end", "End"},
+		{"pgup", "PPage"},
+		{"pgdown", "NPage"},
+		{"delete", "DC"},
+		{"insert", "IC"},
+		{"f1", "F1"},
+		{"f12", "F12"},
+		{"ctrl+a", "C-a"},
+		{"ctrl+z", "C-z"},
+		{"alt+x", "M-x"},
+		{"a", "a"},
+		{"Z", "Z"},
+		{"1", "1"},
+	}
+	for _, tt := range tests {
+		if got := bubbleteaToTmuxKey(tt.input); got != tt.want {
+			t.Errorf("bubbleteaToTmuxKey(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestTmuxCapturePaneArgs(t *testing.T) {
 	args := tmuxCapturePaneArgs("hive-workspace")
 	expected := []string{"capture-pane", "-p", "-e", "-t", "hive-workspace"}

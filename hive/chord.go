@@ -20,6 +20,7 @@ const (
 	ChordFullScreen
 	ChordWorktree
 	ChordDetachSplit
+	ChordScrollMode
 )
 
 // ChordHandler manages the Ctrl+Space chord prefix state.
