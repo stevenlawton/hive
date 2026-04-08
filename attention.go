@@ -24,8 +24,14 @@ var AttentionThresholds = []time.Duration{
 func DetectClaudeWaiting(content string) bool {
 	lines := strings.Split(content, "\n")
 
+	// Skip trailing blank lines
+	end := len(lines)
+	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+
 	// Scan from bottom for the prompt
-	for i := len(lines) - 1; i >= 0 && i >= len(lines)-6; i-- {
+	for i := end - 1; i >= 0 && i >= end-6; i-- {
 		trimmed := strings.TrimSpace(lines[i])
 		// Empty prompt line = waiting
 		if trimmed == "❯" || trimmed == ">" || trimmed == "›" {
@@ -88,10 +94,15 @@ func CheckAttention(state *AttentionState, content string, cfg *NotificationConf
 
 // contentHash returns a simple hash of content for change detection.
 func contentHash(content string) string {
-	// Use last 10 lines as the hash — captures prompt state without noise
+	// Use last 10 non-blank lines as the hash — captures prompt state without noise
 	lines := strings.Split(content, "\n")
-	if len(lines) > 10 {
-		lines = lines[len(lines)-10:]
+	end := len(lines)
+	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
+		end--
 	}
-	return strings.Join(lines, "\n")
+	start := end - 10
+	if start < 0 {
+		start = 0
+	}
+	return strings.Join(lines[start:end], "\n")
 }
