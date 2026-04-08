@@ -922,8 +922,14 @@ func (m *model) updateCaptures() {
 	if m.mode == viewManager {
 		if sel := m.selectedItem(); sel != nil && sel.tmuxSes != "" {
 			m.manager.Preview.SetSession(sel.tmuxSes)
+			// Resize tmux pane to match preview dimensions
+			tp := m.manager.Preview.Terminal
+			if tp.NeedsResize() {
+				TmuxResizePane(sel.tmuxSes, tp.Width, tp.Height)
+				tp.MarkResized()
+			}
 			if content, err := TmuxCapturePane(sel.tmuxSes); err == nil {
-				m.manager.Preview.Terminal.SetContent(content)
+				tp.SetContent(content)
 			}
 			if sel.repo.Path != "" {
 				if diff, err := gitDiff(sel.repo.Path); err == nil {
@@ -939,6 +945,11 @@ func (m *model) updateCaptures() {
 		if tab != nil {
 			for i := range tab.SplitPane.Splits {
 				s := &tab.SplitPane.Splits[i]
+				// Resize tmux pane to match split dimensions
+				if s.Terminal.NeedsResize() {
+					TmuxResizePane(s.SessionName, s.Terminal.Width, s.Terminal.Height)
+					s.Terminal.MarkResized()
+				}
 				if content, err := TmuxCapturePane(s.SessionName); err == nil {
 					s.Terminal.SetContent(content)
 				}

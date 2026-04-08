@@ -8,14 +8,16 @@ import (
 
 // TerminalPane renders tmux pane output and optionally forwards input.
 type TerminalPane struct {
-	SessionName string
-	Content     string
-	Width       int
-	Height      int
-	Focused     bool
-	ScrollMode  bool
-	scrollPos   int
-	fullContent string
+	SessionName  string
+	Content      string
+	Width        int
+	Height       int
+	Focused      bool
+	ScrollMode   bool
+	scrollPos    int
+	fullContent  string
+	lastResizeW  int // last width we resized tmux to
+	lastResizeH  int // last height we resized tmux to
 }
 
 // NewTerminalPane creates a terminal pane for the given tmux session.
@@ -29,6 +31,18 @@ func NewTerminalPane(sessionName string) *TerminalPane {
 func (t *TerminalPane) SetSize(w, h int) {
 	t.Width = w
 	t.Height = h
+}
+
+// NeedsResize returns true if the tmux session should be resized.
+func (t *TerminalPane) NeedsResize() bool {
+	return t.SessionName != "" && t.Width > 0 && t.Height > 0 &&
+		(t.Width != t.lastResizeW || t.Height != t.lastResizeH)
+}
+
+// MarkResized records that tmux was resized to current dimensions.
+func (t *TerminalPane) MarkResized() {
+	t.lastResizeW = t.Width
+	t.lastResizeH = t.Height
 }
 
 // SetContent updates the rendered content from capture-pane output.
