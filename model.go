@@ -300,6 +300,7 @@ func (m *model) selectedItem() *repoItem {
 type itemClickMsg struct{ index int }
 type keyBarClickMsg struct{ action string }
 type scrollMsg struct{ dir int }
+type splitClickMsg struct{ index int }
 
 type tickMsg time.Time
 
@@ -394,6 +395,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionEventMsg:
 		cmd := m.handleSessionEvent(SessionEvent(msg))
 		return m, tea.Batch(cmd, waitForEvent()) // listen for next event
+	case splitClickMsg:
+		if m.mode == viewWorkspace {
+			if tab := m.workspace.ActiveTab(); tab != nil {
+				if msg.index >= 0 && msg.index < len(tab.SplitPane.Splits) {
+					tab.SplitPane.FocusIdx = msg.index
+				}
+			}
+		}
+		return m, nil
 	case scrollMsg:
 		if m.mode == viewWorkspace {
 			if term := m.focusedTerminal(); term != nil {

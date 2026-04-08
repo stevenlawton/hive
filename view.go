@@ -74,20 +74,34 @@ func (m model) View() tea.View {
 		mouse := msg.Mouse()
 		switch msg.(type) {
 		case tea.MouseClickMsg:
-			// Click on list item → select it
-			for idx, y := range layout.itemY {
-				if mouse.Y == y {
-					clickIdx := idx
-					return func() tea.Msg { return itemClickMsg{index: clickIdx} }
+			if m.mode == viewWorkspace {
+				// Click on split pane → focus it
+				if tab := m.workspace.ActiveTab(); tab != nil {
+					x := mouse.X
+					for i, split := range tab.SplitPane.Splits {
+						if x < split.Terminal.Width {
+							idx := i
+							return func() tea.Msg { return splitClickMsg{index: idx} }
+						}
+						x -= split.Terminal.Width
+					}
 				}
-			}
-			// Click on key bar → trigger action
-			if mouse.Y >= layout.keyBarY {
-				row := mouse.Y - layout.keyBarY
-				for _, btn := range layout.keyButtons {
-					if btn.row == row && mouse.X >= btn.xStart && mouse.X < btn.xEnd {
-						action := btn.action
-						return func() tea.Msg { return keyBarClickMsg{action: action} }
+			} else {
+				// Click on list item → select it
+				for idx, y := range layout.itemY {
+					if mouse.Y == y {
+						clickIdx := idx
+						return func() tea.Msg { return itemClickMsg{index: clickIdx} }
+					}
+				}
+				// Click on key bar → trigger action
+				if mouse.Y >= layout.keyBarY {
+					row := mouse.Y - layout.keyBarY
+					for _, btn := range layout.keyButtons {
+						if btn.row == row && mouse.X >= btn.xStart && mouse.X < btn.xEnd {
+							action := btn.action
+							return func() tea.Msg { return keyBarClickMsg{action: action} }
+						}
 					}
 				}
 			}
