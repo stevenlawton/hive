@@ -1209,14 +1209,51 @@ func (m *model) focusedTerminal() *ui.TerminalPane {
 
 // renderWorkspaceStatusBar renders the status bar for workspace view.
 func (m model) renderWorkspaceStatusBar() string {
-	keys := []string{
-		"Ctrl+Space q:manager",
-		"n:next-tab",
-		"p:prev-tab",
-		"←→:focus",
-		"x:close",
-		"f:fullscreen",
+	tab := m.workspace.ActiveTab()
+	tabCount := len(m.workspace.TabBar.Tabs)
+	splitCount := 0
+	if tab != nil {
+		splitCount = len(tab.SplitPane.Splits)
 	}
+
+	// Find focused item for context
+	var focusedItem *repoItem
+	if tab != nil {
+		if split := tab.SplitPane.FocusedSplit(); split != nil {
+			for i := range m.items {
+				if m.items[i].tmuxSes == split.SessionName {
+					focusedItem = &m.items[i]
+					break
+				}
+			}
+		}
+	}
+
+	var keys []string
+	keys = append(keys, "^Space q:back")
+
+	if tabCount > 1 {
+		keys = append(keys, "n/p:tabs")
+	}
+	if splitCount > 1 {
+		keys = append(keys, "←→:focus")
+	}
+
+	keys = append(keys, "v:vsplit", "h:hsplit")
+
+	if focusedItem != nil && focusedItem.repo.IsWorktree {
+		keys = append(keys, "x:merge+close")
+	} else if splitCount > 1 {
+		keys = append(keys, "x:close")
+	}
+
+	keys = append(keys, "f:fullscreen")
+
+	// Scrolled indicator
+	if term := m.focusedTerminal(); term != nil && term.IsScrolledUp() {
+		keys = append(keys, ui.WaitStyle.Render("SCROLL"))
+	}
+
 	status := strings.Join(keys, "  ")
 	if m.err != nil {
 		status += "  " + ui.DeadStyle.Render(m.err.Error())
