@@ -1080,7 +1080,7 @@ func (m *model) updateCaptures() {
 					// Check attention state for this session
 					for j := range m.items {
 						if m.items[j].tmuxSes == s.SessionName {
-							level := CheckAttention(&m.items[j].attention, content, &m.cfg.Notifications)
+							level := CheckAttention(&m.items[j].attention, s.SessionName)
 							m.handleAttention(&m.items[j], level)
 							break
 						}
@@ -1118,10 +1118,8 @@ func (m *model) updateCaptures() {
 				}
 			}
 		}
-		if content, err := TmuxCapturePane(item.tmuxSes); err == nil {
-			level := CheckAttention(&item.attention, content, &m.cfg.Notifications)
-			m.handleAttention(item, level)
-		}
+		level := CheckAttention(&item.attention, item.tmuxSes)
+		m.handleAttention(item, level)
 	}
 
 	// Update diff stats for active sessions
