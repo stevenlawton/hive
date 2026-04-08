@@ -37,7 +37,7 @@ func (mv *ManagerView) SetSize(w, h int) {
 		previewWidth = 10
 	}
 
-	statusBarHeight := 2
+	statusBarHeight := 4 // status line + key bar (2 rows) + separator
 	contentHeight := h - statusBarHeight
 	if contentHeight < 1 {
 		contentHeight = 1
@@ -54,7 +54,7 @@ func (mv *ManagerView) View(listContent, statusBar string) string {
 	if notifyHeight > 6 {
 		notifyHeight = 6
 	}
-	listHeight := mv.Height - 2 - notifyHeight
+	listHeight := mv.Height - 4 - notifyHeight // 4 = status + key bar rows + separator
 	if listHeight < 5 {
 		listHeight = 5
 		notifyHeight = 0
@@ -77,7 +77,17 @@ func (mv *ManagerView) View(listContent, statusBar string) string {
 
 	leftPane := strings.Join(listLines, "\n")
 	leftPadded := padLines(leftPane, mv.ListWidth)
-	rightPadded := padLines(previewContent, mv.Width-mv.ListWidth-1)
+
+	// Ensure right pane has same number of lines as left
+	totalLeftLines := len(listLines)
+	previewLines := strings.Split(previewContent, "\n")
+	if len(previewLines) > totalLeftLines {
+		previewLines = previewLines[:totalLeftLines]
+	}
+	for len(previewLines) < totalLeftLines {
+		previewLines = append(previewLines, "")
+	}
+	rightPadded := padLines(strings.Join(previewLines, "\n"), mv.Width-mv.ListWidth-1)
 
 	separator := lipgloss.NewStyle().Foreground(ColorGray).Render("│")
 	combined := joinHorizontalLines(leftPadded, separator, rightPadded)

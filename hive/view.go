@@ -263,19 +263,13 @@ func (m model) viewList() (string, listLayout) {
 	var b strings.Builder
 	boxRendered := boxStyle.Render(inner.String())
 	b.WriteString(boxRendered)
-	b.WriteString("\n")
 
-	// Status info bar
-	b.WriteString(m.renderStatusBar())
-	b.WriteString("\n")
-
-	// Key bar
+	// Track key bar Y for mouse support (status bar + key bar added by manager view)
 	boxHeight := strings.Count(boxRendered, "\n") + 1
 	layout.keyBarY = boxHeight + 1 // +1 for status bar line
 
-	keyBarText, buttons := m.renderKeyBar()
+	_, buttons := m.renderKeyBar()
 	layout.keyButtons = buttons
-	b.WriteString(keyBarText)
 
 	if m.err != nil {
 		b.WriteString("\n")
