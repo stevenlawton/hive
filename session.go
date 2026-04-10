@@ -1,10 +1,59 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
+
+// PruneZombieSessions kills hive-managed tmux sessions whose working
+// directory no longer exists on disk. The most common case: a worktree
+// session left behind after the worktree itself was deleted, visible as
+// a dangling "(deleted)" suffix in /proc/<pid>/cwd.
+//
+// Only touches sessions with the current `hive-` prefix (including
+// scratch, excluding remote). Legacy `kl-*`, numbered sessions, and
+// user-created sessions are untouched. Returns the names of sessions
+// that were killed.
+func PruneZombieSessions(sessions []TmuxSession) []string {
+	var killed []string
+	for _, s := range sessions {
+		// Scope: only hive-* interactive sessions. Remote sessions
+		// (hive-rc-*) don't necessarily have a cwd on this machine, so
+		// don't prune them based on cwd.
+		if s.IsRemote {
+			continue
+		}
+		if !strings.HasPrefix(s.Name, tmuxPrefix) {
+			continue
+		}
+		cwd, err := TmuxSessionCwd(s.Name)
+		if err != nil || !isZombieCwd(cwd) {
+			continue
+		}
+		if err := TmuxKillSession(s.Name); err != nil {
+			continue
+		}
+		killed = append(killed, s.Name)
+	}
+	return killed
+}
+
+// isZombieCwd returns true if the given path indicates a deleted working
+// directory. Linux marks a deleted cwd with " (deleted)" in /proc/<pid>/cwd;
+// we also treat a genuinely-not-found path as zombie.
+func isZombieCwd(cwd string) bool {
+	if strings.HasSuffix(cwd, " (deleted)") {
+		return true
+	}
+	if _, err := os.Stat(cwd); errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	return false
+}
 
 func MapSessionsToItems(items []repoItem, sessions []TmuxSession) {
 	sessionMap := make(map[string][]TmuxSession)
@@ -304,6 +353,19 @@ func (m *model) reconnectSessions() {
 	sessions, err := TmuxListSessions()
 	if err != nil || len(sessions) == 0 {
 		return
+	}
+
+	// Prune zombie sessions (hive-* sessions whose cwd has been deleted,
+	// e.g. worktree sessions left over after the worktree was removed).
+	// Re-list after pruning so downstream mapping works against the
+	// current set.
+	if killed := PruneZombieSessions(sessions); len(killed) > 0 {
+		fmt.Fprintf(os.Stderr, "hive: pruned %d zombie session(s): %s\n",
+			len(killed), strings.Join(killed, ", "))
+		sessions, err = TmuxListSessions()
+		if err != nil || len(sessions) == 0 {
+			return
+		}
 	}
 
 	MapSessionsToItems(m.items, sessions)

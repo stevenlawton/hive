@@ -41,6 +41,21 @@ func TestMapTmuxSessionsToItems(t *testing.T) {
 	}
 }
 
+func TestIsZombieCwd(t *testing.T) {
+	// Linux marks a deleted cwd with " (deleted)" suffix in /proc/<pid>/cwd
+	if !isZombieCwd("/home/steve/repos/MC/payment-method-migration (deleted)") {
+		t.Error("expected deleted-suffix path to be a zombie")
+	}
+	// Genuinely missing path
+	if !isZombieCwd("/definitely/does/not/exist/anywhere") {
+		t.Error("expected missing path to be a zombie")
+	}
+	// Existing path
+	if isZombieCwd("/tmp") {
+		t.Error("expected /tmp to NOT be a zombie")
+	}
+}
+
 func TestMapTmuxSessionsToItemsPrefersHivePrefix(t *testing.T) {
 	// When both legacy (kl-) and current (hive-) interactive sessions
 	// exist for the same repo, prefer the hive- prefix so the session
