@@ -7,6 +7,9 @@ import (
 // HomeTabID is the reserved ID for the "main page" tab.
 const HomeTabID = "__home__"
 
+// BusTabID is the reserved ID for the message bus tab.
+const BusTabID = "__bus__"
+
 // WorkspaceTab holds the splits for one project tab.
 type WorkspaceTab struct {
 	ID        string
@@ -28,9 +31,16 @@ func NewWorkspaceView() *WorkspaceView {
 		TabBar: NewTabBar(),
 		Tabs:   make(map[string]*WorkspaceTab),
 	}
-	// Add the persistent home tab as the first entry.
+	// Add the persistent home and bus tabs as the first entries.
 	wv.TabBar.Add(HomeTabID, "⚡")
+	wv.TabBar.Add(BusTabID, "📬 bus")
 	return wv
+}
+
+// IsBusActive returns true when the bus tab is selected.
+func (wv *WorkspaceView) IsBusActive() bool {
+	tab := wv.TabBar.ActiveTab()
+	return tab != nil && tab.ID == BusTabID
 }
 
 // SetSize updates layout dimensions.

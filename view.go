@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
-	"github.com/stevenlawton/hive/ui"
 	"os"
 	"strings"
+
+	"github.com/stevenlawton/hive/bus"
+	"github.com/stevenlawton/hive/ui"
 
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -49,6 +51,10 @@ func (m model) View() tea.View {
 		m.workspace.SetSize(m.width, m.height)
 		statusBar := m.renderWorkspaceStatusBar()
 		v = tea.NewView(m.workspace.View(statusBar))
+	case viewBus:
+		m.workspace.TabBar.Width = m.width
+		tabBar := m.workspace.TabBar.View()
+		v = tea.NewView(tabBar + "\n" + m.viewBus())
 	case viewWorktree:
 		if m.wtSplitMode {
 			v = tea.NewView(m.viewWorktreeSplit())
@@ -62,32 +68,21 @@ func (m model) View() tea.View {
 	case viewAttach:
 		v = tea.NewView("") // TUI hidden during attach
 	default:
-		// Manager view — two-pane layout
-		hasWorkspaceTabs := len(m.workspace.TabBar.Tabs) > 1
-		managerHeight := m.height
-		var tabBar string
-		if hasWorkspaceTabs {
-			m.workspace.TabBar.Width = m.width
-			tabBar = m.workspace.TabBar.View()
-			managerHeight-- // reserve one line for the tab bar
-		}
+		// Manager view — two-pane layout with tab bar always visible
+		m.workspace.TabBar.Width = m.width
+		tabBar := m.workspace.TabBar.View()
+		managerHeight := m.height - 1 // reserve one line for the tab bar
 		listContent, l := m.viewList()
 		layout = l
 		m.manager.SetSize(m.width, managerHeight)
 		statusBar := m.renderStatusBar() + "\n" + m.renderKeyBarString()
 		managerContent := m.manager.View(listContent, statusBar)
-		if hasWorkspaceTabs {
-			v = tea.NewView(tabBar + "\n" + managerContent)
-		} else {
-			v = tea.NewView(managerContent)
+		v = tea.NewView(tabBar + "\n" + managerContent)
+		// Shift layout Y positions down for tab bar
+		for k, y := range layout.itemY {
+			layout.itemY[k] = y + 1
 		}
-		// Shift layout Y positions down when tab bar is shown
-		if hasWorkspaceTabs {
-			for k, y := range layout.itemY {
-				layout.itemY[k] = y + 1
-			}
-			layout.keyBarY++
-		}
+		layout.keyBarY++
 	}
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
@@ -121,6 +116,18 @@ func (m model) View() tea.View {
 					}
 				}
 			} else {
+				// Click on tab bar (row 0) → switch tab
+				if mouse.Y == 0 {
+					x := 0
+					for i, tab := range m.workspace.TabBar.Tabs {
+						w := len(tab.Label) + 4
+						if mouse.X >= x && mouse.X < x+w {
+							idx := i
+							return func() tea.Msg { return tabClickMsg{index: idx} }
+						}
+						x += w
+					}
+				}
 				// Click on list item → select it
 				for idx, y := range layout.itemY {
 					if mouse.Y == y {
@@ -167,10 +174,6 @@ func (m model) viewList() (string, listLayout) {
 	}
 
 	var content strings.Builder
-
-	// Title
-	content.WriteString(titleStyle.UnsetPadding().Render(" ⚡ Hive"))
-	content.WriteString("\n")
 
 	if m.filtering {
 		content.WriteString(subtitleStyle.UnsetPadding().Render(" " + m.filter.View()))
@@ -237,8 +240,8 @@ func (m model) viewList() (string, listLayout) {
 	}
 
 	// Calculate visible window
-	// Reserved: title (1) + status bar (1) + key bar (2)
-	reserved := 4
+	// Reserved: status bar (1) + key bar (2)
+	reserved := 3
 	if m.filtering {
 		reserved++
 	}
@@ -279,7 +282,7 @@ func (m model) viewList() (string, listLayout) {
 	}
 
 	// Track Y positions for mouse support
-	yOffset := 1 // title line
+	yOffset := 0
 	if m.filtering {
 		yOffset++
 	}
@@ -680,4 +683,75 @@ func (m model) renderKeyBar() (string, []keyBarButton) {
 	line2 := renderRow(row2, 1)
 
 	return " " + line1 + "\n " + line2, buttons
+}
+
+var (
+	busFromStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00")).Bold(true)
+	busTimeStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	busQuestionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffff00"))
+	busWaitingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
+	busDoneStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88"))
+	busIntentStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#00bbff"))
+	busReplyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Italic(true)
+	busBodyStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#bbbbbb"))
+	busIDStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#444444"))
+)
+
+func (m model) viewBus() string {
+	if m.bus == nil {
+		return "\n  bus unavailable (check ~/.config/hive/ is writable)"
+	}
+
+	var b strings.Builder
+	msgs := m.bus.Tail(50)
+	if len(msgs) == 0 {
+		b.WriteString("\n  no messages yet — be the first\n")
+	}
+	for _, msg := range msgs {
+		icon := msg.Icon()
+		switch msg.KindOrDefault() {
+		case bus.KindQuestion:
+			icon = busQuestionStyle.Render(icon)
+		case bus.KindWaiting:
+			icon = busWaitingStyle.Render(icon)
+		case bus.KindDone:
+			icon = busDoneStyle.Render(icon)
+		case bus.KindIntent:
+			icon = busIntentStyle.Render(icon)
+		}
+		if msg.ReplyTo != "" {
+			icon = busReplyStyle.Render("💬")
+		}
+		ts := busTimeStyle.Render(msg.At.Format("15:04"))
+		from := busFromStyle.Render(msg.From)
+		id := busIDStyle.Render(msg.ID[:12])
+		header := fmt.Sprintf("  %s  %s  %s  %s  %s", ts, icon, from, msg.Headline, id)
+		b.WriteString(header + "\n")
+		if msg.ReplyTo != "" {
+			b.WriteString(busReplyStyle.Render("        ↳ re: "+msg.ReplyTo) + "\n")
+		}
+		if msg.Body != "" {
+			for _, line := range strings.Split(msg.Body, "\n") {
+				b.WriteString(busBodyStyle.Render("        "+line) + "\n")
+			}
+		}
+		if len(msg.Touches) > 0 {
+			b.WriteString(busBodyStyle.Render("        touches: "+strings.Join(msg.Touches, ", ")) + "\n")
+		}
+	}
+
+	// Fill space so compose line sits at bottom
+	totalLines := strings.Count(b.String(), "\n")
+	composeHeight := 3 // blank + compose + hint
+	pad := m.height - 1 /*tab bar*/ - totalLines - composeHeight
+	for range pad {
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", m.width)) + "\n")
+	b.WriteString("  " + m.busCompose.View() + "\n")
+	b.WriteString(helpStyle.UnsetPadding().Render("  enter send  esc back to manager"))
+
+	return b.String()
 }

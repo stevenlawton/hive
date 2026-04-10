@@ -5,10 +5,17 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/stevenlawton/hive/bus"
+
 	tea "charm.land/bubbletea/v2"
 )
 
 func main() {
+	// CLI subcommand dispatch — must come before the TUI opens.
+	if len(os.Args) > 1 && os.Args[1] == "bus" {
+		os.Exit(runBusCmd(os.Args[2:]))
+	}
+
 	home, _ := os.UserHomeDir()
 	cfgPath := filepath.Join(home, ".config", "hive", "config.yaml")
 
@@ -20,6 +27,18 @@ func main() {
 
 	if err := startServer(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: event server failed to start: %v\n", err)
+	}
+
+	// Auto-wire the bus hooks + CLAUDE.md section into Claude's global
+	// settings so every Claude session joins the bus without manual setup.
+	// Idempotent — updates the binary path if it has changed.
+	if exe, err := os.Executable(); err == nil {
+		if err := bus.InstallClaudeHook(exe); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to install bus hook: %v\n", err)
+		}
+		if err := bus.InstallClaudeMd(exe); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to install CLAUDE.md section: %v\n", err)
+		}
 	}
 
 	StartTmuxControl()

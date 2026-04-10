@@ -144,10 +144,12 @@ func (t *TerminalPane) View() string {
 		rendered = TruncateToHeight(t.Content, ih)
 	}
 
-	// Clamp each line to inner width
+	// Clamp each line to inner width and reset ANSI state.
+	// Tmux capture output may contain unclosed ANSI sequences that, after
+	// truncation, bleed into padding and the adjacent pane.
 	lines := strings.Split(rendered, "\n")
 	for i, line := range lines {
-		lines[i] = ClampToWidth(line, iw)
+		lines[i] = ClampToWidth(line, iw) + "\033[0m"
 	}
 
 	return strings.Join(lines, "\n")

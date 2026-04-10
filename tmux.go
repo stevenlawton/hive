@@ -288,6 +288,20 @@ func bubbleteaToTmuxKey(key string) string {
 		return "M-" + strings.TrimPrefix(key, "alt+")
 	}
 
+	// Shift combinations: shift+a → A, shift+enter → S-Enter, etc.
+	if strings.HasPrefix(key, "shift+") {
+		inner := strings.TrimPrefix(key, "shift+")
+		// Single letter → uppercase
+		if len(inner) == 1 && inner[0] >= 'a' && inner[0] <= 'z' {
+			return strings.ToUpper(inner)
+		}
+		// Named keys → tmux S- prefix
+		if named := bubbleteaToTmuxKey(inner); named != inner {
+			return "S-" + named
+		}
+		return "S-" + inner
+	}
+
 	return key
 }
 

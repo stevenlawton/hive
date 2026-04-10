@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stevenlawton/hive/bus"
 	"github.com/stevenlawton/hive/ui"
 
 	tea "charm.land/bubbletea/v2"
@@ -26,6 +27,7 @@ const (
 	viewEdit
 	viewConfirm
 	viewWorktree
+	viewBus
 )
 
 type sessionStatus int
@@ -96,6 +98,11 @@ type model struct {
 	editToggles []bool   // remote, favourite, collection
 	editFocus   int      // which field is focused (0-2 = text, 3-5 = toggles)
 	editDirName string   // which repo we're editing
+
+	// Bus state
+	bus        *bus.Bus
+	busCompose textinput.Model
+	busRt      *busRuntime
 }
 
 func newModel(cfg *Config, cfgPath string) model {
@@ -126,6 +133,16 @@ func newModel(cfg *Config, cfgPath string) model {
 	pr.Prompt = "name: "
 	pr.Placeholder = "new-project-name"
 
+	busInput := textinput.New()
+	busInput.Prompt = "> "
+	busInput.Placeholder = "working: | waiting: | done: | ? question | r:<id> reply | plain fyi"
+
+	busClient, busErr := bus.Open("steve")
+	if busErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: bus unavailable: %v\n", busErr)
+	}
+	busRt := newBusRuntime(busClient)
+
 	m := model{
 		cfg:         cfg,
 		cfgPath:     cfgPath,
@@ -140,8 +157,27 @@ func newModel(cfg *Config, cfgPath string) model {
 		workspace:   ui.NewWorkspaceView(),
 		chord:       NewChordHandler(500 * time.Millisecond),
 		mode:        viewManager,
+		bus:         busClient,
+		busCompose:  busInput,
+		busRt:       busRt,
 	}
 	m.rebuildDisplayOrder()
+
+	// Late-bind the peer source now that m.items exists. Hive's model is
+	// passed by value, so we close over a pointer that stays valid for the
+	// lifetime of the process: the shared slice header lives on the heap.
+	mp := &m
+	busRt.SetPeerSource(func() []bus.Peer {
+		var peers []bus.Peer
+		for _, it := range mp.items {
+			if p, ok := peerFromRepo(it); ok {
+				peers = append(peers, p)
+			}
+		}
+		return peers
+	})
+	busRt.Start()
+
 	return m
 }
 
@@ -398,10 +434,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.handleSessionEvent(SessionEvent(msg))
 		return m, tea.Batch(cmd, waitForEvent()) // listen for next event
 	case tabClickMsg:
-		if m.mode == viewWorkspace {
-			if msg.index >= 0 && msg.index < len(m.workspace.TabBar.Tabs) {
-				m.workspace.TabBar.ActiveIdx = msg.index
-			}
+		if msg.index >= 0 && msg.index < len(m.workspace.TabBar.Tabs) {
+			m.workspace.TabBar.ActiveIdx = msg.index
+			m.syncModeFromActiveTab()
 		}
 		return m, nil
 	case splitClickMsg:
@@ -474,6 +509,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Keystroke() gives modifier-prefixed form (e.g. "shift+r") used for
+	// chord matching and tmux forwarding. String() gives the compact form
+	// (e.g. "R") used for list-mode keybinds.
+	keystroke := msg.Keystroke()
 	key := msg.String()
 
 	// Global
@@ -484,7 +523,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Workspace mode: chord handling and key forwarding
 	if m.mode == viewWorkspace {
 		if m.chord.Pending() {
-			action, ok := m.chord.Complete(key)
+			action, ok := m.chord.Complete(keystroke)
 			if ok {
 				return m.handleChordAction(action)
 			}
@@ -492,12 +531,16 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.chord.Cancel()
 			sesName := m.workspace.FocusedSessionName()
 			if sesName != "" {
-				TmuxSendRawKeys(sesName, key)
+				if msg.Text != "" {
+					TmuxSendLiteral(sesName, msg.Text)
+				} else {
+					TmuxSendRawKeys(sesName, keystroke)
+				}
 			}
 			return m, nil
 		}
 		// Ctrl+Space (NUL byte) starts a chord
-		if key == "ctrl+@" || key == "ctrl+space" {
+		if keystroke == "ctrl+@" || keystroke == "ctrl+space" {
 			m.chord.Start()
 			return m, nil
 		}
@@ -508,9 +551,20 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// Forward all other keys to focused session via control mode (no process spawn)
 		sesName := m.workspace.FocusedSessionName()
 		if sesName != "" {
-			TmuxSendRawKeys(sesName, key)
+			if msg.Text != "" {
+				// Printable text — send literally to preserve shifted punctuation etc.
+				TmuxSendLiteral(sesName, msg.Text)
+			} else {
+				TmuxSendRawKeys(sesName, keystroke)
+			}
 		}
 		return m, nil
+	}
+
+	// Bus mode: compose line is always focused. Enter sends, Esc → manager,
+	// chord keys still switch tabs. Everything else goes to the textinput.
+	if m.mode == viewBus {
+		return m.handleBusKey(msg, keystroke, key)
 	}
 
 	// Edit mode
@@ -953,12 +1007,16 @@ func fuzzyMatch(query, target string) bool {
 	return qi == len(query)
 }
 
-// syncModeFromActiveTab switches between manager and workspace based on which tab is selected.
+// syncModeFromActiveTab switches between manager, bus, and workspace based on which tab is selected.
 func (m *model) syncModeFromActiveTab() {
-	if m.workspace.IsHomeActive() {
+	switch {
+	case m.workspace.IsHomeActive():
 		m.mode = viewManager
 		m.manager.Preview.Terminal.InvalidateResize()
-	} else {
+	case m.workspace.IsBusActive():
+		m.mode = viewBus
+		m.busCompose.Focus()
+	default:
 		m.mode = viewWorkspace
 	}
 }
@@ -1379,5 +1437,51 @@ func (m model) renderWorkspaceStatusBar() string {
 		status += "  " + ui.DeadStyle.Render(m.err.Error())
 	}
 	return ui.StatusBarStyle.Render(status)
+}
+
+// handleBusKey processes input when the bus tab is active. The compose
+// textinput is always focused; Enter submits, Esc returns to the manager,
+// and the ctrl-space chord keys still switch tabs as usual.
+func (m model) handleBusKey(msg tea.KeyPressMsg, keystroke, key string) (tea.Model, tea.Cmd) {
+	// Chord passthrough for tab switching
+	if m.chord.Pending() {
+		action, ok := m.chord.Complete(keystroke)
+		if ok {
+			return m.handleChordAction(action)
+		}
+		m.chord.Cancel()
+		return m, nil
+	}
+	if keystroke == "ctrl+@" || keystroke == "ctrl+space" {
+		m.chord.Start()
+		return m, nil
+	}
+
+	switch key {
+	case "escape":
+		m.workspace.TabBar.SetActiveByID(ui.HomeTabID)
+		m.syncModeFromActiveTab()
+		m.busCompose.Blur()
+		return m, nil
+	case "enter":
+		text := strings.TrimSpace(m.busCompose.Value())
+		if text == "" || m.bus == nil {
+			return m, nil
+		}
+		ann := bus.ParseCompose(text)
+		if _, err := m.bus.Announce(ann); err != nil {
+			m.err = err
+		}
+		m.busCompose.SetValue("")
+		return m, nil
+	}
+
+	// Everything else flows to the compose textinput
+	if !m.busCompose.Focused() {
+		m.busCompose.Focus()
+	}
+	var cmd tea.Cmd
+	m.busCompose, cmd = m.busCompose.Update(msg)
+	return m, cmd
 }
 
