@@ -163,6 +163,19 @@ func newModel(cfg *Config, cfgPath string) model {
 	}
 	m.rebuildDisplayOrder()
 
+	// Reconnect to existing tmux sessions synchronously so that workspace
+	// tabs are populated before the first render. Without this, tabs only
+	// appear after the async reconnectMsg path runs, which races against
+	// the first frame and leads to the user seeing an empty tab bar despite
+	// the manager list showing active sessions.
+	m.reconnectSessions()
+	// reconnectSessions opens each session as a tab via OpenTab, which
+	// focuses every new tab — so ActiveIdx ends up pointing at whichever
+	// tab was opened last. Reset it to the home tab so the user lands on
+	// the manager view after startup.
+	m.workspace.TabBar.SetActiveByID(ui.HomeTabID)
+	m.rebuildDisplayOrder()
+
 	// Late-bind the peer source now that m.items exists. Hive's model is
 	// passed by value, so we close over a pointer that stays valid for the
 	// lifetime of the process: the shared slice header lives on the heap.
@@ -388,9 +401,10 @@ func gitDiff(repoPath string) (string, error) {
 // --- Tea interface ---
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(healthTick(), waitForEvent(), captureTick(), func() tea.Msg {
-		return reconnectMsg{}
-	})
+	// reconnectMsg used to be fired here, but reconnectSessions now runs
+	// synchronously in newModel so tabs are ready on the first frame. The
+	// reconnectMsg handler in Update still exists for the detach flow.
+	return tea.Batch(healthTick(), waitForEvent(), captureTick())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

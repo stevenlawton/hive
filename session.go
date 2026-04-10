@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -19,28 +21,41 @@ func MapSessionsToItems(items []repoItem, sessions []TmuxSession) {
 			continue
 		}
 
-		hasInteractive := false
-		hasRemote := false
+		// Pick the best interactive and best remote session names.
+		// Preference order for interactive: first non-legacy (hive-) match,
+		// then fall back to legacy (kl-) match. Same for remote.
+		var interactiveName, remoteName string
+		var hasLegacyInteractive, hasLegacyRemote bool
 		for _, s := range sess {
+			legacy := strings.HasPrefix(s.Name, legacyPrefix) ||
+				strings.HasPrefix(s.Name, legacyRemotePrefix) ||
+				strings.HasPrefix(s.Name, legacyScratchPfx)
 			if s.IsRemote {
-				hasRemote = true
+				if remoteName == "" || (hasLegacyRemote && !legacy) {
+					remoteName = s.Name
+					hasLegacyRemote = legacy
+				}
 			} else {
-				hasInteractive = true
-				items[i].tmuxSes = s.Name
+				if interactiveName == "" || (hasLegacyInteractive && !legacy) {
+					interactiveName = s.Name
+					hasLegacyInteractive = legacy
+				}
 			}
 		}
 
-		if hasRemote {
-			items[i].status = statusRemote
-			if !hasInteractive {
-				for _, s := range sess {
-					if s.IsRemote {
-						items[i].tmuxSes = s.Name
-					}
-				}
-			}
-		} else if hasInteractive {
+		// Status: interactive wins. A remote helper running alongside an
+		// interactive session doesn't downgrade the repo to statusRemote —
+		// we still want a workspace tab for the interactive pane.
+		switch {
+		case interactiveName != "":
+			items[i].tmuxSes = interactiveName
 			items[i].status = statusClaude
+		case remoteName != "":
+			items[i].tmuxSes = remoteName
+			items[i].status = statusRemote
+		default:
+			items[i].status = statusNone
+			items[i].tmuxSes = ""
 		}
 	}
 }
@@ -55,12 +70,18 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 	sessionName := TmuxSessionName(repo.DirName, false)
 
 	if TmuxHasSession(sessionName) {
-		if withClaude && item.bridgeEntry != nil && item.bridgeEntry.SessionID != "" {
+		// Transition from a telegram-bridged session to interactive: kill
+		// the bot-driven claude and resume the same conversation for the
+		// human. Guarded on status, not just bridgeEntry — a stale bridge
+		// file would otherwise fire this every time the user re-enters a
+		// normal claude session after a Hive restart.
+		if withClaude && item.status == statusTelegram && item.bridgeEntry != nil && item.bridgeEntry.SessionID != "" {
 			TmuxSendKeys(sessionName, "C-c")
 			TmuxSendKeys(sessionName, "claude --resume "+item.bridgeEntry.SessionID)
 			item.status = statusClaude
 			item.bridgeEntry = nil
 			m.rebuildDisplayOrder()
+			m.openAsTab(repo, sessionName)
 			return nil
 		}
 		m.clearFlash(item)

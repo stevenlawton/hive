@@ -107,6 +107,30 @@ func (tb *TabBar) ActiveTab() *Tab {
 	return &tb.Tabs[tb.ActiveIdx]
 }
 
+// TabWidths returns the visual (cell) width of each tab as rendered by
+// View(), using lipgloss.Width to correctly account for emoji and other
+// wide characters. Used by the mouse click handler to compute accurate
+// hit zones.
+func (tb *TabBar) TabWidths() []int {
+	widths := make([]int, len(tb.Tabs))
+	for i, tab := range tb.Tabs {
+		label := " " + tab.Label + " "
+		var style lipgloss.Style
+		switch {
+		case tab.Flashing:
+			style = TabFlashStyle
+		case tab.ID == HomeTabID:
+			style = TabHomeStyle
+		case i == tb.ActiveIdx:
+			style = TabActiveStyle
+		default:
+			style = TabInactiveStyle
+		}
+		widths[i] = lipgloss.Width(style.Render(label))
+	}
+	return widths
+}
+
 // SetFlashing marks a tab as flashing by ID.
 func (tb *TabBar) SetFlashing(id string, flashing bool) {
 	for i := range tb.Tabs {

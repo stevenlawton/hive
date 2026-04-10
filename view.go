@@ -94,9 +94,9 @@ func (m model) View() tea.View {
 			if m.mode == viewWorkspace {
 				// Click on tab bar (row 0) → switch tab
 				if mouse.Y == 0 {
+					widths := m.workspace.TabBar.TabWidths()
 					x := 0
-					for i, tab := range m.workspace.TabBar.Tabs {
-						w := len(tab.Label) + 4 // " label " + 1 padding each side
+					for i, w := range widths {
 						if mouse.X >= x && mouse.X < x+w {
 							idx := i
 							return func() tea.Msg { return tabClickMsg{index: idx} }
@@ -118,9 +118,9 @@ func (m model) View() tea.View {
 			} else {
 				// Click on tab bar (row 0) → switch tab
 				if mouse.Y == 0 {
+					widths := m.workspace.TabBar.TabWidths()
 					x := 0
-					for i, tab := range m.workspace.TabBar.Tabs {
-						w := len(tab.Label) + 4
+					for i, w := range widths {
 						if mouse.X >= x && mouse.X < x+w {
 							idx := i
 							return func() tea.Msg { return tabClickMsg{index: idx} }
