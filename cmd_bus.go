@@ -43,6 +43,8 @@ func runBusCmd(args []string) int {
 		return busHookCmd(args[1:])
 	case "todo-hook":
 		return busTodoHookCmd(args[1:])
+	case "mcp-serve":
+		return busMCPServeCmd(args[1:])
 	case "help", "-h", "--help":
 		busUsage()
 		return 0
@@ -279,6 +281,16 @@ func humanAge(d time.Duration) string {
 	}
 }
 
+// busMCPServeCmd runs the stdio MCP server loop. Invoked by Claude Code
+// via the entry in ~/.claude.json mcpServers.
+func busMCPServeCmd(_ []string) int {
+	if err := bus.ServeMCP(); err != nil {
+		fmt.Fprintf(os.Stderr, "mcp-serve: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func busHookCmd(args []string) int {
 	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
 	install := fs.Bool("install", false, "install the Stop hook into ~/.claude/settings.json")
@@ -299,8 +311,13 @@ func busHookCmd(args []string) int {
 			fmt.Fprintf(os.Stderr, "install CLAUDE.md section: %v\n", err)
 			return 1
 		}
-		fmt.Printf("✓ bus hooks installed (UserPromptSubmit + SessionStart) → %s bus inbox\n", exe)
+		if err := bus.InstallMCPServer(exe); err != nil {
+			fmt.Fprintf(os.Stderr, "install MCP server: %v\n", err)
+			return 1
+		}
+		fmt.Printf("✓ bus hooks installed (UserPromptSubmit + SessionStart + PostToolUse/TodoWrite) → %s\n", exe)
 		fmt.Println("✓ Hive Bus section added to ~/.claude/CLAUDE.md")
+		fmt.Printf("✓ hive-bus MCP server registered in ~/.claude.json → %s bus mcp-serve\n", exe)
 		return 0
 	}
 	fmt.Println(`To wire Hive's bus into a Claude Code session, add this to the

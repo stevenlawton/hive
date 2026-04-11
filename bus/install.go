@@ -67,43 +67,97 @@ func InstallClaudeMd(hiveBinary string) error {
 	return os.WriteFile(path, []byte(buf.String()), 0o644)
 }
 
-func renderBusClaudeMdSection(hiveBinary string) string {
-	return fmt.Sprintf(`%s
+func renderBusClaudeMdSection(_ string) string {
+	return busClaudeMdMarker + `
 ## Hive Bus — cross-session coordination
 
 You are one of several Claude sessions potentially running in parallel
 across different worktrees. A shared message bus lets you coordinate with
 your peers and the human (Steve).
 
-**When to announce:**
-- Before making changes that touch shared types, interfaces, or APIs
-  — ask "anyone using X?" so peers can flag conflicts.
-- When you finish a significant change that others may depend on
-  — a quick fyi saves duplicate work.
-- When you're blocked and another peer might know — broadcast the question.
-- When you notice something that affects other worktrees (merge freezes,
-  broken tests on main, dependency bumps).
+**Use these native MCP tools** — they appear in your tool inventory
+alongside Bash/Read/Edit and should be preferred over the CLI:
 
-**Commands** (the %s binary is also available as 'hive' if on PATH):
+- ` + "`hive_bus_intent`" + `  — announce you're about to do something
+- ` + "`hive_bus_waiting`" + ` — announce you're blocked on something
+- ` + "`hive_bus_done`" + `    — announce you finished something significant
+- ` + "`hive_bus_ask`" + `     — ask peers for information you don't have
+- ` + "`hive_bus_reply`" + `   — thread a reply to an existing message (by id)
+- ` + "`hive_bus_list`" + `    — see recent bus activity
+- ` + "`hive_bus_read`" + `    — read the full body of one message
 
-    %s bus announce "<headline>"                     broadcast fyi
-    %s bus announce -q "<question>"                  ask peers, invites replies
-    %s bus announce -t "services/auth/*" "<msg>"     hint which files you're touching
-    %s bus announce -b "<extended body>" "<headline>"  extra context
-    %s bus reply <id> "<text>"                       thread under an existing message
-    %s bus list                                      last 20 messages
-    %s bus read <id>                                 full body of one message
+**Be proactive:**
+- Before making changes that touch shared types, interfaces, or APIs,
+  call ` + "`hive_bus_ask`" + ` to check for conflicts or ` + "`hive_bus_intent`" + ` to
+  put the plan on record.
+- When you finish a significant change, call ` + "`hive_bus_done`" + ` so
+  peers know the work is settled.
+- When you're blocked, call ` + "`hive_bus_waiting`" + ` — another peer may
+  know how to unblock you.
 
-Hive automatically surfaces new unread bus messages at the start of each
+Hive automatically injects new unread bus messages at the start of each
 turn (via UserPromptSubmit and SessionStart hooks). When you see a
-'new bus announcement' block at the top of a prompt, treat it as lightweight
-context — read the headlines, and only dig into bodies that look relevant to
-your current work. Reply if you have information the sender would benefit
-from, and announce proactively before touching shared code.
-%s`, busClaudeMdMarker,
-		hiveBinary,
-		hiveBinary, hiveBinary, hiveBinary, hiveBinary, hiveBinary, hiveBinary, hiveBinary,
-		busClaudeMdEnd)
+'new bus announcement' block at the top of a prompt, read the headlines,
+dig into bodies only if relevant, and reply or engage if you have
+something useful to add.
+
+The legacy CLI (` + "`hive bus intent …`" + `, etc.) still works and is
+equivalent — use whichever is more convenient, but the MCP tools are
+preferred because they're visible in your tool list and easier to discover.
+` + busClaudeMdEnd
+}
+
+// InstallMCPServer idempotently registers the Hive bus MCP server into
+// Claude Code's user config (~/.claude.json) so Claudes see native
+// hive_bus_* tools in their inventory without any per-worktree setup.
+//
+// The config shape is: {"mcpServers":{"hive-bus":{"command":"...","args":[...]}}}
+// We preserve all other fields and only touch the hive-bus entry.
+func InstallMCPServer(hiveBinary string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(home, ".claude.json")
+
+	var settings map[string]any
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+	}
+	if settings == nil {
+		settings = map[string]any{}
+	}
+
+	mcpServers, _ := settings["mcpServers"].(map[string]any)
+	if mcpServers == nil {
+		mcpServers = map[string]any{}
+		settings["mcpServers"] = mcpServers
+	}
+
+	desired := map[string]any{
+		"type":    "stdio",
+		"command": hiveBinary,
+		"args":    []any{"bus", "mcp-serve"},
+	}
+
+	// If the existing entry already matches, skip the write.
+	if existing, ok := mcpServers["hive-bus"].(map[string]any); ok {
+		if fmt.Sprintf("%v", existing["command"]) == hiveBinary {
+			if args, ok := existing["args"].([]any); ok && len(args) == 2 &&
+				fmt.Sprintf("%v", args[0]) == "bus" && fmt.Sprintf("%v", args[1]) == "mcp-serve" {
+				return nil
+			}
+		}
+	}
+	mcpServers["hive-bus"] = desired
+
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
 
 // InstallClaudeHook ensures that Claude Code's global settings file has

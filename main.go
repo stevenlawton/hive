@@ -29,15 +29,18 @@ func main() {
 		fmt.Fprintf(os.Stderr, "warning: event server failed to start: %v\n", err)
 	}
 
-	// Auto-wire the bus hooks + CLAUDE.md section into Claude's global
-	// settings so every Claude session joins the bus without manual setup.
-	// Idempotent — updates the binary path if it has changed.
+	// Auto-wire the bus into Claude Code: hooks, CLAUDE.md section, and
+	// the native MCP server. All three installers are idempotent and
+	// update the binary path in place if it has changed.
 	if exe, err := os.Executable(); err == nil {
 		if err := bus.InstallClaudeHook(exe); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to install bus hook: %v\n", err)
 		}
 		if err := bus.InstallClaudeMd(exe); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to install CLAUDE.md section: %v\n", err)
+		}
+		if err := bus.InstallMCPServer(exe); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to install bus MCP server: %v\n", err)
 		}
 	}
 
