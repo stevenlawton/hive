@@ -226,6 +226,15 @@ func InstallClaudeHook(hiveBinary string) error {
 	todoCommand := fmt.Sprintf("%s bus todo-hook", hiveBinary)
 	ensureBusHook(hooks, "PostToolUse", todoCommand, "TodoWrite")
 
+	// Ensure preferredNotifChannel is set to terminal_bell so Claude Code
+	// emits a BEL character on turn completion — Hive's attention
+	// detection watches tmux's window_bell_flag. Without this, the flag
+	// never flips and tab-flashing + desktop notifications never fire.
+	// Only set if unset; respect any existing value the user has chosen.
+	if _, has := settings["preferredNotifChannel"]; !has {
+		settings["preferredNotifChannel"] = "terminal_bell"
+	}
+
 	// Write back with indentation so the user can read/edit it.
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
