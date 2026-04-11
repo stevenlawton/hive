@@ -1186,10 +1186,11 @@ func (m *model) updateCaptures() {
 				}
 				if content, err := TmuxCapturePane(s.SessionName); err == nil {
 					s.Terminal.SetContent(content)
-					// Check attention state for this session
+					// This session IS visible (we're iterating the active
+					// tab's splits), so use the longer grace period.
 					for j := range m.items {
 						if m.items[j].tmuxSes == s.SessionName {
-							level := CheckAttention(&m.items[j].attention, s.SessionName)
+							level := CheckAttention(&m.items[j].attention, s.SessionName, true)
 							m.handleAttention(&m.items[j], level)
 							break
 						}
@@ -1205,7 +1206,11 @@ func (m *model) updateCaptures() {
 		}
 	}
 
-	// Check attention for all active sessions (not just visible ones)
+	// Check attention for all active sessions that WEREN'T handled by
+	// the visible-splits loop above. Anything that reaches this loop is
+	// NOT visible to the user right now — either they're on the manager
+	// or bus tab, or they're on a different workspace tab. Flash
+	// immediately so they notice.
 	for i := range m.items {
 		item := &m.items[i]
 		if item.tmuxSes == "" || item.status == statusRemote {
@@ -1227,7 +1232,7 @@ func (m *model) updateCaptures() {
 				}
 			}
 		}
-		level := CheckAttention(&item.attention, item.tmuxSes)
+		level := CheckAttention(&item.attention, item.tmuxSes, false)
 		m.handleAttention(item, level)
 	}
 
