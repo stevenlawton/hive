@@ -686,26 +686,29 @@ func (m model) renderKeyBar() (string, []keyBarButton) {
 }
 
 var (
-	busFromStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00")).Bold(true)
-	busTimeStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
-	busQuestionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffff00"))
-	busWaitingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
-	busDoneStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88"))
-	busIntentStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#00bbff"))
-	busReplyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Italic(true)
-	busBodyStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#bbbbbb"))
-	busIDStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#444444"))
+	busFromStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00")).Bold(true)
+	busTimeStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	busQuestionStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffff00"))
+	busWaitingStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
+	busDoneStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88"))
+	busIntentStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#00bbff"))
+	busReplyStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Italic(true)
+	busBodyStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("#bbbbbb"))
+	busIDStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("#444444"))
+	busTailStatusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff88")).Bold(true).Padding(0, 0, 0, 2)
+	busFrozenStatusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Bold(true).Padding(0, 0, 0, 2)
 )
 
-func (m model) viewBus() string {
-	if m.bus == nil {
-		return "\n  bus unavailable (check ~/.config/hive/ is writable)"
-	}
-
-	var b strings.Builder
-	msgs := m.bus.Tail(50)
+// renderBusLines builds the full flat slice of display lines for every
+// message on the bus. Each message contributes a header line plus
+// optional body/touches/reply-marker lines. Scroll positions index into
+// the returned slice.
+func (m model) renderBusLines() []string {
+	var lines []string
+	msgs := m.bus.Tail(500)
 	if len(msgs) == 0 {
-		b.WriteString("\n  no messages yet — be the first\n")
+		lines = append(lines, "  no messages yet — be the first")
+		return lines
 	}
 	for _, msg := range msgs {
 		icon := msg.Icon()
@@ -724,34 +727,98 @@ func (m model) viewBus() string {
 		}
 		ts := busTimeStyle.Render(msg.At.Format("15:04"))
 		from := busFromStyle.Render(msg.From)
-		id := busIDStyle.Render(msg.ID[:12])
-		header := fmt.Sprintf("  %s  %s  %s  %s  %s", ts, icon, from, msg.Headline, id)
-		b.WriteString(header + "\n")
+		idShort := msg.ID
+		if len(idShort) > 12 {
+			idShort = idShort[:12]
+		}
+		id := busIDStyle.Render(idShort)
+		lines = append(lines, fmt.Sprintf("  %s  %s  %s  %s  %s", ts, icon, from, msg.Headline, id))
 		if msg.ReplyTo != "" {
-			b.WriteString(busReplyStyle.Render("        ↳ re: "+msg.ReplyTo) + "\n")
+			lines = append(lines, busReplyStyle.Render("        ↳ re: "+msg.ReplyTo))
 		}
 		if msg.Body != "" {
 			for _, line := range strings.Split(msg.Body, "\n") {
-				b.WriteString(busBodyStyle.Render("        "+line) + "\n")
+				lines = append(lines, busBodyStyle.Render("        "+line))
 			}
 		}
 		if len(msg.Touches) > 0 {
-			b.WriteString(busBodyStyle.Render("        touches: "+strings.Join(msg.Touches, ", ")) + "\n")
+			lines = append(lines, busBodyStyle.Render("        touches: "+strings.Join(msg.Touches, ", ")))
 		}
 	}
+	return lines
+}
 
-	// Fill space so compose line sits at bottom
-	totalLines := strings.Count(b.String(), "\n")
-	composeHeight := 3 // blank + compose + hint
-	pad := m.height - 1 /*tab bar*/ - totalLines - composeHeight
-	for range pad {
+// busViewport computes the visible slice of bus lines based on the
+// current scroll state (m.busViewTop) and available height.
+func (m *model) busViewport(lines []string, height int) (visible []string, status string) {
+	if height < 1 {
+		height = 1
+	}
+	total := len(lines)
+
+	// Remember the total so keyboard handlers can clamp correctly.
+	m.busLineCount = total
+
+	tail := m.busViewTop < 0 || m.busViewTop >= total-height
+
+	var start int
+	if tail {
+		start = max(0, total-height)
+		m.busViewTop = -1
+	} else {
+		start = m.busViewTop
+		if start < 0 {
+			start = 0
+		}
+		if start > total-height {
+			start = max(0, total-height)
+		}
+	}
+	end := start + height
+	if end > total {
+		end = total
+	}
+	visible = lines[start:end]
+
+	if tail {
+		status = busTailStatusStyle.Render("● LIVE (tail)")
+	} else {
+		hidden := total - end
+		status = busFrozenStatusStyle.Render(fmt.Sprintf("⏸ scrolled · %d rows hidden below · end/G to resume", hidden))
+	}
+	return visible, status
+}
+
+func (m model) viewBus() string {
+	if m.bus == nil {
+		return "\n  bus unavailable (check ~/.config/hive/ is writable)"
+	}
+
+	composeHeight := 4 // status + divider + compose + hint
+	viewHeight := m.height - 1 /*tab bar*/ - composeHeight
+	if viewHeight < 1 {
+		viewHeight = 1
+	}
+
+	lines := m.renderBusLines()
+	mp := &m
+	visible, status := mp.busViewport(lines, viewHeight)
+
+	var b strings.Builder
+	for _, line := range visible {
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	// Pad if we have fewer visible lines than the viewport (short bus)
+	for i := len(visible); i < viewHeight; i++ {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\n")
+	// Status line above the compose
+	b.WriteString(status + "\n")
 	b.WriteString(dividerStyle.Render(strings.Repeat("─", m.width)) + "\n")
 	b.WriteString("  " + m.busCompose.View() + "\n")
-	b.WriteString(helpStyle.UnsetPadding().Render("  enter send  esc back to manager"))
+	b.WriteString(helpStyle.UnsetPadding().Render("  enter send · ↑↓ pgup/pgdn home/end scroll · esc back"))
 
 	return b.String()
 }

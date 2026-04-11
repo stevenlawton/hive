@@ -100,9 +100,11 @@ type model struct {
 	editDirName string   // which repo we're editing
 
 	// Bus state
-	bus        *bus.Bus
-	busCompose textinput.Model
-	busRt      *busRuntime
+	bus         *bus.Bus
+	busCompose  textinput.Model
+	busRt       *busRuntime
+	busViewTop  int // -1 = tail mode (follow newest); otherwise absolute line index of top visible row
+	busLineCount int // last rendered total line count (for scroll clamping)
 }
 
 func newModel(cfg *Config, cfgPath string) model {
@@ -160,6 +162,7 @@ func newModel(cfg *Config, cfgPath string) model {
 		bus:         busClient,
 		busCompose:  busInput,
 		busRt:       busRt,
+		busViewTop:  -1, // start in tail mode
 	}
 	m.rebuildDisplayOrder()
 
@@ -480,6 +483,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					term.ScrollDown(3)
 				}
 			}
+			return m, nil
+		}
+		if m.mode == viewBus {
+			m.busScrollBy(msg.dir * 3)
 			return m, nil
 		}
 		if msg.dir < 0 && m.cursor > 0 {
@@ -1454,8 +1461,9 @@ func (m model) renderWorkspaceStatusBar() string {
 }
 
 // handleBusKey processes input when the bus tab is active. The compose
-// textinput is always focused; Enter submits, Esc returns to the manager,
-// and the ctrl-space chord keys still switch tabs as usual.
+// textinput is always focused for typing; Enter submits. Scroll keys
+// (up/down/pgup/pgdn/home/end) manipulate the viewport without
+// disturbing compose text. Ctrl-space chord still switches tabs.
 func (m model) handleBusKey(msg tea.KeyPressMsg, keystroke, key string) (tea.Model, tea.Cmd) {
 	// Chord passthrough for tab switching
 	if m.chord.Pending() {
@@ -1487,6 +1495,27 @@ func (m model) handleBusKey(msg tea.KeyPressMsg, keystroke, key string) (tea.Mod
 			m.err = err
 		}
 		m.busCompose.SetValue("")
+		// Posting a new message re-engages tail mode so the user sees
+		// their own post land.
+		m.busViewTop = -1
+		return m, nil
+	case "up":
+		m.busScrollBy(-1)
+		return m, nil
+	case "down":
+		m.busScrollBy(1)
+		return m, nil
+	case "pgup":
+		m.busScrollBy(-m.busPageSize())
+		return m, nil
+	case "pgdown":
+		m.busScrollBy(m.busPageSize())
+		return m, nil
+	case "home":
+		m.busViewTop = 0
+		return m, nil
+	case "end":
+		m.busViewTop = -1 // re-enter tail mode
 		return m, nil
 	}
 
@@ -1497,5 +1526,45 @@ func (m model) handleBusKey(msg tea.KeyPressMsg, keystroke, key string) (tea.Mod
 	var cmd tea.Cmd
 	m.busCompose, cmd = m.busCompose.Update(msg)
 	return m, cmd
+}
+
+// busPageSize returns the approximate visible row count of the bus
+// viewport, used for pgup/pgdn scroll steps.
+func (m *model) busPageSize() int {
+	composeHeight := 4
+	h := m.height - 1 /*tab bar*/ - composeHeight
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+// busScrollBy moves the viewport by delta lines. Positive = scroll down
+// (toward newer messages); negative = scroll up (toward older). Entering
+// negative territory from tail mode snaps the anchor to "current bottom
+// minus one" so scroll-up starts from the visible content.
+func (m *model) busScrollBy(delta int) {
+	total := m.busLineCount
+	page := m.busPageSize()
+
+	// If in tail mode, anchor at the current visible bottom so an
+	// upward scroll from tail actually moves.
+	if m.busViewTop < 0 {
+		if delta >= 0 {
+			// scroll down from tail is a no-op
+			return
+		}
+		m.busViewTop = max(0, total-page)
+	}
+
+	m.busViewTop += delta
+	if m.busViewTop < 0 {
+		m.busViewTop = 0
+	}
+	// If we've scrolled past the bottom, re-enter tail mode so new
+	// messages keep flowing in automatically.
+	if m.busViewTop >= total-page {
+		m.busViewTop = -1
+	}
 }
 
