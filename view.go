@@ -699,10 +699,40 @@ var (
 	busFrozenStatusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Bold(true).Padding(0, 0, 0, 2)
 )
 
+// wordWrap breaks text into lines of at most `width` visible characters,
+// splitting at word boundaries when possible. Returns a slice of lines.
+// `prefix` is prepended to every line (and counted against the width).
+func wordWrap(text, prefix string, width int) []string {
+	usable := width - lipgloss.Width(prefix)
+	if usable < 10 {
+		usable = 10
+	}
+
+	var result []string
+	for _, paragraph := range strings.Split(text, "\n") {
+		words := strings.Fields(paragraph)
+		if len(words) == 0 {
+			result = append(result, prefix)
+			continue
+		}
+		line := words[0]
+		for _, word := range words[1:] {
+			if len(line)+1+len(word) > usable {
+				result = append(result, prefix+line)
+				line = word
+			} else {
+				line += " " + word
+			}
+		}
+		result = append(result, prefix+line)
+	}
+	return result
+}
+
 // renderBusLines builds the full flat slice of display lines for every
-// message on the bus. Each message contributes a header line plus
-// optional body/touches/reply-marker lines. Scroll positions index into
-// the returned slice.
+// message on the bus. Each message contributes a header line (possibly
+// wrapped) plus optional body/touches/reply-marker lines. Long headlines
+// and bodies are word-wrapped to the terminal width.
 func (m model) renderBusLines() []string {
 	var lines []string
 	msgs := m.bus.Tail(500)
@@ -710,6 +740,11 @@ func (m model) renderBusLines() []string {
 		lines = append(lines, "  no messages yet — be the first")
 		return lines
 	}
+	w := m.width
+	if w < 40 {
+		w = 40
+	}
+
 	for _, msg := range msgs {
 		icon := msg.Icon()
 		switch msg.KindOrDefault() {
@@ -732,17 +767,39 @@ func (m model) renderBusLines() []string {
 			idShort = idShort[:12]
 		}
 		id := busIDStyle.Render(idShort)
-		lines = append(lines, fmt.Sprintf("  %s  %s  %s  %s  %s", ts, icon, from, msg.Headline, id))
+
+		// Header: time + icon + sender + headline + id
+		// Wrap the headline if the full header exceeds terminal width.
+		headerPrefix := fmt.Sprintf("  %s  %s  %s  ", ts, icon, from)
+		headerSuffix := "  " + id
+		headlineWidth := w - lipgloss.Width(headerPrefix) - lipgloss.Width(headerSuffix)
+		if headlineWidth < 20 {
+			headlineWidth = 20
+		}
+
+		headlineLines := wordWrap(msg.Headline, "", headlineWidth)
+		for i, hl := range headlineLines {
+			if i == 0 {
+				lines = append(lines, headerPrefix+hl+headerSuffix)
+			} else {
+				// Continuation lines indented to align with the headline start
+				indent := strings.Repeat(" ", lipgloss.Width(headerPrefix))
+				lines = append(lines, indent+hl)
+			}
+		}
+
 		if msg.ReplyTo != "" {
 			lines = append(lines, busReplyStyle.Render("        ↳ re: "+msg.ReplyTo))
 		}
 		if msg.Body != "" {
-			for _, line := range strings.Split(msg.Body, "\n") {
-				lines = append(lines, busBodyStyle.Render("        "+line))
+			for _, wrapped := range wordWrap(msg.Body, "        ", w) {
+				lines = append(lines, busBodyStyle.Render(wrapped))
 			}
 		}
 		if len(msg.Touches) > 0 {
-			lines = append(lines, busBodyStyle.Render("        touches: "+strings.Join(msg.Touches, ", ")))
+			for _, wrapped := range wordWrap("touches: "+strings.Join(msg.Touches, ", "), "        ", w) {
+				lines = append(lines, busBodyStyle.Render(wrapped))
+			}
 		}
 	}
 	return lines
