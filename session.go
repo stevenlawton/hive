@@ -370,15 +370,17 @@ func (m *model) reconnectSessions() {
 
 	MapSessionsToItems(m.items, sessions)
 
-	// Rebuild workspace tabs: parents first, then worktrees as splits
+	// Rebuild workspace tabs: parents first, then worktrees as splits.
+	// Include remote-only sessions (statusRemote) so TGClaudeBridge
+	// "pickup" sessions get tabs and the user can take them over.
 	for _, item := range m.items {
-		if item.tmuxSes == "" || item.status == statusRemote || item.repo.IsWorktree {
+		if item.tmuxSes == "" || item.repo.IsWorktree {
 			continue
 		}
 		m.workspace.OpenTab(item.repo.DirName, item.repo.Short, item.tmuxSes, "main")
 	}
 	for _, item := range m.items {
-		if item.tmuxSes == "" || item.status == statusRemote || !item.repo.IsWorktree {
+		if item.tmuxSes == "" || !item.repo.IsWorktree {
 			continue
 		}
 		if item.repo.Parent == "" {
