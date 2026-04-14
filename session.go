@@ -4,26 +4,36 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
 
-// PruneZombieSessions kills hive-managed tmux sessions whose working
-// directory no longer exists on disk. The most common case: a worktree
-// session left behind after the worktree itself was deleted, visible as
-// a dangling "(deleted)" suffix in /proc/<pid>/cwd.
+// PruneZombieSessions kills tmux sessions whose working directory no
+// longer exists on disk. Covers two categories:
 //
-// Only touches sessions with the current `hive-` prefix (including
-// scratch, excluding remote). Legacy `kl-*`, numbered sessions, and
-// user-created sessions are untouched. Returns the names of sessions
-// that were killed.
+//  1. hive-* sessions (excluding remote): worktree sessions left behind
+//     after the worktree was deleted.
+//  2. Numbered sessions: old Claude Code sessions spawned by the
+//     TGClaudeBridge or manually, never cleaned up. These have purely
+//     numeric names like "57", "101", "134".
+//
+// Legacy `kl-*` sessions and user-named sessions are untouched. Remote
+// sessions (hive-rc-*) are untouched because they don't necessarily
+// have a meaningful cwd on this machine.
+//
+// Returns the names of sessions that were killed.
 func PruneZombieSessions(sessions []TmuxSession) []string {
+	// Also prune numbered sessions that aren't in the ParseTmuxSessions
+	// output (since ParseTmuxSessions only returns hive-*/kl-* sessions).
+	// We need to check the raw tmux session list for those.
+	allNames, _ := tmuxOutput(tmuxListSessionsArgs()...)
+	numberedSessions := parseNumberedSessions(allNames)
+
 	var killed []string
+	// Prune hive-* zombies
 	for _, s := range sessions {
-		// Scope: only hive-* interactive sessions. Remote sessions
-		// (hive-rc-*) don't necessarily have a cwd on this machine, so
-		// don't prune them based on cwd.
 		if s.IsRemote {
 			continue
 		}
@@ -39,7 +49,64 @@ func PruneZombieSessions(sessions []TmuxSession) []string {
 		}
 		killed = append(killed, s.Name)
 	}
+	// Prune numbered sessions: zombies (deleted cwd) always, and stale
+	// sessions (valid cwd but no active Claude process) too — these are
+	// old bridge-spawned sessions with an idle shell sitting at a prompt.
+	for _, name := range numberedSessions {
+		cwd, err := TmuxSessionCwd(name)
+		if err != nil {
+			continue
+		}
+		shouldKill := isZombieCwd(cwd) || !sessionHasClaude(name)
+		if !shouldKill {
+			continue
+		}
+		if err := TmuxKillSession(name); err != nil {
+			continue
+		}
+		killed = append(killed, name)
+	}
 	return killed
+}
+
+// sessionHasClaude checks if a tmux session has a `claude` process
+// running in it (direct child of the pane's shell).
+func sessionHasClaude(sessionName string) bool {
+	pid, err := tmuxOutput("list-panes", "-t", sessionName, "-F", "#{pane_pid}")
+	if err != nil {
+		return false
+	}
+	pid = strings.TrimSpace(pid)
+	out, err := exec.Command("pgrep", "-P", pid, "-a").Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "claude")
+}
+
+// parseNumberedSessions extracts purely-numeric session names from tmux
+// list-sessions output (e.g. "57", "101", "134"). These are typically
+// old Claude Code sessions spawned by the bridge.
+func parseNumberedSessions(output string) []string {
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		name := strings.SplitN(line, ":", 2)[0]
+		// Check if the name is purely numeric
+		isNumeric := true
+		for _, c := range name {
+			if c < '0' || c > '9' {
+				isNumeric = false
+				break
+			}
+		}
+		if isNumeric && name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // isZombieCwd returns true if the given path indicates a deleted working
