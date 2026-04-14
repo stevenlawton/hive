@@ -15,6 +15,15 @@ const (
 	legacyPrefix       = "kl-"
 	legacyRemotePrefix = "kl-rc-"
 	legacyScratchPfx   = "kl-scratch-"
+
+	// tmuxControlSessionName is a dedicated tmux session that the
+	// persistent `tmux -C` control client attaches to. Using our own
+	// session keeps it out of reach of the pruning logic — no prefix
+	// match so ParseTmuxSessions skips it, non-numeric so the
+	// numbered-session prune skips it, and it has no cwd-dependent
+	// zombie semantics. Lifetime is tied to hive: killed on clean
+	// exit, and any leftover is killed at next startup.
+	tmuxControlSessionName = "__hive_control__"
 )
 
 type TmuxSession struct {
@@ -122,7 +131,11 @@ var tmuxControl struct {
 	started bool
 }
 
-// StartTmuxControl opens a persistent tmux control-mode connection.
+// StartTmuxControl opens a persistent tmux control-mode connection
+// attached to a dedicated hive-owned session (tmuxControlSessionName).
+// Any leftover control session from a previous crashed run is killed
+// first — that's how the session gets pruned without becoming
+// immortal.
 func StartTmuxControl() error {
 	tmuxControl.Lock()
 	defer tmuxControl.Unlock()
@@ -130,12 +143,16 @@ func StartTmuxControl() error {
 		return nil
 	}
 
-	cmd := exec.Command("tmux", "-C")
+	_ = tmuxRun("kill-session", "-t", tmuxControlSessionName)
+	if err := tmuxRun("new-session", "-d", "-s", tmuxControlSessionName); err != nil {
+		return fmt.Errorf("create control session: %w", err)
+	}
+
+	cmd := exec.Command("tmux", "-C", "attach-session", "-t", tmuxControlSessionName)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
 	}
-	// Discard stdout/stderr — we don't need responses
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 
@@ -143,7 +160,6 @@ func StartTmuxControl() error {
 		return err
 	}
 
-	// Drain any initial output
 	tmuxControl.cmd = cmd
 	tmuxControl.stdin = stdin
 	tmuxControl.started = true
@@ -165,7 +181,8 @@ func TmuxControlSend(command string) error {
 	return tmuxRun(args...)
 }
 
-// StopTmuxControl closes the persistent connection.
+// StopTmuxControl closes the persistent connection and tears down the
+// dedicated control session, so nothing is left behind on clean exit.
 func StopTmuxControl() {
 	tmuxControl.Lock()
 	defer tmuxControl.Unlock()
@@ -176,6 +193,7 @@ func StopTmuxControl() {
 		tmuxControl.cmd.Wait()
 		tmuxControl.started = false
 	}
+	_ = tmuxRun("kill-session", "-t", tmuxControlSessionName)
 }
 
 // Exec helpers
