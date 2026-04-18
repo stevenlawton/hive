@@ -468,20 +468,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scrollMsg:
 		if m.mode == viewWorkspace {
 			if term := m.focusedTerminal(); term != nil {
-				if msg.dir < 0 {
-					// First scroll up: grab full scrollback
-					if !term.IsScrolledUp() {
-						sesName := m.workspace.FocusedSessionName()
-						if sesName != "" {
-							if content, err := TmuxCapturePaneFull(sesName); err == nil {
-								term.SetFullContent(content)
-							}
+				// First scroll up: grab full scrollback
+				if !term.IsScrolledUp() && msg.dir < 0 {
+					sesName := m.workspace.FocusedSessionName()
+					if sesName != "" {
+						if content, err := TmuxCapturePaneFull(sesName); err == nil {
+							term.SetFullContent(content)
 						}
 					}
-					term.ScrollUp(3)
-				} else {
-					term.ScrollDown(3)
 				}
+				term.ScrollBy(msg.dir * 3)
 			}
 			return m, nil
 		}
@@ -567,7 +563,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		// If scrolled up, snap to live on any keypress
 		if term := m.focusedTerminal(); term != nil && term.IsScrolledUp() {
-			term.ScrollOffset = 0
+			term.ScrollToBottom()
 		}
 		// Forward all other keys to focused session via control mode (no process spawn)
 		sesName := m.workspace.FocusedSessionName()

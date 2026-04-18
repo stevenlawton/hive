@@ -1,11 +1,17 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
+
+var scrollStatusStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("#ffff00")).
+	Background(lipgloss.Color("#333333")).
+	Bold(true)
 
 // TerminalPane renders tmux pane output and optionally forwards input.
 type TerminalPane struct {
@@ -15,7 +21,7 @@ type TerminalPane struct {
 	Height       int
 	Focused      bool
 	HasBorder    bool // true if rendered inside a lipgloss border
-	ScrollOffset int  // 0 = live/bottom, >0 = lines scrolled up from bottom
+	ScrollTop    int  // -1 = tail mode (follow newest); >=0 = absolute line index of top visible row
 	fullContent  string
 	lastResizeW  int // last width we resized tmux to
 	lastResizeH  int // last height we resized tmux to
@@ -25,6 +31,7 @@ type TerminalPane struct {
 func NewTerminalPane(sessionName string) *TerminalPane {
 	return &TerminalPane{
 		SessionName: sessionName,
+		ScrollTop:   -1, // start in tail mode
 	}
 }
 
@@ -84,33 +91,49 @@ func (t *TerminalPane) SetFullContent(content string) {
 	t.fullContent = content
 }
 
-// ScrollUp scrolls the viewport up by n lines.
-func (t *TerminalPane) ScrollUp(n int) {
-	t.ScrollOffset += n
-	// Clamp to max scrollback
-	if t.fullContent != "" {
-		lines := strings.Split(t.fullContent, "\n")
-		maxOffset := len(lines) - t.InnerHeight()
-		if maxOffset < 0 {
-			maxOffset = 0
+// ScrollBy moves the viewport by delta lines. Positive = down (toward
+// newer), negative = up (toward older). Mirrors the bus view's scroll
+// state machine: -1 means tail mode, any other value is an absolute
+// line anchor.
+func (t *TerminalPane) ScrollBy(delta int) {
+	if t.fullContent == "" {
+		return
+	}
+	total := strings.Count(t.fullContent, "\n") + 1
+	page := t.InnerHeight()
+
+	// If in tail mode, anchor at the current bottom so an upward
+	// scroll starts from the visible content.
+	if t.ScrollTop < 0 {
+		if delta >= 0 {
+			return // scroll down from tail is a no-op
 		}
-		if t.ScrollOffset > maxOffset {
-			t.ScrollOffset = maxOffset
-		}
+		t.ScrollTop = max(0, total-page)
+	}
+
+	t.ScrollTop += delta
+	if t.ScrollTop < 0 {
+		t.ScrollTop = 0
+	}
+	// If we've scrolled past the bottom, re-enter tail mode.
+	if t.ScrollTop >= total-page {
+		t.ScrollTop = -1
 	}
 }
 
-// ScrollDown scrolls the viewport down by n lines. Snaps to live at bottom.
-func (t *TerminalPane) ScrollDown(n int) {
-	t.ScrollOffset -= n
-	if t.ScrollOffset < 0 {
-		t.ScrollOffset = 0
-	}
+// ScrollToTop jumps to the top of the scrollback.
+func (t *TerminalPane) ScrollToTop() {
+	t.ScrollTop = 0
+}
+
+// ScrollToBottom re-enters tail mode.
+func (t *TerminalPane) ScrollToBottom() {
+	t.ScrollTop = -1
 }
 
 // IsScrolledUp returns true if the pane is showing history, not live.
 func (t *TerminalPane) IsScrolledUp() bool {
-	return t.ScrollOffset > 0
+	return t.ScrollTop >= 0
 }
 
 // View renders the terminal pane content.
@@ -126,32 +149,50 @@ func (t *TerminalPane) View() string {
 			Render("No session")
 	}
 
+	// Reserve a line for the scroll status bar when paused.
+	contentHeight := ih
+	scrolled := t.ScrollTop >= 0 && t.fullContent != ""
+	if scrolled {
+		contentHeight--
+	}
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+
 	var rendered string
-	if t.ScrollOffset > 0 && t.fullContent != "" {
-		// Scrolled up — show slice of full scrollback
-		lines := strings.Split(t.fullContent, "\n")
-		end := len(lines) - t.ScrollOffset
-		if end < 0 {
-			end = 0
+	if scrolled {
+		// Frozen — show slice anchored at absolute line position.
+		allLines := strings.Split(t.fullContent, "\n")
+		start := t.ScrollTop
+		if start > len(allLines) {
+			start = len(allLines)
 		}
-		start := end - ih
-		if start < 0 {
-			start = 0
+		end := start + contentHeight
+		if end > len(allLines) {
+			end = len(allLines)
 		}
-		rendered = strings.Join(lines[start:end], "\n")
+		rendered = strings.Join(allLines[start:end], "\n")
 	} else {
-		// Live view — show bottom of current capture
-		rendered = TruncateToHeight(t.Content, ih)
+		// Live / tail mode — show bottom of current capture.
+		rendered = TruncateToHeight(t.Content, contentHeight)
 	}
 
 	// Clamp each line to inner width, reset ANSI state, and erase to
-	// end of line.  The EL sequence (\033[K) tells the terminal to fill
-	// the remainder of the line with the default background, which
-	// prevents ghosting artifacts from stale cellbuf cells without the
-	// cost of measuring visible width per line.
+	// end of line.
 	lines := strings.Split(rendered, "\n")
 	for i, line := range lines {
 		lines[i] = ClampToWidth(line, iw) + "\033[0m\033[K"
+	}
+
+	// Append scroll status bar when paused.
+	if scrolled {
+		total := strings.Count(t.fullContent, "\n") + 1
+		hidden := total - t.ScrollTop - contentHeight
+		if hidden < 0 {
+			hidden = 0
+		}
+		status := fmt.Sprintf("⏸ scrolled · %d rows hidden below · end to resume", hidden)
+		lines = append(lines, scrollStatusStyle.Render(ClampToWidth(status, iw))+"\033[K")
 	}
 
 	return strings.Join(lines, "\n")

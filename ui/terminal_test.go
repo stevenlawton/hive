@@ -54,29 +54,40 @@ func TestTerminalPaneScroll(t *testing.T) {
 	tp.SetSize(80, 5) // InnerHeight = 5 (no border)
 	tp.SetFullContent("a\nb\nc\nd\ne\nf\ng\nh\ni\nj") // 10 lines
 
-	tp.ScrollUp(3)
-	if tp.ScrollOffset != 3 {
-		t.Errorf("expected ScrollOffset 3, got %d", tp.ScrollOffset)
+	// Scroll up from tail mode
+	tp.ScrollBy(-3)
+	if tp.ScrollTop < 0 {
+		t.Errorf("expected ScrollTop >= 0 after scrolling up, got %d", tp.ScrollTop)
 	}
 	if !tp.IsScrolledUp() {
 		t.Error("expected IsScrolledUp true")
 	}
 
-	tp.ScrollUp(100) // should clamp to max (10 - 5 = 5)
-	if tp.ScrollOffset != 5 {
-		t.Errorf("expected ScrollOffset 5, got %d", tp.ScrollOffset)
+	// Scroll up a lot — should clamp to 0
+	tp.ScrollBy(-100)
+	if tp.ScrollTop != 0 {
+		t.Errorf("expected ScrollTop 0 at top, got %d", tp.ScrollTop)
 	}
 
-	tp.ScrollDown(3)
-	if tp.ScrollOffset != 2 {
-		t.Errorf("expected ScrollOffset 2, got %d", tp.ScrollOffset)
-	}
-
-	tp.ScrollDown(100) // should clamp to 0 (live)
-	if tp.ScrollOffset != 0 {
-		t.Errorf("expected ScrollOffset 0, got %d", tp.ScrollOffset)
+	// Scroll down past bottom — should re-enter tail mode
+	tp.ScrollBy(100)
+	if tp.ScrollTop != -1 {
+		t.Errorf("expected ScrollTop -1 (tail mode), got %d", tp.ScrollTop)
 	}
 	if tp.IsScrolledUp() {
-		t.Error("expected IsScrolledUp false at bottom")
+		t.Error("expected IsScrolledUp false in tail mode")
+	}
+
+	// ScrollToBottom from scrolled position
+	tp.ScrollBy(-5)
+	tp.ScrollToBottom()
+	if tp.ScrollTop != -1 {
+		t.Errorf("expected ScrollTop -1 after ScrollToBottom, got %d", tp.ScrollTop)
+	}
+
+	// ScrollToTop
+	tp.ScrollToTop()
+	if tp.ScrollTop != 0 {
+		t.Errorf("expected ScrollTop 0 after ScrollToTop, got %d", tp.ScrollTop)
 	}
 }
