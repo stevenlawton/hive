@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/stevenlawton/hive/ui"
 )
 
 // PruneZombieSessions kills tmux sessions whose working directory no
@@ -475,6 +476,18 @@ func (m *model) reconnectSessions() {
 		}
 		m.workspace.TabBar.FocusByID(item.repo.Parent)
 		m.workspace.AddSplitToActive("wt:"+item.repo.WorktreeBranch, item.tmuxSes)
+
+		// Restore persisted orientation from parent tmux session.
+		if tab, ok := m.workspace.Tabs[item.repo.Parent]; ok {
+			for _, p := range m.items {
+				if p.repo.DirName == item.repo.Parent && p.tmuxSes != "" {
+					if orient := TmuxGetEnv(p.tmuxSes, "HIVE_ORIENTATION"); orient == "h" {
+						tab.SplitPane.Orientation = ui.SplitHorizontal
+					}
+					break
+				}
+			}
+		}
 	}
 
 	// Auto-start configured remote sessions

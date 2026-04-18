@@ -387,7 +387,7 @@ type reconnectMsg struct{}
 type captureTickMsg struct{}
 
 func captureTick() tea.Cmd {
-	return tea.Tick(50*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 		return captureTickMsg{}
 	})
 }

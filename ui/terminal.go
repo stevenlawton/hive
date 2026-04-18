@@ -144,12 +144,14 @@ func (t *TerminalPane) View() string {
 		rendered = TruncateToHeight(t.Content, ih)
 	}
 
-	// Clamp each line to inner width and reset ANSI state.
-	// Tmux capture output may contain unclosed ANSI sequences that, after
-	// truncation, bleed into padding and the adjacent pane.
+	// Clamp each line to inner width, reset ANSI state, and erase to
+	// end of line.  The EL sequence (\033[K) tells the terminal to fill
+	// the remainder of the line with the default background, which
+	// prevents ghosting artifacts from stale cellbuf cells without the
+	// cost of measuring visible width per line.
 	lines := strings.Split(rendered, "\n")
 	for i, line := range lines {
-		lines[i] = ClampToWidth(line, iw) + "\033[0m"
+		lines[i] = ClampToWidth(line, iw) + "\033[0m\033[K"
 	}
 
 	return strings.Join(lines, "\n")

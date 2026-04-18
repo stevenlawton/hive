@@ -369,6 +369,23 @@ func TmuxRenameSession(oldName, newName string) error {
 	return tmuxRun("rename-session", "-t", oldName, newName)
 }
 
+func TmuxSetEnv(sessionName, key, value string) {
+	tmuxRun("set-environment", "-t", sessionName, key, value)
+}
+
+func TmuxGetEnv(sessionName, key string) string {
+	out, err := tmuxOutput("show-environment", "-t", sessionName, key)
+	if err != nil {
+		return ""
+	}
+	// Output format: "KEY=value\n"
+	s := strings.TrimSpace(out)
+	if idx := strings.IndexByte(s, '='); idx >= 0 {
+		return s[idx+1:]
+	}
+	return ""
+}
+
 func TmuxSessionCwd(sessionName string) (string, error) {
 	out, err := tmuxOutput("display-message", "-t", sessionName, "-p", "#{pane_current_path}")
 	if err != nil {

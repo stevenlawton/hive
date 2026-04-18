@@ -9,6 +9,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/stevenlawton/hive/ui"
 )
 
 const (
@@ -186,6 +187,15 @@ if branch == "" {
 	if m.wtSplitMode {
 		if tab := m.workspace.ActiveTab(); tab != nil {
 			tab.SplitPane.Orientation = m.wtOrientation
+		}
+		// Persist orientation on the parent tmux session so it
+		// survives a restart.
+		if parent.tmuxSes != "" {
+			orient := "v"
+			if m.wtOrientation == ui.SplitHorizontal {
+				orient = "h"
+			}
+			TmuxSetEnv(parent.tmuxSes, "HIVE_ORIENTATION", orient)
 		}
 		m.workspace.AddSplitToActive("wt:"+branch, sessionName)
 		m.mode = viewWorkspace

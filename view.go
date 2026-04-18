@@ -85,7 +85,11 @@ func (m model) View() tea.View {
 		layout.keyBarY++
 	}
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	if m.mode == viewWorkspace {
+		v.MouseMode = tea.MouseModeAllMotion
+	} else {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 
 	v.OnMouse = func(msg tea.MouseMsg) tea.Cmd {
 		mouse := msg.Mouse()
@@ -106,13 +110,8 @@ func (m model) View() tea.View {
 				}
 				// Click on split pane → focus it
 				if tab := m.workspace.ActiveTab(); tab != nil {
-					x := mouse.X
-					for i, split := range tab.SplitPane.Splits {
-						if x < split.Terminal.Width {
-							idx := i
-							return func() tea.Msg { return splitClickMsg{index: idx} }
-						}
-						x -= split.Terminal.Width
+					if idx := m.splitHitTest(tab, mouse.X, mouse.Y); idx >= 0 {
+						return func() tea.Msg { return splitClickMsg{index: idx} }
 					}
 				}
 			} else {
@@ -146,12 +145,23 @@ func (m model) View() tea.View {
 					}
 				}
 			}
+		case tea.MouseMotionMsg:
+			// Auto-focus split pane on hover
+			if m.mode == viewWorkspace {
+				if tab := m.workspace.ActiveTab(); tab != nil && len(tab.SplitPane.Splits) > 1 {
+					idx := m.splitHitTest(tab, mouse.X, mouse.Y)
+					if idx >= 0 && idx != tab.SplitPane.FocusIdx {
+						i := idx
+						return func() tea.Msg { return splitClickMsg{index: i} }
+					}
+				}
+			}
 		case tea.MouseWheelMsg:
 			dir := 1
 			if mouse.Button == tea.MouseWheelUp {
 				dir = -1
 			}
-return func() tea.Msg { return scrollMsg{dir: dir} }
+			return func() tea.Msg { return scrollMsg{dir: dir} }
 		}
 		return nil
 	}
@@ -878,4 +888,30 @@ func (m model) viewBus() string {
 	b.WriteString(helpStyle.UnsetPadding().Render("  enter send · ↑↓ pgup/pgdn home/end scroll · esc back"))
 
 	return b.String()
+}
+
+// splitHitTest returns the split index under the given mouse coordinates,
+// or -1 if the coordinates are outside any split.
+func (m model) splitHitTest(tab *ui.WorkspaceTab, mx, my int) int {
+	sp := tab.SplitPane
+	if sp.Orientation == ui.SplitHorizontal {
+		// Stacked top/bottom — walk Y axis (skip tab bar row)
+		y := my - 1
+		for i, split := range sp.Splits {
+			if y < split.Terminal.Height {
+				return i
+			}
+			y -= split.Terminal.Height
+		}
+	} else {
+		// Side by side — walk X axis
+		x := mx
+		for i, split := range sp.Splits {
+			if x < split.Terminal.Width {
+				return i
+			}
+			x -= split.Terminal.Width
+		}
+	}
+	return -1
 }
