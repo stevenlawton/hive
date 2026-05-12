@@ -239,10 +239,18 @@ func (m model) viewList() (string, listLayout) {
 		}
 
 		vi := viewItem{index: cursorPos, item: m.items[itemIdx]}
-		lines = append(lines, displayLine{
-			text:      m.renderItem(vi),
-			cursorPos: cursorPos,
-		})
+		rendered := m.renderItem(vi)
+		// renderItem may return multiple lines (description subtitle).
+		for j, part := range strings.Split(rendered, "\n") {
+			cp := cursorPos
+			if j > 0 {
+				cp = -1 // subtitle lines are not clickable
+			}
+			lines = append(lines, displayLine{
+				text:      part,
+				cursorPos: cp,
+			})
+		}
 	}
 
 	if len(m.displayOrder) == 0 {
@@ -545,12 +553,12 @@ func (m model) renderItem(vi viewItem) string {
 		diffStats = " " + idleStyle.UnsetWidth().Render(vi.item.diffStats)
 	}
 
-	desc := ""
-	if vi.item.repo.Description != "" {
-		desc = "  " + idleStyle.UnsetWidth().Render(vi.item.repo.Description)
+	line := cursor + name + "  " + flagStr + status + diffStats
+	// Show description as a second line for the selected item only.
+	if vi.index == m.cursor && vi.item.repo.Description != "" {
+		line += "\n    " + idleStyle.UnsetWidth().Render(vi.item.repo.Description)
 	}
-
-	return cursor + name + "  " + flagStr + status + diffStats + desc
+	return line
 }
 
 func (m model) renderStatusBar() string {
@@ -638,15 +646,15 @@ func (m model) renderStatus(item repoItem) string {
 	case statusNone:
 		return "" // blank for idle — less noise
 	case statusTelegram:
-		label := "telegram"
+		label := "TG:"
 		if item.bridgeEntry != nil && item.bridgeEntry.SessionID != "" {
 			sid := item.bridgeEntry.SessionID
 			if len(sid) > 8 {
 				sid = sid[:8]
 			}
-			label = "tg:" + sid
+			label = "TG: " + sid
 		}
-		return telegramStyle.Render("📱 " + label)
+		return telegramStyle.Render(label)
 	default:
 		return ""
 	}

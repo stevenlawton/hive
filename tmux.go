@@ -38,6 +38,36 @@ func sanitizeSessionName(name string) string {
 	return strings.NewReplacer(".", "_", ":", "_", " ", "_").Replace(name)
 }
 
+// tmuxTarget formats a session name as an exact-match target for tmux
+// subcommands that take a target-session: has-session, kill-session,
+// rename-session, attach-session, set-environment, show-environment.
+// Without the leading "=", tmux treats the argument as a glob/prefix
+// and `hive-foo` will match `hive-foo_com`, which causes cross-session
+// bleed when two repos share a name prefix (e.g. `stevenlawton` and
+// `stevenlawton.com`).
+//
+// For target-pane / target-window arguments (send-keys, capture-pane,
+// display-message, copy-mode, list-panes, list-windows, resize-window)
+// use tmuxPaneTarget — bare "=name" is rejected as "can't find pane"
+// by those commands.
+func tmuxTarget(name string) string {
+	return "=" + name
+}
+
+// tmuxPaneTarget formats a session name as an exact-match target for
+// tmux subcommands that take a target-pane or target-window. tmux's
+// "=" prefix only applies to the session_arg portion of a pane target,
+// so we append ":" to mark the rest as the default window/pane —
+// "=name:" means "exact session match, first window, first pane".
+//
+// Without the trailing ":", commands like send-keys and capture-pane
+// look up "=name" as a literal pane name and fail with "can't find
+// pane: =name", which is what produced the "No session" placeholder
+// in workspace tabs after the exact-match rollout.
+func tmuxPaneTarget(name string) string {
+	return "=" + name + ":"
+}
+
 func TmuxSessionName(dirName string, remote bool) string {
 	safe := sanitizeSessionName(dirName)
 	if remote {
@@ -59,15 +89,15 @@ func TmuxNewSessionWithCmd(sessionName, cwd, command string) error {
 }
 
 func tmuxSendKeysArgs(sessionName, command string) []string {
-	return []string{"send-keys", "-t", sessionName, command, "Enter"}
+	return []string{"send-keys", "-t", tmuxPaneTarget(sessionName), command, "Enter"}
 }
 
 func tmuxHasSessionArgs(sessionName string) []string {
-	return []string{"has-session", "-t", sessionName}
+	return []string{"has-session", "-t", tmuxTarget(sessionName)}
 }
 
 func tmuxKillSessionArgs(sessionName string) []string {
-	return []string{"kill-session", "-t", sessionName}
+	return []string{"kill-session", "-t", tmuxTarget(sessionName)}
 }
 
 func tmuxListSessionsArgs() []string {
@@ -75,15 +105,15 @@ func tmuxListSessionsArgs() []string {
 }
 
 func tmuxPaneTitleArgs(sessionName string) []string {
-	return []string{"display-message", "-t", sessionName, "-p", "#{pane_title}"}
+	return []string{"display-message", "-t", tmuxPaneTarget(sessionName), "-p", "#{pane_title}"}
 }
 
 func tmuxCapturePaneArgs(sessionName string) []string {
-	return []string{"capture-pane", "-p", "-e", "-t", sessionName}
+	return []string{"capture-pane", "-p", "-e", "-t", tmuxPaneTarget(sessionName)}
 }
 
 func tmuxCapturePaneFullArgs(sessionName string) []string {
-	return []string{"capture-pane", "-p", "-e", "-S", "-", "-E", "-", "-t", sessionName}
+	return []string{"capture-pane", "-p", "-e", "-S", "-", "-E", "-", "-t", tmuxPaneTarget(sessionName)}
 }
 
 func ParseTmuxSessions(output string) []TmuxSession {
@@ -143,12 +173,12 @@ func StartTmuxControl() error {
 		return nil
 	}
 
-	_ = tmuxRun("kill-session", "-t", tmuxControlSessionName)
+	_ = tmuxRun("kill-session", "-t", tmuxTarget(tmuxControlSessionName))
 	if err := tmuxRun("new-session", "-d", "-s", tmuxControlSessionName); err != nil {
 		return fmt.Errorf("create control session: %w", err)
 	}
 
-	cmd := exec.Command("tmux", "-C", "attach-session", "-t", tmuxControlSessionName)
+	cmd := exec.Command("tmux", "-C", "attach-session", "-t", tmuxTarget(tmuxControlSessionName))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -193,7 +223,7 @@ func StopTmuxControl() {
 		tmuxControl.cmd.Wait()
 		tmuxControl.started = false
 	}
-	_ = tmuxRun("kill-session", "-t", tmuxControlSessionName)
+	_ = tmuxRun("kill-session", "-t", tmuxTarget(tmuxControlSessionName))
 }
 
 // Exec helpers
@@ -328,37 +358,38 @@ func TmuxSendRawKeys(sessionName string, keys ...string) error {
 	for i, k := range keys {
 		translated[i] = bubbleteaToTmuxKey(k)
 	}
-	cmd := "send-keys -t " + sessionName + " " + strings.Join(translated, " ")
+	cmd := "send-keys -t " + tmuxPaneTarget(sessionName) + " " + strings.Join(translated, " ")
 	return TmuxControlSend(cmd)
 }
 
 func TmuxSendLiteral(sessionName, text string) error {
 	// Use control mode for literal text — quote it for the tmux command parser
-	cmd := fmt.Sprintf("send-keys -t %s -l %q", sessionName, text)
+	cmd := fmt.Sprintf("send-keys -t %s -l %q", tmuxPaneTarget(sessionName), text)
 	return TmuxControlSend(cmd)
 }
 
 // TmuxCopyModeScroll enters copy-mode (if needed) and scrolls up or down.
 // The -e flag auto-exits copy-mode when scrolling hits the bottom.
 func TmuxCopyModeScroll(sessionName string, up bool) {
-	tmuxRun("copy-mode", "-t", sessionName, "-e")
+	target := tmuxPaneTarget(sessionName)
+	tmuxRun("copy-mode", "-t", target, "-e")
 	if up {
-		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-up")
-		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-up")
-		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-up")
+		tmuxRun("send-keys", "-t", target, "-X", "scroll-up")
+		tmuxRun("send-keys", "-t", target, "-X", "scroll-up")
+		tmuxRun("send-keys", "-t", target, "-X", "scroll-up")
 	} else {
-		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-down")
-		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-down")
-		tmuxRun("send-keys", "-t", sessionName, "-X", "scroll-down")
+		tmuxRun("send-keys", "-t", target, "-X", "scroll-down")
+		tmuxRun("send-keys", "-t", target, "-X", "scroll-down")
+		tmuxRun("send-keys", "-t", target, "-X", "scroll-down")
 	}
 }
 
 func TmuxResizePane(sessionName string, width, height int) error {
-	return tmuxRun("resize-window", "-t", sessionName, "-x", fmt.Sprintf("%d", width), "-y", fmt.Sprintf("%d", height))
+	return tmuxRun("resize-window", "-t", tmuxPaneTarget(sessionName), "-x", fmt.Sprintf("%d", width), "-y", fmt.Sprintf("%d", height))
 }
 
 func TmuxWindowHasBell(sessionName string) bool {
-	out, err := tmuxOutput("list-windows", "-t", sessionName, "-F", "#{window_bell_flag}")
+	out, err := tmuxOutput("list-windows", "-t", tmuxPaneTarget(sessionName), "-F", "#{window_bell_flag}")
 	if err != nil {
 		return false
 	}
@@ -366,15 +397,15 @@ func TmuxWindowHasBell(sessionName string) bool {
 }
 
 func TmuxRenameSession(oldName, newName string) error {
-	return tmuxRun("rename-session", "-t", oldName, newName)
+	return tmuxRun("rename-session", "-t", tmuxTarget(oldName), newName)
 }
 
 func TmuxSetEnv(sessionName, key, value string) {
-	tmuxRun("set-environment", "-t", sessionName, key, value)
+	tmuxRun("set-environment", "-t", tmuxTarget(sessionName), key, value)
 }
 
 func TmuxGetEnv(sessionName, key string) string {
-	out, err := tmuxOutput("show-environment", "-t", sessionName, key)
+	out, err := tmuxOutput("show-environment", "-t", tmuxTarget(sessionName), key)
 	if err != nil {
 		return ""
 	}
@@ -387,7 +418,7 @@ func TmuxGetEnv(sessionName, key string) string {
 }
 
 func TmuxSessionCwd(sessionName string) (string, error) {
-	out, err := tmuxOutput("display-message", "-t", sessionName, "-p", "#{pane_current_path}")
+	out, err := tmuxOutput("display-message", "-t", tmuxPaneTarget(sessionName), "-p", "#{pane_current_path}")
 	if err != nil {
 		return "", fmt.Errorf("failed to get cwd for session %s: %w", sessionName, err)
 	}

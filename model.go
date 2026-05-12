@@ -713,6 +713,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 	case "enter":
+		if m.promptTelegramPickup() {
+			return m, nil
+		}
 		return m, m.openSelected(true)
 	case "shift+enter":
 		return m, m.openSelected(false)
@@ -776,6 +779,9 @@ func (m model) handleAction(action string) (tea.Model, tea.Cmd) {
 		m.filtering = true
 		return m, m.filter.Focus()
 	case "enter":
+		if m.promptTelegramPickup() {
+			return m, nil
+		}
 		return m, m.openSelected(true)
 	case "shift+enter":
 		return m, m.openSelected(false)
@@ -910,8 +916,10 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Read bridge registry and mark telegram-driven sessions
-	bridge := ReadBridgeRegistry()
+	// Read bridge registry and mark telegram-driven sessions. Prune any
+	// entries with no session_id along the way — those are dead and the
+	// UI must not surface them as pick-up-able.
+	bridge := PruneStaleBridgeEntries()
 	for i := range m.items {
 		item := &m.items[i]
 		dirName := item.repo.DirName

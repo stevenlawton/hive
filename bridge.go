@@ -2,11 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 // BridgeEntry represents a session in the shared bridge registry.
@@ -35,14 +34,89 @@ func ReadBridgeRegistry() map[string]BridgeEntry {
 	return registry
 }
 
-// takeoverTelegram claims a telegram-driven session for the desktop TUI.
-func (m *model) takeoverTelegram() tea.Cmd {
-	item := m.selectedItem()
-	if item == nil || item.status != statusTelegram {
+// PruneStaleBridgeEntries reads the registry and clears the driver on entries
+// where a Telegram driver is recorded but no claude session_id was ever set —
+// the bot can't resume and the desktop can't pick up, so the entry is dead.
+// Cleared entries are demoted to driver "none" (kept, not deleted) so the bot
+// can re-claim them naturally on next use. The whole map is returned for the
+// caller's use; the file is rewritten only when something actually changed.
+func PruneStaleBridgeEntries() map[string]BridgeEntry {
+	registry := ReadBridgeRegistry()
+	if registry == nil {
 		return nil
 	}
-	UpdateBridgeEntry(sanitizeSessionName(item.repo.DirName), "desktop")
-	return m.openSelected(true)
+	changed := false
+	now := time.Now().UTC().Format(time.RFC3339)
+	for key, entry := range registry {
+		if entry.Driver == "telegram" && entry.SessionID == "" {
+			entry.Driver = "none"
+			entry.DriverSince = now
+			registry[key] = entry
+			changed = true
+		}
+	}
+	if !changed {
+		return registry
+	}
+	data, err := json.MarshalIndent(registry, "", "  ")
+	if err != nil {
+		return registry
+	}
+	path := bridgeFilePath()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return registry
+	}
+	_ = os.Rename(tmp, path)
+	return registry
+}
+
+// promptTelegramPickup pops the y/n confirm for taking over a TG-driven
+// session. Returns true if a confirm was raised (caller should not also run
+// the normal open flow). Returns false if the selected item isn't a live
+// TG session, in which case the caller should fall through to its default.
+func (m *model) promptTelegramPickup() bool {
+	item := m.selectedItem()
+	if item == nil || item.status != statusTelegram {
+		return false
+	}
+	if item.bridgeEntry == nil || item.bridgeEntry.SessionID == "" {
+		return false
+	}
+	repoName := item.repo.Name
+	m.confirmMsg = fmt.Sprintf("Pick up TG session for %s? (y/n)", repoName)
+	m.confirmAction = func() {
+		m.takeoverTelegram()
+	}
+	m.mode = viewConfirm
+	return true
+}
+
+// takeoverTelegram performs the handoff from the Telegram-driven claude
+// to the desktop TUI: marks the registry "desktop", interrupts the bot's
+// claude in the existing tmux session, resumes the same conversation
+// interactively, and opens it as a tab.
+func (m *model) takeoverTelegram() {
+	item := m.selectedItem()
+	if item == nil || item.status != statusTelegram {
+		return
+	}
+	if item.bridgeEntry == nil || item.bridgeEntry.SessionID == "" {
+		return
+	}
+	repo := item.repo
+	sessionName := TmuxSessionName(repo.DirName, false)
+	if !TmuxHasSession(sessionName) {
+		return
+	}
+	TmuxSendKeys(sessionName, "C-c")
+	TmuxSendKeys(sessionName, "claude --resume "+item.bridgeEntry.SessionID)
+	UpdateBridgeEntry(repo.DirName, "desktop")
+	item.status = statusClaude
+	item.bridgeEntry = nil
+	item.tmuxSes = sessionName
+	m.rebuildDisplayOrder()
+	m.openAsTab(repo, sessionName)
 }
 
 // UpdateBridgeEntry updates the driver field for a repo in the bridge registry.

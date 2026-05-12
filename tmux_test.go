@@ -19,7 +19,7 @@ func TestTmuxNewSessionArgs(t *testing.T) {
 
 func TestTmuxSendKeysArgs(t *testing.T) {
 	args := tmuxSendKeysArgs("hive-myproject", "claude")
-	expected := []string{"send-keys", "-t", "hive-myproject", "claude", "Enter"}
+	expected := []string{"send-keys", "-t", "=hive-myproject:", "claude", "Enter"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
 	}
@@ -125,7 +125,7 @@ func TestBubbleteaToTmuxKey(t *testing.T) {
 
 func TestTmuxCapturePaneArgs(t *testing.T) {
 	args := tmuxCapturePaneArgs("hive-workspace")
-	expected := []string{"capture-pane", "-p", "-e", "-t", "hive-workspace"}
+	expected := []string{"capture-pane", "-p", "-e", "-t", "=hive-workspace:"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d", len(expected), len(args))
 	}
@@ -138,13 +138,52 @@ func TestTmuxCapturePaneArgs(t *testing.T) {
 
 func TestTmuxCapturePaneFullArgs(t *testing.T) {
 	args := tmuxCapturePaneFullArgs("hive-workspace")
-	expected := []string{"capture-pane", "-p", "-e", "-S", "-", "-E", "-", "-t", "hive-workspace"}
+	expected := []string{"capture-pane", "-p", "-e", "-S", "-", "-E", "-", "-t", "=hive-workspace:"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d", len(expected), len(args))
 	}
 	for i, a := range args {
 		if a != expected[i] {
 			t.Errorf("arg[%d]: expected %q, got %q", i, expected[i], a)
+		}
+	}
+}
+
+// TestTmuxTargetExactMatch documents that every -t arg goes through
+// the appropriate exact-match helper so tmux's prefix-matching can't
+// bleed one session into another. Two flavours are required:
+//
+//   - target-session args (has-session, kill-session, etc.) take "=name"
+//   - target-pane / target-window args (send-keys, capture-pane,
+//     display-message) take "=name:" — without the ":" suffix tmux
+//     rejects bare "=name" with "can't find pane".
+//
+// Regression for two real bugs: opening `stevenlawton` after
+// `stevenlawton.com` attached to the wrong tmux session (prefix bleed),
+// and the post-fix "No session" workspace tab (target-pane reject).
+func TestTmuxTargetExactMatch(t *testing.T) {
+	cases := []struct {
+		name string
+		got  []string
+		want string
+	}{
+		{"has-session", tmuxHasSessionArgs("hive-stevenlawton"), "=hive-stevenlawton"},
+		{"kill-session", tmuxKillSessionArgs("hive-stevenlawton"), "=hive-stevenlawton"},
+		{"send-keys", tmuxSendKeysArgs("hive-stevenlawton", "x"), "=hive-stevenlawton:"},
+		{"display-message", tmuxPaneTitleArgs("hive-stevenlawton"), "=hive-stevenlawton:"},
+		{"capture-pane", tmuxCapturePaneArgs("hive-stevenlawton"), "=hive-stevenlawton:"},
+		{"capture-pane-full", tmuxCapturePaneFullArgs("hive-stevenlawton"), "=hive-stevenlawton:"},
+	}
+	for _, c := range cases {
+		var target string
+		for i, a := range c.got {
+			if a == "-t" && i+1 < len(c.got) {
+				target = c.got[i+1]
+				break
+			}
+		}
+		if target != c.want {
+			t.Errorf("%s: target = %q, want %q", c.name, target, c.want)
 		}
 	}
 }

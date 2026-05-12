@@ -18,7 +18,9 @@ import (
 // Returns when the user presses Ctrl+Space followed by q/f, or when
 // the session ends.
 func AttachSession(sessionName string) error {
-	cmd := exec.Command("tmux", "attach-session", "-t", sessionName)
+	// Force exact-match on the target: without "=" tmux prefix-matches,
+	// so attaching to "hive-foo" would silently bind to "hive-foo_com".
+	cmd := exec.Command("tmux", "attach-session", "-t", "="+sessionName)
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {

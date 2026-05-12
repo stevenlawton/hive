@@ -73,7 +73,7 @@ func PruneZombieSessions(sessions []TmuxSession) []string {
 // sessionHasClaude checks if a tmux session has a `claude` process
 // running in it (direct child of the pane's shell).
 func sessionHasClaude(sessionName string) bool {
-	pid, err := tmuxOutput("list-panes", "-t", sessionName, "-F", "#{pane_pid}")
+	pid, err := tmuxOutput("list-panes", "-t", tmuxPaneTarget(sessionName), "-F", "#{pane_pid}")
 	if err != nil {
 		return false
 	}
@@ -187,20 +187,6 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 	sessionName := TmuxSessionName(repo.DirName, false)
 
 	if TmuxHasSession(sessionName) {
-		// Transition from a telegram-bridged session to interactive: kill
-		// the bot-driven claude and resume the same conversation for the
-		// human. Guarded on status, not just bridgeEntry — a stale bridge
-		// file would otherwise fire this every time the user re-enters a
-		// normal claude session after a Hive restart.
-		if withClaude && item.status == statusTelegram && item.bridgeEntry != nil && item.bridgeEntry.SessionID != "" {
-			TmuxSendKeys(sessionName, "C-c")
-			TmuxSendKeys(sessionName, "claude --resume "+item.bridgeEntry.SessionID)
-			item.status = statusClaude
-			item.bridgeEntry = nil
-			m.rebuildDisplayOrder()
-			m.openAsTab(repo, sessionName)
-			return nil
-		}
 		m.clearFlash(item)
 		m.openAsTab(repo, sessionName)
 		return nil

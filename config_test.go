@@ -59,6 +59,65 @@ workspaces:
 	}
 }
 
+func TestLoadConfig_TolerAtesAndMergesDuplicateWorkspaceKeys(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := []byte(`
+repos_dir: ` + dir + `
+workspaces:
+  sailpoint-interview:
+    description: "first"
+    favourite: true
+  sailpoint-interview:
+    description: "second"
+    color: "#ff0000"
+  react-learning:
+    description: "kebab"
+  reactLearning:
+    description: "camel"
+    remote: true
+`)
+	if err := os.WriteFile(cfgPath, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("expected tolerant load, got error: %v", err)
+	}
+
+	if len(cfg.Workspaces) != 2 {
+		t.Fatalf("expected 2 workspaces after dedup, got %d: %+v", len(cfg.Workspaces), cfg.Workspaces)
+	}
+
+	sp, ok := cfg.Workspaces["sailpoint-interview"]
+	if !ok {
+		t.Fatalf("expected sailpoint-interview, got keys: %v", keys(cfg.Workspaces))
+	}
+	if sp.Description != "second" {
+		t.Errorf("expected later description to win, got %q", sp.Description)
+	}
+	if !sp.Favourite {
+		t.Errorf("expected booleans OR'd (favourite=true from first entry)")
+	}
+	if sp.Color != "#ff0000" {
+		t.Errorf("expected color from later entry, got %q", sp.Color)
+	}
+
+	// Backup should exist since cleanup ran.
+	if _, err := os.Stat(cfgPath + ".bak"); err != nil {
+		t.Errorf("expected backup file at %s.bak: %v", cfgPath, err)
+	}
+}
+
+func keys(m map[string]WorkspaceConfig) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func TestDiscoverRepos(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "repo-a"), 0755)
