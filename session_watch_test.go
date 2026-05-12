@@ -1,7 +1,10 @@
 package main
 
 import (
+	"sync"
 	"testing"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 func TestStatusToEvent(t *testing.T) {
@@ -31,6 +34,36 @@ func TestStatusToEvent(t *testing.T) {
 		if ev.Repo != "myrepo" || ev.Session != "hive-myrepo" {
 			t.Errorf("statusToEvent(%q) didn't propagate repo/session: %+v", c.status, ev)
 		}
+	}
+}
+
+func TestTrackPropagatesInitialFlag(t *testing.T) {
+	// fsnotify watcher just needs to exist; we don't trigger any events.
+	fsw, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("fsnotify: %v", err)
+	}
+	defer fsw.Close()
+
+	var got []SessionEvent
+	w := &SessionWatcher{
+		fsw:   fsw,
+		emit:  func(ev SessionEvent) { got = append(got, ev) },
+		files: make(map[string]*watchedSession),
+		mu:    sync.Mutex{},
+	}
+
+	w.track(claudeSessionMeta{PID: 1, SessionID: "a", CWD: "/x", Kind: "interactive", Status: "idle"}, true)
+	w.track(claudeSessionMeta{PID: 2, SessionID: "b", CWD: "/y", Kind: "interactive", Status: "busy"}, false)
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 events, got %d: %+v", len(got), got)
+	}
+	if got[0].Event != "completed" || !got[0].Initial {
+		t.Errorf("bootstrap idle event: want completed+Initial, got %+v", got[0])
+	}
+	if got[1].Event != "started" || got[1].Initial {
+		t.Errorf("fresh busy event: want started without Initial, got %+v", got[1])
 	}
 }
 

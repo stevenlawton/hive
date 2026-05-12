@@ -859,6 +859,16 @@ func (m *model) handleSessionEvent(ev SessionEvent) tea.Cmd {
 				m.manager.NotifyLog.Add(item.repo.DirName, "completed", time.Now())
 				m.workspace.TabBar.SetFlashing(item.repo.DirName, true)
 			}
+			if ev.Initial {
+				// Bootstrap/rediscovery — the user already knew this
+				// session was idle before hive joined. Flash the tab so
+				// it's visible, but saturate the escalation counter so
+				// we don't pile on desktop/external notifications for
+				// state they're already aware of. The next genuine
+				// busy→idle transition will reset this via "started" →
+				// resetWaitState.
+				item.attention.Notified = len(AttentionThresholdsHidden)
+			}
 		case "ended":
 			rs.Status = "ended"
 			m.manager.NotifyLog.Add(item.repo.DirName, "ended", time.Now())

@@ -12,6 +12,11 @@ type SessionEvent struct {
 	Event     string `json:"event"` // started, tool, completed, ended
 	ToolName  string `json:"tool_name,omitempty"`
 	ToolCount int    `json:"tool_count,omitempty"`
+	// Initial is set on events synthesised from a session's pre-existing
+	// state (hive startup bootstrap, rediscovery loop). Downstream handlers
+	// flash the tab but suppress attention-escalation notifications so the
+	// user isn't alerted to sessions they already knew about.
+	Initial bool `json:"initial,omitempty"`
 }
 
 // SessionStatus tracks accumulated state for a Claude session.

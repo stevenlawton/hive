@@ -242,15 +242,18 @@ func (w *SessionWatcher) bootstrap() error {
 	pruneStaleSessionFiles()
 	_ = w.fsw.Add(sessionsDir())
 	for _, m := range listClaudeSessions() {
-		w.track(m)
+		w.track(m, true)
 	}
 	return nil
 }
 
 // track adds a per-file watch for one session file and emits the initial
 // event reflecting its current status. Idempotent: already-tracked files
-// short-circuit.
-func (w *SessionWatcher) track(m claudeSessionMeta) {
+// short-circuit. `initial` is true when the session was discovered already
+// in this state (bootstrap or rediscovery) rather than via a live
+// transition — the emitted event is tagged so downstream handlers can
+// suppress attention escalation for state the user already knows about.
+func (w *SessionWatcher) track(m claudeSessionMeta, initial bool) {
 	path := filepath.Join(sessionsDir(), fmt.Sprintf("%d.json", m.PID))
 	w.mu.Lock()
 	if _, ok := w.files[path]; ok {
@@ -269,6 +272,7 @@ func (w *SessionWatcher) track(m claudeSessionMeta) {
 	w.mu.Unlock()
 
 	if ev, ok := statusToEvent(m.Status, ws.repo, ws.ses); ok {
+		ev.Initial = initial
 		w.emit(ev)
 	}
 	_ = w.fsw.Add(path)
@@ -365,7 +369,9 @@ func (w *SessionWatcher) handleStatusUpdate(path string) {
 // adoptNew handles fsnotify Create events on the sessions directory. The
 // freshly-created file may not be readable / complete yet, so the actual
 // tracking decision goes through readSessionFile which short-circuits if
-// the file isn't a valid live interactive session.
+// the file isn't a valid live interactive session. Not flagged Initial
+// because a real Create event means a freshly-spawned claude — a real
+// transition the user should be alerted to.
 func (w *SessionWatcher) adoptNew(path string) {
 	m, ok := readSessionFile(path)
 	if !ok {
@@ -374,7 +380,7 @@ func (w *SessionWatcher) adoptNew(path string) {
 	if !isInteractiveClaude(m.PID) {
 		return
 	}
-	w.track(m)
+	w.track(m, false)
 }
 
 // rediscoverLoop periodically re-scans ~/.claude/sessions/*.json in case a
@@ -387,7 +393,10 @@ func (w *SessionWatcher) rediscoverLoop() {
 	for range t.C {
 		pruneStaleSessionFiles()
 		for _, m := range listClaudeSessions() {
-			w.track(m)
+			// rediscovery picks up sessions we missed via fsnotify (rare).
+			// Treat as initial — we can't know how long the session has
+			// been in its current state, so don't fire escalation now.
+			w.track(m, true)
 		}
 	}
 }
