@@ -965,7 +965,11 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Track bell state for sessions
+	// Track bell state for sessions.
+	activeID := ""
+	if active := m.workspace.TabBar.ActiveTab(); active != nil {
+		activeID = active.ID
+	}
 	for i := range m.items {
 		item := &m.items[i]
 		flashReason := m.tabFlashing[item.repo.DirName]
@@ -978,15 +982,31 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		}
 
 		interactiveName := TmuxSessionName(item.repo.DirName, false)
-		if TmuxWindowHasBell(interactiveName) {
-			if flashReason != "bell" {
-				m.tabFlashing[item.repo.DirName] = "bell"
-				m.manager.NotifyLog.Add(item.repo.DirName, "waiting", time.Now())
-				m.workspace.TabBar.SetFlashing(item.repo.DirName, true)
+		hasBell := TmuxWindowHasBell(interactiveName)
+		isActive := item.repo.DirName == activeID
+
+		switch {
+		case !hasBell:
+			// Bell cycle ended (claude responded). Reset any bell/ack state
+			// so the next wait can flash fresh.
+			if flashReason == "bell" || flashReason == "ack" {
+				m.clearFlash(item)
 			}
-		} else if flashReason == "bell" {
-			m.clearFlash(item)
+		case isActive:
+			// Active tab is implicitly acknowledged — record "ack" so the
+			// tab stays quiet when the user switches away, until the wait
+			// cycle ends.
+			if flashReason != "ack" {
+				m.tabFlashing[item.repo.DirName] = "ack"
+				m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
+			}
+		case flashReason == "" || flashReason == "complete":
+			// Fresh bell on an inactive tab.
+			m.tabFlashing[item.repo.DirName] = "bell"
+			m.manager.NotifyLog.Add(item.repo.DirName, "waiting", time.Now())
+			m.workspace.TabBar.SetFlashing(item.repo.DirName, true)
 		}
+		// flashReason == "bell" or "ack" with hasBell true: stay as-is.
 	}
 
 	var cmds []tea.Cmd

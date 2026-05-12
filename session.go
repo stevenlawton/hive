@@ -367,12 +367,19 @@ func (m *model) clearFlash(item *repoItem) {
 	m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
 }
 
-// acknowledgeTab marks a tab as seen: clears any local flash state and also
-// acks tmux's per-window bell flag via select-window so the next tick can't
-// re-detect a bell and re-flash. Safe to call for HomeTab / BusTab IDs and for
-// IDs without a live tmux session — both paths short-circuit cleanly.
+// acknowledgeTab marks a tab as seen. A live "bell" flash demotes to "ack"
+// (sticky — suppresses re-flashing until tmux's bell flag actually clears,
+// which is the signal that the user has responded and a new wait cycle could
+// legitimately re-flash). Other flash states just clear. Best-effort
+// select-window on the underlying tmux session helps drop the bell flag, but
+// the "ack" state is what makes the suppression reliable on single-window
+// sessions where select-window is effectively a no-op.
 func (m *model) acknowledgeTab(id string) {
-	delete(m.tabFlashing, id)
+	if m.tabFlashing[id] == "bell" {
+		m.tabFlashing[id] = "ack"
+	} else {
+		delete(m.tabFlashing, id)
+	}
 	m.workspace.TabBar.SetFlashing(id, false)
 	if id == "" {
 		return
