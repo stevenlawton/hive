@@ -281,11 +281,21 @@ func (w *SessionWatcher) track(m claudeSessionMeta, initial bool) {
 // statusToEvent maps a claude session status string to the SessionEvent the
 // rest of hive consumes. Returns ok=false for statuses we don't translate
 // (e.g. transient "starting" values, or unknown future strings).
+//
+// Claude's vocabulary:
+//
+//	"waiting" — claude finished a turn and needs user input (flash!)
+//	"busy"    — actively generating / using tools
+//	"idle"    — between turns, no pending input request (e.g. user
+//	            attached then walked away; long-dormant sessions)
+//
+// "idle" is NOT "needs attention" — earlier we mistakenly mapped it to
+// "completed" which spuriously flashed tabs for sessions doing nothing.
 func statusToEvent(status, repo, ses string) (SessionEvent, bool) {
 	switch status {
-	case "idle":
+	case "waiting":
 		return SessionEvent{Repo: repo, Session: ses, Event: "completed"}, true
-	case "busy":
+	case "busy", "idle":
 		return SessionEvent{Repo: repo, Session: ses, Event: "started"}, true
 	}
 	return SessionEvent{}, false

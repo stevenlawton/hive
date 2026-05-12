@@ -13,8 +13,9 @@ func TestStatusToEvent(t *testing.T) {
 		wantOK bool
 		wantEv string
 	}{
-		{"idle", true, "completed"},
-		{"busy", true, "started"},
+		{"waiting", true, "completed"}, // claude waiting for user input → flash
+		{"busy", true, "started"},      // claude generating → clear flash
+		{"idle", true, "started"},      // claude between turns, no prompt → clear
 		{"", false, ""},
 		{"starting", false, ""},
 		{"unknown", false, ""},
@@ -53,14 +54,14 @@ func TestTrackPropagatesInitialFlag(t *testing.T) {
 		mu:    sync.Mutex{},
 	}
 
-	w.track(claudeSessionMeta{PID: 1, SessionID: "a", CWD: "/x", Kind: "interactive", Status: "idle"}, true)
+	w.track(claudeSessionMeta{PID: 1, SessionID: "a", CWD: "/x", Kind: "interactive", Status: "waiting"}, true)
 	w.track(claudeSessionMeta{PID: 2, SessionID: "b", CWD: "/y", Kind: "interactive", Status: "busy"}, false)
 
 	if len(got) != 2 {
 		t.Fatalf("expected 2 events, got %d: %+v", len(got), got)
 	}
 	if got[0].Event != "completed" || !got[0].Initial {
-		t.Errorf("bootstrap idle event: want completed+Initial, got %+v", got[0])
+		t.Errorf("bootstrap waiting event: want completed+Initial, got %+v", got[0])
 	}
 	if got[1].Event != "started" || got[1].Initial {
 		t.Errorf("fresh busy event: want started without Initial, got %+v", got[1])
