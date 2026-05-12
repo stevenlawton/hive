@@ -71,7 +71,7 @@ func (m *model) doArchive(dirName string) {
 	}
 
 	delete(m.alerts, dirName)
-	delete(m.tabFlashing, dirName)
+	m.workspace.TabBar.SetFlashing(dirName, false)
 	m.filtered = m.allIndices()
 	m.rebuildDisplayOrder()
 	if m.cursor >= len(m.displayOrder) {

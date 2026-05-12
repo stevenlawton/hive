@@ -31,22 +31,16 @@ var AttentionThresholdsHidden = []time.Duration{
 	5 * time.Minute,  // level 3: telegram/external
 }
 
-// DetectClaudeWaiting checks if a tmux session has a bell flag set.
-// Claude Code rings the terminal bell when it finishes and needs input.
-func DetectClaudeWaiting(sessionName string) bool {
-	return TmuxWindowHasBell(sessionName)
-}
-
 // CheckAttention updates attention state for a session and returns the
-// escalation action needed. `visible` indicates whether the user is
+// escalation action needed. `waiting` says whether claude is currently
+// waiting for user input (derived from the session JSONL — assistant
+// stop_reason: end_turn). `visible` indicates whether the user is
 // currently looking at the pane in question — hidden panes escalate
 // faster because the whole point of a flash is to yank attention to
 // something you can't see.
 //
 // Returns: -1=clear, 0=nothing, 1=flash tab, 2=desktop notify, 3=external notify
-func CheckAttention(state *AttentionState, sessionName string, visible bool) int {
-	waiting := DetectClaudeWaiting(sessionName)
-
+func CheckAttention(state *AttentionState, waiting, visible bool) int {
 	if !waiting {
 		if state.Notified > 0 {
 			// Was waiting, now active — clear notifications

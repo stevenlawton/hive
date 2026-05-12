@@ -25,8 +25,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := startServer(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: event server failed to start: %v\n", err)
+	if err := startSessionWatcher(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: session watcher failed to start: %v\n", err)
 	}
 
 	// Auto-wire the bus into Claude Code: hooks, CLAUDE.md section, and

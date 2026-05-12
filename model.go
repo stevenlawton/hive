@@ -69,9 +69,8 @@ type model struct {
 	width     int
 	height    int
 	err       error
-	alerts      map[string]string
-	flashing    bool
-	tabFlashing map[string]string // session tabs currently flashed (keyed by dirName, value: "bell" or "complete")
+	alerts   map[string]string
+	flashing bool
 
 	showArchived bool // toggle to show/hide archived repos
 
@@ -154,7 +153,6 @@ func newModel(cfg *Config, cfgPath string) model {
 		promote:     pr,
 		filtered:    allIndicesFor(len(items)),
 		alerts:      make(map[string]string),
-		tabFlashing: make(map[string]string),
 		manager:     ui.NewManagerView(),
 		workspace:   ui.NewWorkspaceView(),
 		chord:       NewChordHandler(500 * time.Millisecond),
@@ -858,7 +856,6 @@ func (m *model) handleSessionEvent(ev SessionEvent) tea.Cmd {
 		case "completed":
 			rs.Status = "completed"
 			if shouldNotify {
-				m.tabFlashing[item.repo.DirName] = "complete"
 				m.manager.NotifyLog.Add(item.repo.DirName, "completed", time.Now())
 				m.workspace.TabBar.SetFlashing(item.repo.DirName, true)
 			}
@@ -964,51 +961,10 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Track bell state for sessions.
-	activeID := ""
-	if active := m.workspace.TabBar.ActiveTab(); active != nil {
-		activeID = active.ID
-	}
-	for i := range m.items {
-		item := &m.items[i]
-		flashReason := m.tabFlashing[item.repo.DirName]
-
-		if item.status != statusClaude && item.status != statusTelegram {
-			if flashReason != "" {
-				m.clearFlash(item)
-			}
-			continue
-		}
-
-		interactiveName := TmuxSessionName(item.repo.DirName, false)
-		hasBell := TmuxWindowHasBell(interactiveName)
-		isActive := item.repo.DirName == activeID
-
-		switch {
-		case !hasBell:
-			// Bell cycle ended (claude responded). Reset any waiting/ack
-			// state so the next wait can flash fresh. "waiting" comes from
-			// handleAttention; its own state.Notified gets reset on the
-			// same transition by CheckAttention's level=-1 branch.
-			if flashReason == "bell" || flashReason == "ack" || flashReason == "waiting" {
-				m.clearFlash(item)
-			}
-		case isActive:
-			// Active tab is implicitly acknowledged — record "ack" so the
-			// tab stays quiet when the user switches away, until the wait
-			// cycle ends.
-			if flashReason != "ack" {
-				m.tabFlashing[item.repo.DirName] = "ack"
-				m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
-			}
-		case flashReason == "" || flashReason == "complete":
-			// Fresh bell on an inactive tab.
-			m.tabFlashing[item.repo.DirName] = "bell"
-			m.manager.NotifyLog.Add(item.repo.DirName, "waiting", time.Now())
-			m.workspace.TabBar.SetFlashing(item.repo.DirName, true)
-		}
-		// flashReason == "bell", "waiting", or "ack" with hasBell true: stay as-is.
-	}
+	// (The old tmux-bell-flag scan lived here. JSONL session events drive
+	// the flash now — handleSessionEvent flashes on "completed" and clears
+	// on "started"/"tool" — and the attention escalation below uses
+	// itemWaiting() to escalate to desktop / external notifications.)
 
 	var cmds []tea.Cmd
 	if hasNewHighSeverity {
@@ -1224,7 +1180,7 @@ func (m *model) updateCaptures() {
 					// tab's splits), so use the longer grace period.
 					for j := range m.items {
 						if m.items[j].tmuxSes == s.SessionName {
-							level := CheckAttention(&m.items[j].attention, s.SessionName, true)
+							level := CheckAttention(&m.items[j].attention, itemWaiting(&m.items[j]), true)
 							m.handleAttention(&m.items[j], level)
 							break
 						}
@@ -1266,7 +1222,7 @@ func (m *model) updateCaptures() {
 				}
 			}
 		}
-		level := CheckAttention(&item.attention, item.tmuxSes, false)
+		level := CheckAttention(&item.attention, itemWaiting(item), false)
 		m.handleAttention(item, level)
 	}
 
@@ -1297,13 +1253,13 @@ func (m *model) handleAttention(item *repoItem, level int) {
 
 	switch level {
 	case -1: // Was notified, user responded — clear flash
-		delete(m.tabFlashing, item.repo.DirName)
 		m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
 		return
 	case 0:
 		return
-	case 1: // Tab flash
-		m.tabFlashing[item.repo.DirName] = "waiting"
+	case 1: // Tab flash — already set by the "completed" session event.
+		// This case fires to gate escalation to levels 2/3 and log the wait;
+		// the flash itself doesn't need refreshing.
 		m.workspace.TabBar.SetFlashing(item.repo.DirName, true)
 		m.manager.NotifyLog.Add(label, "waiting", time.Now())
 	case 2: // Desktop notification

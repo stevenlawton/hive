@@ -359,55 +359,42 @@ func (m *model) focusSelectedTab() tea.Cmd {
 	return nil
 }
 
-// clearFlash clears any flash state for the item, in both the model map and
-// the tabbar's render flag. Both must move together — letting them diverge is
-// what made tabs stay red after acknowledgment.
+// itemWaiting reports whether claude is currently waiting for user input on
+// the given item, derived from the session-event-driven richStatus (set by
+// the JSONL watcher: "completed" = waiting, "running" = working).
+func itemWaiting(item *repoItem) bool {
+	return item.richStatus != nil && item.richStatus.Status == "completed"
+}
+
+// clearFlash clears any flash state for the item.
 func (m *model) clearFlash(item *repoItem) {
-	delete(m.tabFlashing, item.repo.DirName)
 	m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
 }
 
-// resetWaitState clears any sticky wait/ack flash and resets the attention
-// escalation counter. Called when a session event proves the previous wait
-// cycle has ended (claude is doing new work), so the next "completed" or
-// bell can flash and escalate fresh — even when tmux's bell flag stays
-// stuck on (single-window sessions never auto-clear it).
+// resetWaitState clears the flash and the attention-escalation counter.
+// Called on "started"/"tool" session events: claude is doing new work, so
+// any prior wait is over and the next "completed" should flash and
+// escalate fresh.
 func (m *model) resetWaitState(item *repoItem) {
-	switch m.tabFlashing[item.repo.DirName] {
-	case "bell", "waiting", "ack", "complete":
-		delete(m.tabFlashing, item.repo.DirName)
-		m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
-	}
+	m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
 	item.attention = AttentionState{}
 }
 
-// acknowledgeTab marks a tab as seen. A live "bell" flash demotes to "ack"
-// (sticky — suppresses re-flashing until tmux's bell flag actually clears,
-// which is the signal that the user has responded and a new wait cycle could
-// legitimately re-flash). Other flash states just clear. Best-effort
-// select-window on the underlying tmux session helps drop the bell flag, but
-// the "ack" state is what makes the suppression reliable on single-window
-// sessions where select-window is effectively a no-op.
+// acknowledgeTab marks a tab as seen: clears the visual flash and locks the
+// attention escalation counter so the still-waiting cycle won't re-flash via
+// handleAttention level 1. The lock resets when the next session event
+// ("started"/"tool") fires, marking the start of a fresh wait cycle.
 func (m *model) acknowledgeTab(id string) {
-	// Any active "still waiting" state — "bell" from the tmux-bell loop or
-	// "waiting" from the attention escalation path — demotes to "ack".
-	// "ack" itself is sticky (calling acknowledgeTab on every tick must not
-	// reset to ""). Everything else (incl. "complete") just clears.
-	switch m.tabFlashing[id] {
-	case "bell", "waiting", "ack":
-		m.tabFlashing[id] = "ack"
-	default:
-		delete(m.tabFlashing, id)
-	}
 	m.workspace.TabBar.SetFlashing(id, false)
-	if id == "" {
+	for i := range m.items {
+		if m.items[i].repo.DirName != id {
+			continue
+		}
+		// Saturate the escalation counter so CheckAttention's
+		// state.Notified < level guard suppresses every level.
+		m.items[i].attention.Notified = len(AttentionThresholdsHidden)
 		return
 	}
-	ses := TmuxSessionName(id, false)
-	if ses == "" || !TmuxHasSession(ses) {
-		return
-	}
-	tmuxRun("select-window", "-t", tmuxPaneTarget(ses))
 }
 
 func (m *model) killSelected() tea.Cmd {

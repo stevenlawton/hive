@@ -388,13 +388,6 @@ func TmuxResizePane(sessionName string, width, height int) error {
 	return tmuxRun("resize-window", "-t", tmuxPaneTarget(sessionName), "-x", fmt.Sprintf("%d", width), "-y", fmt.Sprintf("%d", height))
 }
 
-func TmuxWindowHasBell(sessionName string) bool {
-	out, err := tmuxOutput("list-windows", "-t", tmuxPaneTarget(sessionName), "-F", "#{window_bell_flag}")
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(out) == "1"
-}
 
 func TmuxRenameSession(oldName, newName string) error {
 	return tmuxRun("rename-session", "-t", tmuxTarget(oldName), newName)
