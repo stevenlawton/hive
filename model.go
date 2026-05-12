@@ -844,18 +844,17 @@ func (m *model) handleSessionEvent(ev SessionEvent) tea.Cmd {
 		case "started":
 			rs.Status = "running"
 			rs.ToolCount = 0
-			// User started new work — clear completion flash
-			if m.tabFlashing[item.repo.DirName] == "complete" {
-				delete(m.tabFlashing, item.repo.DirName)
-			}
+			// Claude is doing work again — the previous wait cycle is over.
+			// Reset any prior flash/ack and the attention-escalation counter
+			// so the next "completed" or bell can flash and notify fresh.
+			// Without this, ack stays sticky forever on single-window tmux
+			// sessions (their bell flag never gets cleared).
+			m.resetWaitState(item)
 		case "tool":
 			rs.Status = "running"
 			rs.ToolCount++
 			rs.LastTool = ev.ToolName
-			// Tool use means user responded — clear completion flash
-			if m.tabFlashing[item.repo.DirName] == "complete" {
-				delete(m.tabFlashing, item.repo.DirName)
-			}
+			m.resetWaitState(item)
 		case "completed":
 			rs.Status = "completed"
 			if shouldNotify {

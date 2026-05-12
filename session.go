@@ -367,6 +367,20 @@ func (m *model) clearFlash(item *repoItem) {
 	m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
 }
 
+// resetWaitState clears any sticky wait/ack flash and resets the attention
+// escalation counter. Called when a session event proves the previous wait
+// cycle has ended (claude is doing new work), so the next "completed" or
+// bell can flash and escalate fresh — even when tmux's bell flag stays
+// stuck on (single-window sessions never auto-clear it).
+func (m *model) resetWaitState(item *repoItem) {
+	switch m.tabFlashing[item.repo.DirName] {
+	case "bell", "waiting", "ack", "complete":
+		delete(m.tabFlashing, item.repo.DirName)
+		m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
+	}
+	item.attention = AttentionState{}
+}
+
 // acknowledgeTab marks a tab as seen. A live "bell" flash demotes to "ack"
 // (sticky — suppresses re-flashing until tmux's bell flag actually clears,
 // which is the signal that the user has responded and a new wait cycle could
