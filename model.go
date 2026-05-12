@@ -987,9 +987,11 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 
 		switch {
 		case !hasBell:
-			// Bell cycle ended (claude responded). Reset any bell/ack state
-			// so the next wait can flash fresh.
-			if flashReason == "bell" || flashReason == "ack" {
+			// Bell cycle ended (claude responded). Reset any waiting/ack
+			// state so the next wait can flash fresh. "waiting" comes from
+			// handleAttention; its own state.Notified gets reset on the
+			// same transition by CheckAttention's level=-1 branch.
+			if flashReason == "bell" || flashReason == "ack" || flashReason == "waiting" {
 				m.clearFlash(item)
 			}
 		case isActive:
@@ -1006,7 +1008,7 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 			m.manager.NotifyLog.Add(item.repo.DirName, "waiting", time.Now())
 			m.workspace.TabBar.SetFlashing(item.repo.DirName, true)
 		}
-		// flashReason == "bell" or "ack" with hasBell true: stay as-is.
+		// flashReason == "bell", "waiting", or "ack" with hasBell true: stay as-is.
 	}
 
 	var cmds []tea.Cmd

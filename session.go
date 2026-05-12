@@ -375,9 +375,14 @@ func (m *model) clearFlash(item *repoItem) {
 // the "ack" state is what makes the suppression reliable on single-window
 // sessions where select-window is effectively a no-op.
 func (m *model) acknowledgeTab(id string) {
-	if m.tabFlashing[id] == "bell" {
+	// Any active "still waiting" state — "bell" from the tmux-bell loop or
+	// "waiting" from the attention escalation path — demotes to "ack".
+	// "ack" itself is sticky (calling acknowledgeTab on every tick must not
+	// reset to ""). Everything else (incl. "complete") just clears.
+	switch m.tabFlashing[id] {
+	case "bell", "waiting", "ack":
 		m.tabFlashing[id] = "ack"
-	} else {
+	default:
 		delete(m.tabFlashing, id)
 	}
 	m.workspace.TabBar.SetFlashing(id, false)
