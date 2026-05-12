@@ -121,6 +121,23 @@ func TestDeriveEventsFromJSONL_IncrementalReads(t *testing.T) {
 	}
 }
 
+func TestEncodeProjectDir(t *testing.T) {
+	cases := []struct {
+		cwd  string
+		want string
+	}{
+		{"/home/steve/repos/workspace", "-home-steve-repos-workspace"},
+		{"/home/steve/repos/stevenlawton.com", "-home-steve-repos-stevenlawton-com"},
+		{"/home/steve/.claude/worktrees", "-home-steve--claude-worktrees"},
+		{"/home/steve/repos/stevenlawton.com/.claude/worktrees/agent-x", "-home-steve-repos-stevenlawton-com--claude-worktrees-agent-x"},
+	}
+	for _, c := range cases {
+		if got := encodeProjectDir(c.cwd); got != c.want {
+			t.Errorf("encodeProjectDir(%q) = %q, want %q", c.cwd, got, c.want)
+		}
+	}
+}
+
 func TestReadJSONLTail(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")

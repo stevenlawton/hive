@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -161,10 +160,24 @@ func readJSONLTail(path string, repo, ses string) (SessionEvent, int64, bool) {
 	return last, size, found
 }
 
+// sessionStaleness is the cutoff for treating a session as currently active.
+// If neither the session file NOR the JSONL has been touched within this
+// window, we treat the session as idle/dead and don't watch it — claude
+// updates both periodically while a session is in use.
+const sessionStaleness = 1 * time.Hour
+
+// sessionCleanupAge is the minimum file age before pruneStaleSessionFiles
+// will consider deleting a session file. Conservative — we never touch
+// young files because a session may legitimately not have written yet.
+const sessionCleanupAge = 24 * time.Hour
+
 // listClaudeSessions scans ~/.claude/sessions/*.json and returns metadata for
-// every live, human-driven interactive session. PIDs that aren't running are
-// filtered out, as are tmux remote-control sessions (claudes inside
-// hive-rc-* / kl-rc-*), which are not user-facing.
+// every live, human-driven interactive session. Filters out:
+//   - SDK --print invocations (comm is the version string, not "claude")
+//   - PIDs not currently owned by a claude process at all (PID reuse)
+//   - sessions whose JSONL is missing or hasn't been touched recently
+//     (sessionStaleness) — handles long-idle claudes whose PID happens to
+//     still be alive
 func listClaudeSessions() []claudeSessionMeta {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -180,18 +193,20 @@ func listClaudeSessions() []claudeSessionMeta {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		path := filepath.Join(dir, e.Name())
+		m, ok := readSessionFile(path)
+		if !ok {
+			continue
+		}
+		if !isInteractiveClaude(m.PID) {
+			continue
+		}
+		jsonlPath := jsonlPathFor(m.CWD, m.SessionID)
+		info, err := os.Stat(jsonlPath)
 		if err != nil {
 			continue
 		}
-		var m claudeSessionMeta
-		if err := json.Unmarshal(data, &m); err != nil {
-			continue
-		}
-		if m.Kind != "interactive" || m.PID == 0 || m.SessionID == "" {
-			continue
-		}
-		if !pidAlive(m.PID) {
+		if time.Since(info.ModTime()) > sessionStaleness {
 			continue
 		}
 		out = append(out, m)
@@ -199,19 +214,86 @@ func listClaudeSessions() []claudeSessionMeta {
 	return out
 }
 
-func pidAlive(pid int) bool {
-	p, err := os.FindProcess(pid)
+func readSessionFile(path string) (claudeSessionMeta, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return claudeSessionMeta{}, false
+	}
+	var m claudeSessionMeta
+	if err := json.Unmarshal(data, &m); err != nil {
+		return claudeSessionMeta{}, false
+	}
+	if m.Kind != "interactive" || m.PID == 0 || m.SessionID == "" {
+		return claudeSessionMeta{}, false
+	}
+	return m, true
+}
+
+// isInteractiveClaude returns true iff /proc/<pid>/comm is "claude". This
+// distinguishes the interactive CLI from the SDK --print mode (comm is the
+// version string, e.g. "2.1.139") and from PID-reuse to an unrelated
+// program. Linux-specific.
+func isInteractiveClaude(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
 	if err != nil {
 		return false
 	}
-	// On unix, signal 0 doesn't deliver but errors if the process is gone.
-	return p.Signal(syscall.Signal(0)) == nil
+	return strings.TrimSpace(string(data)) == "claude"
 }
 
-// encodeProjectDir maps a cwd to claude code's project-dir naming convention,
-// e.g. /home/steve/repos/workspace → -home-steve-repos-workspace.
+// pruneStaleSessionFiles removes ~/.claude/sessions/*.json entries that are
+// older than sessionCleanupAge AND demonstrably dead (no claude process at
+// the PID, or the referenced JSONL doesn't exist). Never deletes young
+// files — a session that started seconds ago may not have written
+// anything else yet.
+func pruneStaleSessionFiles() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(home, ".claude", "sessions")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if time.Since(info.ModTime()) < sessionCleanupAge {
+			continue
+		}
+		// Old enough to consider deleting. Decide based on what we can
+		// learn about the session it describes.
+		m, ok := readSessionFile(path)
+		if !ok {
+			// Unparseable old file — safe to drop.
+			_ = os.Remove(path)
+			continue
+		}
+		alive := isInteractiveClaude(m.PID)
+		_, jsonlErr := os.Stat(jsonlPathFor(m.CWD, m.SessionID))
+		jsonlExists := jsonlErr == nil
+		if !alive || !jsonlExists {
+			_ = os.Remove(path)
+		}
+	}
+}
+
+// encodeProjectDir maps a cwd to claude code's project-dir naming convention.
+// Both '/' and '.' become '-', e.g. /home/steve/repos/stevenlawton.com →
+// -home-steve-repos-stevenlawton-com, and /home/steve/.claude/worktrees →
+// -home-steve--claude-worktrees (slash+dot collapses to two dashes).
 func encodeProjectDir(cwd string) string {
-	return strings.ReplaceAll(cwd, "/", "-")
+	return strings.NewReplacer("/", "-", ".", "-").Replace(cwd)
 }
 
 // jsonlPathFor returns the JSONL path claude code writes for a given cwd +
@@ -269,8 +351,10 @@ func startSessionWatcher() error {
 }
 
 // bootstrap discovers existing live sessions, reads each JSONL's tail to seed
-// initial state into the event channel, and registers watches.
+// initial state into the event channel, and registers watches. Also prunes
+// long-stale session files so the discovery set stays bounded.
 func (w *SessionWatcher) bootstrap() error {
+	pruneStaleSessionFiles()
 	for _, m := range listClaudeSessions() {
 		w.track(m)
 	}
@@ -400,11 +484,13 @@ func (w *SessionWatcher) adoptNewFile(path string) {
 // rediscoverLoop periodically re-scans ~/.claude/sessions/*.json in case a
 // new session was created without a Write/Create event reaching the watcher
 // (e.g. fsnotify queue overflow, or a session created before the parent
-// project dir existed). Cheap — just stat + json parse a few small files.
+// project dir existed). Also runs the stale-file pruner so cleanup keeps
+// happening for long-running hive sessions.
 func (w *SessionWatcher) rediscoverLoop() {
-	t := time.NewTicker(30 * time.Second)
+	t := time.NewTicker(5 * time.Minute)
 	defer t.Stop()
 	for range t.C {
+		pruneStaleSessionFiles()
 		for _, m := range listClaudeSessions() {
 			w.track(m)
 		}
