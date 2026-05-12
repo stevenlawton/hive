@@ -315,10 +315,25 @@ func (w *SessionWatcher) handleFSEvent(ev fsnotify.Event) {
 		return
 	}
 	if ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+		// Two scenarios here:
+		//  (a) Atomic rename-replace: claude rewrote the file via tmp+mv,
+		//      so the path still exists with a new inode and our per-file
+		//      inotify watch (on the old, now-deleted inode) has gone
+		//      silent. Re-arm and process as a status write.
+		//  (b) Real session end: the file is gone, claude exited.
+		if _, err := os.Stat(ev.Name); err == nil {
+			_ = w.fsw.Add(ev.Name)
+			w.handleStatusUpdate(ev.Name)
+			return
+		}
 		w.mu.Lock()
+		ws, ok := w.files[ev.Name]
 		delete(w.files, ev.Name)
 		w.mu.Unlock()
 		_ = w.fsw.Remove(ev.Name)
+		if ok {
+			w.emit(SessionEvent{Repo: ws.repo, Session: ws.ses, Event: "ended"})
+		}
 	}
 }
 

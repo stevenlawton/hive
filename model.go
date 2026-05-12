@@ -862,6 +862,9 @@ func (m *model) handleSessionEvent(ev SessionEvent) tea.Cmd {
 		case "ended":
 			rs.Status = "ended"
 			m.manager.NotifyLog.Add(item.repo.DirName, "ended", time.Now())
+			// Claude exited — drop any lingering wait-flash so the tab
+			// doesn't stay red for a session that no longer exists.
+			m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
 		}
 		return nil
 	}
