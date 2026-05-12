@@ -14,8 +14,8 @@ func TestStatusToEvent(t *testing.T) {
 		wantEv string
 	}{
 		{"waiting", true, "completed"}, // claude waiting for user input → flash
+		{"idle", true, "completed"},    // also "needs user input"; claude uses both
 		{"busy", true, "started"},      // claude generating → clear flash
-		{"idle", true, "started"},      // claude between turns, no prompt → clear
 		{"", false, ""},
 		{"starting", false, ""},
 		{"unknown", false, ""},
