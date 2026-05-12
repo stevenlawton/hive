@@ -37,37 +37,19 @@ func DetectDeadRemotes(items []repoItem, liveSessions map[string]bool) map[strin
 	return alerts
 }
 
-// NotifySessionEvent dispatches notifications for a session event based on config.
-// Returns true if the tab should flash.
+// NotifySessionEvent reports whether a session event should set the tab flash.
+// Pure predicate — the actual desktop / sound / ntfy / slack / webhook
+// notifications are driven by handleAttention's escalation levels (which have
+// proper visibility-aware timing), so this function intentionally has no side
+// effects. Letting both paths fire was the spam source: the JSONL watcher
+// emits one "completed" per assistant content block (thinking, then text),
+// so a single claude turn produced multiple back-to-back notifications.
 func NotifySessionEvent(cfg *NotificationConfig, ev SessionEvent) bool {
-	// Only notify on meaningful events
 	switch ev.Event {
 	case "completed", "ended":
-		// Always notify
-	default:
-		return false
+		return cfg.TabFlash
 	}
-
-	title := fmt.Sprintf("Hive: %s", ev.Repo)
-	message := fmt.Sprintf("Claude session %s", ev.Event)
-
-	if cfg.Sound {
-		go playSound(cfg.SoundPath)
-	}
-	if cfg.Desktop {
-		go sendDesktopNotification(title, message)
-	}
-	if cfg.WebhookURL != "" {
-		go sendWebhook(cfg.WebhookURL, ev)
-	}
-	if cfg.NtfyTopic != "" {
-		go sendNtfy(cfg.NtfyTopic, title, message)
-	}
-	if cfg.SlackWebhook != "" {
-		go sendSlack(cfg.SlackWebhook, title, message)
-	}
-
-	return cfg.TabFlash
+	return false
 }
 
 func playSound(soundPath string) {

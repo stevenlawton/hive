@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,155 +13,24 @@ import (
 )
 
 // claudeSessionMeta is the on-disk schema in ~/.claude/sessions/*.json.
-// Only the fields we use are listed.
+// Only the fields we read are listed. The "status" field is the authoritative
+// signal claude code writes for its current state:
+//
+//	"busy"  — claude is generating / using tools
+//	"idle"  — claude is waiting for user input
+//	""      — not an interactive session (e.g. SDK --print invocation)
 type claudeSessionMeta struct {
 	PID       int    `json:"pid"`
 	SessionID string `json:"sessionId"`
 	CWD       string `json:"cwd"`
-	Kind      string `json:"kind"` // "interactive" for human-driven sessions
-}
-
-// jsonlEvent is a single line in a session JSONL. Only the fields we need.
-type jsonlEvent struct {
-	Type    string `json:"type"`
-	Message *struct {
-		StopReason string `json:"stop_reason"`
-		Content    []struct {
-			Type string `json:"type"`
-			Name string `json:"name"`
-		} `json:"content"`
-	} `json:"message,omitempty"`
-}
-
-// deriveEventsFromJSONL reads new content from offset to EOF, parses JSON
-// lines, and returns the SessionEvents that should be emitted plus the new
-// byte offset. Lines that don't map to a recognised state are skipped.
-// Truncated files are restarted from offset 0.
-func deriveEventsFromJSONL(path string, offset int64, repo, ses string) ([]SessionEvent, int64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, offset, err
-	}
-	defer f.Close()
-
-	info, err := f.Stat()
-	if err != nil {
-		return nil, offset, err
-	}
-	if info.Size() < offset {
-		offset = 0
-	}
-	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return nil, offset, err
-	}
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
-
-	var events []SessionEvent
-	var consumed int64
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		consumed += int64(len(line)) + 1 // +1 for the stripped newline
-		if ev, ok := parseJSONLLine(line, repo, ses); ok {
-			events = append(events, ev)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return events, offset, err
-	}
-	return events, offset + consumed, nil
-}
-
-// parseJSONLLine maps one JSONL line to a SessionEvent. Returns ok=false for
-// metadata entries (last-prompt, attachment, queue-operation, etc.) and
-// anything that isn't a state-bearing message.
-func parseJSONLLine(line []byte, repo, ses string) (SessionEvent, bool) {
-	var ev jsonlEvent
-	if err := json.Unmarshal(line, &ev); err != nil {
-		return SessionEvent{}, false
-	}
-	out := SessionEvent{Repo: repo, Session: ses}
-	switch ev.Type {
-	case "assistant":
-		if ev.Message == nil {
-			return SessionEvent{}, false
-		}
-		switch ev.Message.StopReason {
-		case "end_turn":
-			out.Event = "completed"
-			return out, true
-		case "tool_use":
-			out.Event = "tool"
-			for _, c := range ev.Message.Content {
-				if c.Type == "tool_use" {
-					out.ToolName = c.Name
-					break
-				}
-			}
-			return out, true
-		}
-	case "user":
-		// Both real user prompts and wrapped tool_result responses arrive
-		// as "user" entries; both mean claude is about to do work, which
-		// resets the wait state — handleSessionEvent treats started/tool
-		// the same way downstream.
-		out.Event = "started"
-		return out, true
-	}
-	return SessionEvent{}, false
-}
-
-// readJSONLTail returns the most recent state-bearing SessionEvent in a file
-// by reading the last tailBytes bytes and scanning forward through whole
-// lines. Used at watcher startup to bootstrap initial state from existing
-// JSONLs without replaying the entire history into the event channel.
-// Returns ok=false when no recognisable event was found in the tail window.
-func readJSONLTail(path string, repo, ses string) (SessionEvent, int64, bool) {
-	const tailBytes = 32 * 1024
-
-	f, err := os.Open(path)
-	if err != nil {
-		return SessionEvent{}, 0, false
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return SessionEvent{}, 0, false
-	}
-	size := info.Size()
-	start := size - tailBytes
-	if start < 0 {
-		start = 0
-	}
-	if _, err := f.Seek(start, io.SeekStart); err != nil {
-		return SessionEvent{}, size, false
-	}
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
-
-	// Skip the (probably partial) first line when we didn't start at 0.
-	first := start > 0
-	var last SessionEvent
-	var found bool
-	for scanner.Scan() {
-		if first {
-			first = false
-			continue
-		}
-		line := scanner.Bytes()
-		if ev, ok := parseJSONLLine(line, repo, ses); ok {
-			last = ev
-			found = true
-		}
-	}
-	return last, size, found
+	Kind      string `json:"kind"`   // "interactive" for human-driven sessions
+	Status    string `json:"status"` // "busy", "idle", "" (missing for non-interactive)
 }
 
 // sessionStaleness is the cutoff for treating a session as currently active.
-// If neither the session file NOR the JSONL has been touched within this
-// window, we treat the session as idle/dead and don't watch it — claude
-// updates both periodically while a session is in use.
+// If the session file hasn't been touched within this window the session is
+// presumed idle/dead and skipped — claude updates the file's mtime
+// periodically while a session is in use.
 const sessionStaleness = 1 * time.Hour
 
 // sessionCleanupAge is the minimum file age before pruneStaleSessionFiles
@@ -171,13 +38,13 @@ const sessionStaleness = 1 * time.Hour
 // young files because a session may legitimately not have written yet.
 const sessionCleanupAge = 24 * time.Hour
 
-// listClaudeSessions scans ~/.claude/sessions/*.json and returns metadata for
-// every live, human-driven interactive session. Filters out:
-//   - SDK --print invocations (comm is the version string, not "claude")
-//   - PIDs not currently owned by a claude process at all (PID reuse)
-//   - sessions whose JSONL is missing or hasn't been touched recently
-//     (sessionStaleness) — handles long-idle claudes whose PID happens to
-//     still be alive
+// listClaudeSessions returns metadata for every live human-driven interactive
+// claude session, filtered to:
+//   - kind == "interactive" AND a non-empty status (SDK --print invocations
+//     have kind="interactive" but no status, which uniquely identifies them)
+//   - /proc/<pid>/comm == "claude" (catches PID reuse to an unrelated program
+//     and rejects SDK invocations whose comm is the version string)
+//   - session file mtime within sessionStaleness
 func listClaudeSessions() []claudeSessionMeta {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -194,6 +61,13 @@ func listClaudeSessions() []claudeSessionMeta {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if time.Since(info.ModTime()) > sessionStaleness {
+			continue
+		}
 		m, ok := readSessionFile(path)
 		if !ok {
 			continue
@@ -201,19 +75,14 @@ func listClaudeSessions() []claudeSessionMeta {
 		if !isInteractiveClaude(m.PID) {
 			continue
 		}
-		jsonlPath := jsonlPathFor(m.CWD, m.SessionID)
-		info, err := os.Stat(jsonlPath)
-		if err != nil {
-			continue
-		}
-		if time.Since(info.ModTime()) > sessionStaleness {
-			continue
-		}
 		out = append(out, m)
 	}
 	return out
 }
 
+// readSessionFile parses one ~/.claude/sessions/<pid>.json. Returns ok=false
+// when the file isn't a valid live interactive-session record (missing
+// required fields, or no status — i.e. an SDK invocation).
 func readSessionFile(path string) (claudeSessionMeta, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -224,6 +93,12 @@ func readSessionFile(path string) (claudeSessionMeta, bool) {
 		return claudeSessionMeta{}, false
 	}
 	if m.Kind != "interactive" || m.PID == 0 || m.SessionID == "" {
+		return claudeSessionMeta{}, false
+	}
+	// SDK --print invocations have kind="interactive" but never publish a
+	// status. Filter them here so the watcher only tracks real human-driven
+	// sessions.
+	if m.Status == "" {
 		return claudeSessionMeta{}, false
 	}
 	return m, true
@@ -271,11 +146,9 @@ func pruneStaleSessionFiles() {
 		if time.Since(info.ModTime()) < sessionCleanupAge {
 			continue
 		}
-		// Old enough to consider deleting. Decide based on what we can
-		// learn about the session it describes.
 		m, ok := readSessionFile(path)
 		if !ok {
-			// Unparseable old file — safe to drop.
+			// Unparseable or non-interactive old file — safe to drop.
 			_ = os.Remove(path)
 			continue
 		}
@@ -297,7 +170,8 @@ func encodeProjectDir(cwd string) string {
 }
 
 // jsonlPathFor returns the JSONL path claude code writes for a given cwd +
-// session id.
+// session id. Used by pruneStaleSessionFiles to verify a session file points
+// to a real on-disk conversation.
 func jsonlPathFor(cwd, sessionID string) string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".claude", "projects", encodeProjectDir(cwd), sessionID+".jsonl")
@@ -310,25 +184,31 @@ func repoFromCWD(cwd string) string {
 	return filepath.Base(strings.TrimRight(cwd, "/"))
 }
 
-// SessionWatcher uses fsnotify to stream JSONL appends from every live claude
-// session into the shared eventChan as SessionEvent values. It watches each
-// JSONL for Write events and each parent project dir for Create events so
-// new sessions are picked up without a restart. Per-file byte offsets keep
-// re-reads cheap.
+// SessionWatcher tracks claude's per-PID session JSON files in
+// ~/.claude/sessions/. Each file carries a `status` field — "busy" or "idle"
+// — that claude updates as it transitions between working and waiting for
+// user input. We watch the directory for Create events (new sessions) and
+// each session file for Write events (status changes), and emit
+// SessionEvents on busy↔idle transitions:
+//
+//	idle    → "completed" (claude finished a turn, waiting for user)
+//	busy    → "started"   (claude is generating again)
+//
+// Per-file last-status is cached so duplicate writes with the same status
+// don't produce duplicate events.
 type SessionWatcher struct {
-	fsw     *fsnotify.Watcher
-	emit    func(SessionEvent)
-	mu      sync.Mutex
-	files   map[string]*watchedFile // jsonl path → state
-	repoDir map[string]bool         // project dirs currently watched
+	fsw   *fsnotify.Watcher
+	emit  func(SessionEvent)
+	mu    sync.Mutex
+	files map[string]*watchedSession // session file path → state
 }
 
-type watchedFile struct {
-	cwd       string
-	sessionID string
-	repo      string
-	ses       string // tmux session name, e.g. hive-workspace
-	offset    int64
+type watchedSession struct {
+	cwd        string
+	sessionID  string
+	repo       string
+	ses        string // tmux session name, e.g. hive-workspace
+	lastStatus string
 }
 
 func startSessionWatcher() error {
@@ -337,10 +217,9 @@ func startSessionWatcher() error {
 		return fmt.Errorf("fsnotify watcher: %w", err)
 	}
 	w := &SessionWatcher{
-		fsw:     fsw,
-		emit:    func(ev SessionEvent) { initEventChan() <- ev },
-		files:   make(map[string]*watchedFile),
-		repoDir: make(map[string]bool),
+		fsw:   fsw,
+		emit:  func(ev SessionEvent) { initEventChan() <- ev },
+		files: make(map[string]*watchedSession),
 	}
 	if err := w.bootstrap(); err != nil {
 		return err
@@ -350,57 +229,62 @@ func startSessionWatcher() error {
 	return nil
 }
 
-// bootstrap discovers existing live sessions, reads each JSONL's tail to seed
-// initial state into the event channel, and registers watches. Also prunes
-// long-stale session files so the discovery set stays bounded.
+// sessionsDir returns ~/.claude/sessions.
+func sessionsDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude", "sessions")
+}
+
+// bootstrap prunes stale entries, then registers a directory watch on
+// ~/.claude/sessions and a per-file watch for every currently-live session,
+// seeding initial state from each session's current status field.
 func (w *SessionWatcher) bootstrap() error {
 	pruneStaleSessionFiles()
+	_ = w.fsw.Add(sessionsDir())
 	for _, m := range listClaudeSessions() {
 		w.track(m)
 	}
 	return nil
 }
 
+// track adds a per-file watch for one session file and emits the initial
+// event reflecting its current status. Idempotent: already-tracked files
+// short-circuit.
 func (w *SessionWatcher) track(m claudeSessionMeta) {
-	path := jsonlPathFor(m.CWD, m.SessionID)
+	path := filepath.Join(sessionsDir(), fmt.Sprintf("%d.json", m.PID))
 	w.mu.Lock()
 	if _, ok := w.files[path]; ok {
 		w.mu.Unlock()
 		return
 	}
 	repo := repoFromCWD(m.CWD)
-	ses := TmuxSessionName(repo, false)
-	wf := &watchedFile{
-		cwd:       m.CWD,
-		sessionID: m.SessionID,
-		repo:      repo,
-		ses:       ses,
+	ws := &watchedSession{
+		cwd:        m.CWD,
+		sessionID:  m.SessionID,
+		repo:       repo,
+		ses:        TmuxSessionName(repo, false),
+		lastStatus: m.Status,
 	}
-	w.files[path] = wf
-
-	projectDir := filepath.Dir(path)
-	addProjectDir := !w.repoDir[projectDir]
-	if addProjectDir {
-		w.repoDir[projectDir] = true
-	}
+	w.files[path] = ws
 	w.mu.Unlock()
 
-	// Seed initial state from the existing tail so the UI doesn't wait for
-	// the next claude write to know whether this session is currently
-	// waiting or working.
-	if ev, offset, ok := readJSONLTail(path, repo, ses); ok {
-		wf.offset = offset
+	if ev, ok := statusToEvent(m.Status, ws.repo, ws.ses); ok {
 		w.emit(ev)
-	} else {
-		if info, err := os.Stat(path); err == nil {
-			wf.offset = info.Size()
-		}
-	}
-
-	if addProjectDir {
-		_ = w.fsw.Add(projectDir)
 	}
 	_ = w.fsw.Add(path)
+}
+
+// statusToEvent maps a claude session status string to the SessionEvent the
+// rest of hive consumes. Returns ok=false for statuses we don't translate
+// (e.g. transient "starting" values, or unknown future strings).
+func statusToEvent(status, repo, ses string) (SessionEvent, bool) {
+	switch status {
+	case "idle":
+		return SessionEvent{Repo: repo, Session: ses, Event: "completed"}, true
+	case "busy":
+		return SessionEvent{Repo: repo, Session: ses, Event: "started"}, true
+	}
+	return SessionEvent{}, false
 }
 
 func (w *SessionWatcher) run() {
@@ -421,14 +305,13 @@ func (w *SessionWatcher) run() {
 }
 
 func (w *SessionWatcher) handleFSEvent(ev fsnotify.Event) {
-	// File-level writes (most common): drain new content.
-	if ev.Op&fsnotify.Write != 0 {
-		w.drain(ev.Name)
+	// New file in ~/.claude/sessions: a session may have just started.
+	if ev.Op&fsnotify.Create != 0 && strings.HasSuffix(ev.Name, ".json") {
+		w.adoptNew(ev.Name)
 		return
 	}
-	// New file in a project dir: a fresh session has started.
-	if ev.Op&fsnotify.Create != 0 && strings.HasSuffix(ev.Name, ".jsonl") {
-		w.adoptNewFile(ev.Name)
+	if ev.Op&fsnotify.Write != 0 {
+		w.handleStatusUpdate(ev.Name)
 		return
 	}
 	if ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
@@ -439,53 +322,50 @@ func (w *SessionWatcher) handleFSEvent(ev fsnotify.Event) {
 	}
 }
 
-// drain reads new content appended to a watched JSONL since the last offset
-// and emits any SessionEvents.
-func (w *SessionWatcher) drain(path string) {
+// handleStatusUpdate is called when a watched session file is rewritten.
+// Re-parse it, compare the status to what we last saw, and emit on
+// transitions. Writes that don't change status produce no event.
+func (w *SessionWatcher) handleStatusUpdate(path string) {
 	w.mu.Lock()
-	wf, ok := w.files[path]
+	ws, ok := w.files[path]
 	w.mu.Unlock()
 	if !ok {
 		return
 	}
-	events, newOffset, err := deriveEventsFromJSONL(path, wf.offset, wf.repo, wf.ses)
-	if err != nil && !os.IsNotExist(err) {
+	m, ok := readSessionFile(path)
+	if !ok {
+		return
+	}
+	if m.Status == ws.lastStatus {
 		return
 	}
 	w.mu.Lock()
-	wf.offset = newOffset
+	ws.lastStatus = m.Status
 	w.mu.Unlock()
-	for _, ev := range events {
+	if ev, ok := statusToEvent(m.Status, ws.repo, ws.ses); ok {
 		w.emit(ev)
 	}
 }
 
-// adoptNewFile is called when a project dir gains a new JSONL — typically a
-// freshly-started claude session. We resolve the cwd from the parent dir,
-// match it against ~/.claude/sessions/*.json to confirm liveness, and start
-// tracking.
-func (w *SessionWatcher) adoptNewFile(path string) {
-	parent := filepath.Dir(path)
-	// Decode the project dir back into a cwd path. The encoding strips
-	// leading slash and replaces / with -, so decoding requires the original
-	// path — we cross-check against listClaudeSessions().
-	for _, m := range listClaudeSessions() {
-		if filepath.Dir(jsonlPathFor(m.CWD, m.SessionID)) != parent {
-			continue
-		}
-		if jsonlPathFor(m.CWD, m.SessionID) != path {
-			continue
-		}
-		w.track(m)
+// adoptNew handles fsnotify Create events on the sessions directory. The
+// freshly-created file may not be readable / complete yet, so the actual
+// tracking decision goes through readSessionFile which short-circuits if
+// the file isn't a valid live interactive session.
+func (w *SessionWatcher) adoptNew(path string) {
+	m, ok := readSessionFile(path)
+	if !ok {
 		return
 	}
+	if !isInteractiveClaude(m.PID) {
+		return
+	}
+	w.track(m)
 }
 
 // rediscoverLoop periodically re-scans ~/.claude/sessions/*.json in case a
-// new session was created without a Write/Create event reaching the watcher
-// (e.g. fsnotify queue overflow, or a session created before the parent
-// project dir existed). Also runs the stale-file pruner so cleanup keeps
-// happening for long-running hive sessions.
+// new session was created without a fsnotify event reaching us, and runs
+// the stale-file pruner so cleanup keeps happening for long-running hive
+// sessions.
 func (w *SessionWatcher) rediscoverLoop() {
 	t := time.NewTicker(5 * time.Minute)
 	defer t.Stop()
@@ -496,4 +376,3 @@ func (w *SessionWatcher) rediscoverLoop() {
 		}
 	}
 }
-
