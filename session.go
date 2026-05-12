@@ -359,12 +359,29 @@ func (m *model) focusSelectedTab() tea.Cmd {
 	return nil
 }
 
-// clearFlash clears any flash state for the item.
+// clearFlash clears any flash state for the item, in both the model map and
+// the tabbar's render flag. Both must move together — letting them diverge is
+// what made tabs stay red after acknowledgment.
 func (m *model) clearFlash(item *repoItem) {
-	if m.tabFlashing[item.repo.DirName] == "" {
+	delete(m.tabFlashing, item.repo.DirName)
+	m.workspace.TabBar.SetFlashing(item.repo.DirName, false)
+}
+
+// acknowledgeTab marks a tab as seen: clears any local flash state and also
+// acks tmux's per-window bell flag via select-window so the next tick can't
+// re-detect a bell and re-flash. Safe to call for HomeTab / BusTab IDs and for
+// IDs without a live tmux session — both paths short-circuit cleanly.
+func (m *model) acknowledgeTab(id string) {
+	delete(m.tabFlashing, id)
+	m.workspace.TabBar.SetFlashing(id, false)
+	if id == "" {
 		return
 	}
-	delete(m.tabFlashing, item.repo.DirName)
+	ses := TmuxSessionName(id, false)
+	if ses == "" || !TmuxHasSession(ses) {
+		return
+	}
+	tmuxRun("select-window", "-t", tmuxPaneTarget(ses))
 }
 
 func (m *model) killSelected() tea.Cmd {

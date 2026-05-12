@@ -452,7 +452,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, waitForEvent()) // listen for next event
 	case tabClickMsg:
 		if msg.index >= 0 && msg.index < len(m.workspace.TabBar.Tabs) {
+			id := m.workspace.TabBar.Tabs[msg.index].ID
 			m.workspace.TabBar.ActiveIdx = msg.index
+			m.acknowledgeTab(id)
 			m.syncModeFromActiveTab()
 		}
 		return m, nil
@@ -871,6 +873,13 @@ func (m *model) handleSessionEvent(ev SessionEvent) tea.Cmd {
 }
 
 func (m model) handleTick() (tea.Model, tea.Cmd) {
+	// The active tab is implicitly acknowledged — clear its flash before
+	// the bell-detection loop runs, otherwise keyboard/chord tab nav would
+	// leave a tab red until the user clicked it.
+	if active := m.workspace.TabBar.ActiveTab(); active != nil {
+		m.acknowledgeTab(active.ID)
+	}
+
 	sessions, err := TmuxListSessions()
 	if err != nil {
 		return m, healthTick()
