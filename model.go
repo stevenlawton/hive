@@ -51,6 +51,18 @@ type repoItem struct {
 	bridgeEntry *BridgeEntry   // from bridge-sessions.json (nil if not bridged)
 	diffStats   string         // "+42/-13" or ""
 	attention   AttentionState // notification escalation tracking
+
+	// isTGSession marks a synthetic row that represents a TG-driven claude
+	// session in the bridge registry, decoupled from the repo's interactive
+	// tmux session. The same repo can appear twice in m.items: once as the
+	// regular repo row, once as a TG session row. Synthetic rows are rebuilt
+	// from the bridge registry on every health tick.
+	isTGSession bool
+	// bridgeKey is the bridge-registry key for a synthetic TG row. May
+	// differ from repo.DirName when the repo is a collection child (DirName
+	// "manuscripts/manuscript") and the bot wrote a bare key ("manuscript").
+	// The driver flip-back on pickup must use this key, not repo.DirName.
+	bridgeKey string
 }
 
 type model struct {
@@ -210,6 +222,16 @@ func (m *model) allIndices() []int {
 // rebuildDisplayOrder groups filtered items into active > favourites > rest
 // Children stay with their parent collection regardless of section
 func (m *model) rebuildDisplayOrder() {
+	// Track repos that have a synthetic TG-session peer row. Real rows
+	// belonging to such repos promote to "active" so they sit next to
+	// their synth peer instead of being banished to the rest section.
+	hasTGPeer := make(map[string]bool)
+	for _, idx := range m.filtered {
+		item := m.items[idx]
+		if item.isTGSession {
+			hasTGPeer[item.repo.DirName] = true
+		}
+	}
 	// First, figure out which section each parent belongs to
 	// A parent promotes to "active" if it or any child has an active session
 	parentSection := make(map[string]int) // 0=active, 1=fav, 2=rest
@@ -220,7 +242,8 @@ func (m *model) rebuildDisplayOrder() {
 		}
 		hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
 			item.status == statusTelegram ||
-			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
+			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false))) ||
+			hasTGPeer[item.repo.DirName]
 		switch {
 		case hasInteractiveTab:
 			parentSection[item.repo.DirName] = 0
@@ -244,7 +267,8 @@ func (m *model) rebuildDisplayOrder() {
 		// Active children break out of their parent's section
 		hasInteractiveTab := item.status == statusClaude || item.status == statusShell ||
 			item.status == statusTelegram ||
-			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false)))
+			(item.status == statusRemote && TmuxHasSession(TmuxSessionName(item.repo.DirName, false))) ||
+			hasTGPeer[item.repo.DirName]
 
 		if hasInteractiveTab {
 			active = append(active, idx)
@@ -934,27 +958,72 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Read bridge registry and mark telegram-driven sessions. Prune any
+	// Read bridge registry and produce a row per TG-driven session. Prune any
 	// entries with no session_id along the way — those are dead and the
 	// UI must not surface them as pick-up-able.
+	//
+	// Every entry with driver=="telegram" and a non-empty session_id becomes
+	// its own synthetic repoItem (isTGSession=true). The matching real repo
+	// row is left alone — its status reflects only the interactive tmux pane.
+	// This way a repo with both an interactive claude session and a TG-driven
+	// session appears as two rows, each independently selectable and pickupable.
+	//
+	// Synthetic items are rebuilt from scratch every tick: strip the old ones
+	// first, then append fresh ones from the current registry. Cheap and
+	// keeps the items list in sync with bridge state without per-entry diffing.
 	bridge := PruneStaleBridgeEntries()
-	for i := range m.items {
-		item := &m.items[i]
-		dirName := item.repo.DirName
-		if entry, ok := bridge[dirName]; ok && entry.Driver == "telegram" {
-			item.bridgeEntry = &entry
-			// Only show as telegram if not already running interactively
-			if item.status == statusNone || item.status == statusShell {
-				item.status = statusTelegram
-				item.tmuxSes = TmuxSessionName(dirName, false)
-			}
-		} else {
-			// Clear stale bridge entries
-			if item.status == statusTelegram {
-				item.status = statusNone
-			}
-			item.bridgeEntry = nil
+	m.items = stripTGSessionItems(m.items)
+	repoByKey := indexReposByKey(m.items)
+	var synth []repoItem
+	// Track which repos already have a synth row so we don't double-emit
+	// (a repo could have both a bridge entry AND a live pickup tmux pane).
+	covered := make(map[string]bool)
+	for key, entry := range bridge {
+		if entry.Driver != "telegram" || entry.SessionID == "" {
+			continue
 		}
+		parent := resolveBridgeRepo(repoByKey, key, entry)
+		if parent == nil {
+			continue // bridge entry points at a repo we don't know about
+		}
+		entryCopy := entry
+		synth = append(synth, repoItem{
+			repo:        *parent,
+			status:      statusTelegram,
+			tmuxSes:     TmuxSessionName(parent.DirName, true), // hive-rc-<dir>
+			bridgeEntry: &entryCopy,
+			isTGSession: true,
+			bridgeKey:   key,
+		})
+		covered[parent.DirName] = true
+	}
+	// Picked-up TG sessions live in tmux as hive-tg-<sanitized-dir>. They
+	// have no bridge registry entry (driver flipped to "desktop" on pickup)
+	// but should still appear as their own row so the user can switch to
+	// them, drop them, etc. Treat them like the bridge synth rows but
+	// without a session_id (no need — there's only one pickup per repo).
+	for _, s := range sessions {
+		dirName, ok := repoForPickupSession(s.Name, repoByKey)
+		if !ok || covered[dirName] {
+			continue
+		}
+		parent := repoByKey[dirName]
+		synth = append(synth, repoItem{
+			repo:        *parent,
+			status:      statusTelegram,
+			tmuxSes:     s.Name,
+			isTGSession: true,
+		})
+	}
+	// Interleave synth rows directly after their parent repo so the manager
+	// shows them as adjacent peers (inline-alphabetical) rather than all
+	// clumped at the bottom.
+	m.items = interleaveSynthRows(m.items, synth)
+	// Filter/displayOrder needs rebuilding because items length changed.
+	m.filtered = m.allIndices()
+	m.rebuildDisplayOrder()
+	if m.cursor >= len(m.displayOrder) {
+		m.cursor = max(0, len(m.displayOrder)-1)
 	}
 
 	// Update tab titles from tmux pane titles (interactive sessions only)
@@ -1146,6 +1215,21 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg {
 				ui.AttachSession(sesName)
 				return reconnectMsg{} // return to workspace after detach
+			}
+		}
+	case ChordRefresh:
+		// Resize-kick the focused pane: shrink by 1 col then restore, forcing
+		// the inner TUI to handle two SIGWINCH events and (in practice) do a
+		// full repaint, which overwrites stale cells left by partial repaints.
+		// Workaround for upstream rendering bugs in the embedded process —
+		// see project_hive_screen_garbling.md.
+		if tab := m.workspace.ActiveTab(); tab != nil {
+			if split := tab.SplitPane.FocusedSplit(); split != nil && split.SessionName != "" {
+				w, h := split.Terminal.InnerWidth(), split.Terminal.InnerHeight()
+				if w > 1 && h > 0 {
+					TmuxResizePane(split.SessionName, w-1, h)
+					TmuxResizePane(split.SessionName, w, h)
+				}
 			}
 		}
 	}
@@ -1442,7 +1526,7 @@ func (m model) renderWorkspaceStatusBar() string {
 		} else if splitCount > 1 {
 			keys = append(keys, "x:close")
 		}
-		keys = append(keys, "f:fullscreen")
+		keys = append(keys, "f:fullscreen", "r:refresh")
 		status = strings.Join(keys, "  ")
 	} else {
 		// Stage 1: normal — show hint to start chord

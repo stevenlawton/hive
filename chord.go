@@ -21,6 +21,7 @@ const (
 	ChordWorktree
 	ChordDetachSplit
 	ChordScrollMode
+	ChordRefresh
 )
 
 // ChordHandler manages the Ctrl+Space chord prefix state.
@@ -88,6 +89,8 @@ func (c *ChordHandler) Complete(key string) (ChordAction, bool) {
 		return ChordWorktree, true
 	case "d":
 		return ChordDetachSplit, true
+	case "r":
+		return ChordRefresh, true
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		c.TabIndex = int(key[0] - '0')
 		return ChordJumpTab, true

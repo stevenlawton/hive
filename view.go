@@ -266,6 +266,11 @@ func (m model) viewList() (string, listLayout) {
 	if m.mode == viewPromote {
 		reserved++
 	}
+	if m.mode == viewWorktree {
+		// Inline worktree form takes ~5 lines above the list:
+		// header + 2 input fields + yolo toggle + help line.
+		reserved += 5
+	}
 	if len(lines) > (m.height - reserved - 1) {
 		reserved++ // scroll indicator
 	}
@@ -515,8 +520,24 @@ func (m model) renderItem(vi viewItem) string {
 		cursor = indent + cursorStyle.Render("> ")
 	}
 
-	name := vi.item.repo.Name
-	if vi.item.repo.IsArchived {
+	// Prefix the visible name with a surface emoji so it's identifiable
+	// even in narrow panes where the right-side status badge gets clipped.
+	// 📱 = TG-driven (bot is the active surface)
+	// 🖥️  = desktop-driven (interactive tmux is the active surface)
+	rawName := vi.item.repo.Name
+	switch {
+	case vi.item.isTGSession:
+		rawName = "📱 " + rawName
+	case vi.item.status == statusClaude || vi.item.status == statusShell:
+		rawName = "🖥️  " + rawName
+	}
+
+	name := rawName
+	if vi.item.isTGSession {
+		// Synthetic TG row: dim the name so it reads as a peer of its
+		// parent repo row, not a duplicate.
+		name = scratchStyle.Width(36).Render(name)
+	} else if vi.item.repo.IsArchived {
 		name = scratchStyle.Width(36).Render(name) // dim, like scratch
 	} else if vi.item.repo.IsCollection {
 		name = sectionStyle.UnsetPadding().Width(36).Render("▸ " + name)
@@ -526,19 +547,23 @@ func (m model) renderItem(vi viewItem) string {
 		name = nameStyle.Render(name)
 	}
 
-	// Build flags as inline icons
+	// Build flags as inline icons. Synth TG rows don't show repo-level
+	// flags (Favourite/Remote/Yolo/alerts) — those belong on the parent
+	// repo row to avoid double-rendering.
 	var flags []string
-	if vi.item.repo.Favourite {
-		flags = append(flags, barKeyStyle.Render("★"))
-	}
-	if vi.item.repo.Remote {
-		flags = append(flags, remoteStyle.Render("📡"))
-	}
-	if vi.item.repo.Yolo {
-		flags = append(flags, waitStyle.Render("⚡"))
-	}
-	if alert, ok := m.alerts[vi.item.repo.DirName]; ok {
-		flags = append(flags, waitStyle.Render(alert))
+	if !vi.item.isTGSession {
+		if vi.item.repo.Favourite {
+			flags = append(flags, barKeyStyle.Render("★"))
+		}
+		if vi.item.repo.Remote {
+			flags = append(flags, remoteStyle.Render("📡"))
+		}
+		if vi.item.repo.Yolo {
+			flags = append(flags, waitStyle.Render("⚡"))
+		}
+		if alert, ok := m.alerts[vi.item.repo.DirName]; ok {
+			flags = append(flags, waitStyle.Render(alert))
+		}
 	}
 
 	flagStr := ""
@@ -610,6 +635,10 @@ func (m model) renderStatusBar() string {
 var completedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Width(50)
 
 func (m model) renderStatus(item repoItem) string {
+	// Status badges render at their natural width. The styles carry a
+	// Width(50) default for column alignment in wide terminals, but here
+	// we unset it so the badge fits within narrow manager panes — the
+	// trailing padding was pushing the colored text past the right edge.
 	// Check for rich status from plugin
 	if rs := item.richStatus; rs != nil {
 		switch rs.Status {
@@ -618,9 +647,9 @@ func (m model) renderStatus(item repoItem) string {
 			if rs.ToolCount > 0 {
 				label = fmt.Sprintf("✔ done (%d tools)", rs.ToolCount)
 			}
-			return completedStyle.Render(label)
+			return completedStyle.UnsetWidth().Render(label)
 		case "ended":
-			return idleStyle.Render("○ ended")
+			return idleStyle.UnsetWidth().Render("○ ended")
 		}
 	}
 
@@ -634,15 +663,15 @@ func (m model) renderStatus(item repoItem) string {
 		if rs := item.richStatus; rs != nil && rs.ToolCount > 0 {
 			title = fmt.Sprintf("%s [%d]", title, rs.ToolCount)
 		}
-		return claudeStyle.Render("● " + title)
+		return claudeStyle.UnsetWidth().Render("● " + title)
 	case statusShell:
-		return shellStyle.Render("● shell")
+		return shellStyle.UnsetWidth().Render("● shell")
 	case statusRemote:
-		return remoteStyle.Width(50).Render("● remote")
+		return remoteStyle.Render("● remote")
 	case statusDead:
-		return deadStyle.Width(50).Render("✖ dead")
+		return deadStyle.Render("✖ dead")
 	case statusWaiting:
-		return waitStyle.Width(50).Render("◌ waiting…")
+		return waitStyle.Render("◌ waiting…")
 	case statusNone:
 		return "" // blank for idle — less noise
 	case statusTelegram:
@@ -654,7 +683,7 @@ func (m model) renderStatus(item repoItem) string {
 			}
 			label = "TG: " + sid
 		}
-		return telegramStyle.Render(label)
+		return telegramStyle.UnsetWidth().Render(label)
 	default:
 		return ""
 	}

@@ -21,7 +21,7 @@ const (
 // openWorktreePanel shows the worktree creation prompt for the selected repo.
 func (m *model) openWorktreePanel() tea.Cmd {
 	item := m.selectedItem()
-	if item == nil || item.repo.IsScratch || item.repo.IsCollection || item.repo.IsWorktree {
+	if item == nil || item.repo.IsScratch || item.repo.IsCollection || item.repo.IsWorktree || item.isTGSession {
 		return nil
 	}
 

@@ -87,6 +87,7 @@ func TestChordHandlerAllActions(t *testing.T) {
 		{"f", ChordFullScreen},
 		{"w", ChordWorktree},
 		{"d", ChordDetachSplit},
+		{"r", ChordRefresh},
 	}
 
 	for _, tt := range tests {

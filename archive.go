@@ -14,7 +14,7 @@ func archiveDir(reposDir string) string {
 
 func (m *model) archiveSelected() tea.Cmd {
 	item := m.selectedItem()
-	if item == nil || item.repo.IsScratch || item.repo.IsCollection {
+	if item == nil || item.repo.IsScratch || item.repo.IsCollection || item.isTGSession {
 		return nil
 	}
 
@@ -81,7 +81,7 @@ func (m *model) doArchive(dirName string) {
 
 func (m *model) unarchiveSelected() tea.Cmd {
 	item := m.selectedItem()
-	if item == nil || !item.repo.IsArchived {
+	if item == nil || !item.repo.IsArchived || item.isTGSession {
 		return nil
 	}
 

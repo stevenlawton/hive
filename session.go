@@ -182,6 +182,19 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 	if item == nil || item.repo.IsCollection {
 		return nil
 	}
+	// Synthetic TG rows split into two cases:
+	//   - bridge-driven (bridgeEntry != nil): bot is still driving, Enter
+	//     should have already been consumed by promptTelegramPickup. If we
+	//     land here on one, it's a no-op (e.g. shift+enter).
+	//   - pickup-driven (bridgeEntry == nil, tmuxSes == hive-tg-<dir>):
+	//     conversation is already running on the desktop side, Enter just
+	//     switches to that tab like any other live session.
+	if item.isTGSession {
+		if item.bridgeEntry == nil && item.tmuxSes != "" {
+			m.openAsTab(item.repo, item.tmuxSes)
+		}
+		return nil
+	}
 
 	repo := item.repo
 	sessionName := TmuxSessionName(repo.DirName, false)
@@ -215,6 +228,9 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 }
 
 // openAsTab opens a repo in the workspace. Worktrees become splits on parent tab.
+// Picked-up TG sessions get a distinct tab id ("<dir>:tg") so they live as
+// their own workspace tab alongside any existing interactive tab for the repo —
+// preserves the "no killing sessions, both visible" model.
 func (m *model) openAsTab(repo Repo, sessionName string) {
 	if repo.IsWorktree && repo.Parent != "" {
 		// Check if parent tab already exists (e.g. from reconnect)
@@ -233,6 +249,18 @@ func (m *model) openAsTab(repo Repo, sessionName string) {
 			}
 		}
 	}
+	// Picked-up TG session: its own tab keyed by repo+":tg".
+	if strings.HasPrefix(sessionName, tmuxPickupPrefix) {
+		tabID := repo.DirName + ":tg"
+		if _, exists := m.workspace.Tabs[tabID]; exists {
+			m.workspace.TabBar.FocusByID(tabID)
+			m.mode = viewWorkspace
+			return
+		}
+		m.workspace.OpenTab(tabID, repo.Short+":TG", sessionName, "main")
+		m.mode = viewWorkspace
+		return
+	}
 	// Check if a tab already exists for this repo
 	if _, exists := m.workspace.Tabs[repo.DirName]; exists {
 		m.workspace.TabBar.FocusByID(repo.DirName)
@@ -245,7 +273,7 @@ func (m *model) openAsTab(repo Repo, sessionName string) {
 
 func (m *model) toggleRemote() tea.Cmd {
 	item := m.selectedItem()
-	if item == nil {
+	if item == nil || item.isTGSession {
 		return nil
 	}
 
@@ -291,7 +319,7 @@ func (m *model) startConfiguredRemotes() {
 
 func (m *model) toggleRemoteFlag() {
 	item := m.selectedItem()
-	if item == nil || item.repo.IsScratch {
+	if item == nil || item.repo.IsScratch || item.isTGSession {
 		return
 	}
 
@@ -322,7 +350,7 @@ func (m *model) toggleRemoteFlag() {
 
 func (m *model) toggleFavouriteFlag() {
 	item := m.selectedItem()
-	if item == nil || item.repo.IsScratch {
+	if item == nil || item.repo.IsScratch || item.isTGSession {
 		return
 	}
 
@@ -340,7 +368,7 @@ func (m *model) toggleFavouriteFlag() {
 
 func (m *model) toggleYoloFlag() {
 	item := m.selectedItem()
-	if item == nil || item.repo.IsScratch {
+	if item == nil || item.repo.IsScratch || item.isTGSession {
 		return
 	}
 
@@ -400,6 +428,21 @@ func (m *model) acknowledgeTab(id string) {
 func (m *model) killSelected() tea.Cmd {
 	item := m.selectedItem()
 	if item == nil || item.status == statusNone {
+		return nil
+	}
+
+	// Synthetic TG rows split into two cases:
+	//   - bridge-driven (bridgeEntry != nil): bot is driving in hive-rc-*.
+	//     We don't unilaterally kill the bot's pane.
+	//   - pickup-driven (bridgeEntry == nil, tmuxSes is hive-tg-*): the
+	//     desktop owns this tmux session, killing it is fine.
+	if item.isTGSession {
+		if item.bridgeEntry != nil {
+			return nil
+		}
+		if item.tmuxSes != "" && TmuxHasSession(item.tmuxSes) {
+			TmuxKillSession(item.tmuxSes)
+		}
 		return nil
 	}
 

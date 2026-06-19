@@ -8,6 +8,102 @@ import (
 	"time"
 )
 
+// repoForPickupSession returns the DirName of the repo a hive-tg-<sanitized>
+// tmux session belongs to, by reverse-matching the sanitized suffix against
+// the known repos' DirNames. Returns false if the session isn't a pickup or
+// no repo matches.
+func repoForPickupSession(sessionName string, repos map[string]*Repo) (string, bool) {
+	const prefix = tmuxPickupPrefix
+	if len(sessionName) <= len(prefix) || sessionName[:len(prefix)] != prefix {
+		return "", false
+	}
+	suffix := sessionName[len(prefix):]
+	for dirName := range repos {
+		if sanitizeSessionName(dirName) == suffix {
+			return dirName, true
+		}
+	}
+	return "", false
+}
+
+// stripTGSessionItems returns items with all synthetic TG-session rows removed.
+// Called at the start of each bridge-registry refresh so synthetic rows can be
+// regenerated from scratch without per-entry diffing.
+func stripTGSessionItems(items []repoItem) []repoItem {
+	out := items[:0]
+	for _, it := range items {
+		if it.isTGSession {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+// indexReposByKey builds a lookup of real (non-synthetic) repo items keyed by
+// DirName. Bridge-registry resolution checks this first directly, then falls
+// back to filepath.Base(DirName) so collection-namespaced repos (DirName like
+// "manuscripts/manuscript") can match bare bot-written keys ("manuscript").
+func indexReposByKey(items []repoItem) map[string]*Repo {
+	out := make(map[string]*Repo, len(items))
+	for i := range items {
+		if items[i].isTGSession {
+			continue
+		}
+		r := items[i].repo
+		out[r.DirName] = &r
+	}
+	return out
+}
+
+// interleaveSynthRows returns a new items slice where each synth row appears
+// immediately after the parent repo item it references. Synth rows with no
+// matching parent (shouldn't occur — resolveBridgeRepo filters those — but
+// defensive) are appended at the end.
+func interleaveSynthRows(items []repoItem, synth []repoItem) []repoItem {
+	if len(synth) == 0 {
+		return items
+	}
+	byParent := make(map[string][]repoItem, len(synth))
+	for _, s := range synth {
+		byParent[s.repo.DirName] = append(byParent[s.repo.DirName], s)
+	}
+	out := make([]repoItem, 0, len(items)+len(synth))
+	for _, it := range items {
+		out = append(out, it)
+		if children, ok := byParent[it.repo.DirName]; ok {
+			out = append(out, children...)
+			delete(byParent, it.repo.DirName)
+		}
+	}
+	for _, leftover := range byParent {
+		out = append(out, leftover...)
+	}
+	return out
+}
+
+// resolveBridgeRepo finds the repo a bridge-registry key refers to. Tries the
+// direct key first, then falls back to basename matching (for collection
+// children whose DirName is "<parent>/<child>" while the bot writes "<child>").
+// The fallback is only accepted if the entry's repo_path matches the discovered
+// repo's path on disk — otherwise two repos sharing a basename could cross-bind.
+func resolveBridgeRepo(repos map[string]*Repo, key string, entry BridgeEntry) *Repo {
+	if r, ok := repos[key]; ok {
+		return r
+	}
+	// Direct miss — basename fallback for collection children.
+	for dirName, r := range repos {
+		if filepath.Base(dirName) != key {
+			continue
+		}
+		if entry.RepoPath != "" && entry.RepoPath != r.Path {
+			continue
+		}
+		return r
+	}
+	return nil
+}
+
 // BridgeEntry represents a session in the shared bridge registry.
 type BridgeEntry struct {
 	SessionID   string `json:"session_id"`
@@ -92,10 +188,24 @@ func (m *model) promptTelegramPickup() bool {
 	return true
 }
 
+// tmuxPickupPrefix is the tmux session-name prefix for picked-up TG
+// sessions on the desktop side. Distinct from the interactive prefix
+// ("hive-") so a pickup never overwrites the user's existing interactive
+// session — both can coexist as independent rows in the manager.
+const tmuxPickupPrefix = "hive-tg-"
+
+// TmuxPickupSessionName returns the tmux session name for a picked-up
+// TG session on a given repo's DirName.
+func TmuxPickupSessionName(dirName string) string {
+	return tmuxPickupPrefix + sanitizeSessionName(dirName)
+}
+
 // takeoverTelegram performs the handoff from the Telegram-driven claude
-// to the desktop TUI: marks the registry "desktop", interrupts the bot's
-// claude in the existing tmux session, resumes the same conversation
-// interactively, and opens it as a tab.
+// to the desktop TUI. It creates a NEW tmux session named `hive-tg-<dir>`
+// running `claude --resume <session_id>` so the picked-up conversation
+// runs alongside (never replaces) any existing interactive session for
+// the same repo. Also flips the registry to driver="desktop" so the bot
+// knows to release.
 func (m *model) takeoverTelegram() {
 	item := m.selectedItem()
 	if item == nil || item.status != statusTelegram {
@@ -105,18 +215,36 @@ func (m *model) takeoverTelegram() {
 		return
 	}
 	repo := item.repo
-	sessionName := TmuxSessionName(repo.DirName, false)
-	if !TmuxHasSession(sessionName) {
+	sessionID := item.bridgeEntry.SessionID
+	regKey := item.bridgeKey
+	if regKey == "" {
+		regKey = repo.DirName
+	}
+
+	claudeCmd := "claude --resume " + sessionID
+	if repo.Yolo {
+		claudeCmd += " --permission-mode bypassPermissions"
+	}
+
+	pickupName := TmuxPickupSessionName(repo.DirName)
+	if TmuxHasSession(pickupName) {
+		// A previous pickup for this repo is still around — focus it
+		// instead of spawning a duplicate.
+		m.openAsTab(repo, pickupName)
 		return
 	}
-	TmuxSendKeys(sessionName, "C-c")
-	TmuxSendKeys(sessionName, "claude --resume "+item.bridgeEntry.SessionID)
-	UpdateBridgeEntry(repo.DirName, "desktop")
-	item.status = statusClaude
+	if err := TmuxNewSessionWithCmd(pickupName, repo.Path, claudeCmd); err != nil {
+		m.err = err
+		return
+	}
+
+	UpdateBridgeEntry(regKey, "desktop")
+	// Synth row's in-memory state updates — it now represents the live
+	// pickup tmux session, not the (now-defunct) bridge registry entry.
 	item.bridgeEntry = nil
-	item.tmuxSes = sessionName
+	item.tmuxSes = pickupName
 	m.rebuildDisplayOrder()
-	m.openAsTab(repo, sessionName)
+	m.openAsTab(repo, pickupName)
 }
 
 // UpdateBridgeEntry updates the driver field for a repo in the bridge registry.

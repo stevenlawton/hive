@@ -19,7 +19,7 @@ const (
 
 func (m *model) openEditPanel() tea.Cmd {
 	item := m.selectedItem()
-	if item == nil {
+	if item == nil || item.isTGSession {
 		return nil
 	}
 
