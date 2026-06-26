@@ -105,10 +105,20 @@ func (mv *ManagerView) View(listContent, statusBar string) string {
 func padLines(content string, width int) string {
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
-		visible := lipgloss.Width(line)
-		if visible < width {
-			lines[i] = line + strings.Repeat(" ", width-visible)
+		// Clamp over-long lines: the two-pane layout joins
+		// left+separator+right per line, so any line wider than the pane
+		// shoves the separator and preview off the right edge and the
+		// terminal wraps it (the "mangled" overlay bug).
+		if lipgloss.Width(line) > width {
+			line = ClampToWidth(line, width)
 		}
+		// Pad up to exactly width — including lines a wide-glyph clamp left
+		// at width-1 — so the separator lands in the same column on every
+		// row and reads as a continuous vertical line.
+		if visible := lipgloss.Width(line); visible < width {
+			line += strings.Repeat(" ", width-visible)
+		}
+		lines[i] = line
 	}
 	return strings.Join(lines, "\n")
 }

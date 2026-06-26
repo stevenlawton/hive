@@ -491,10 +491,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case scrollMsg:
 		if m.mode == viewWorkspace {
+			sesName := m.workspace.FocusedSessionName()
+			// Claude renders fullscreen on the alternate screen, which has
+			// no tmux scrollback — its transcript only scrolls in-app. Forward
+			// PageUp/PageDown so Claude scrolls its OWN history, rather than
+			// hive freezing and walking tmux's raw redraw frames (the
+			// "terminal history" the user was seeing). PgUp/PgDn is the
+			// reliable signal: mouse-wheel forwarding is tmux-mouse-mode
+			// dependent and hits a known Claude wheel→arrow-key regression.
+			// Plain shells have real tmux scrollback, so keep capture-scroll.
+			if sesName != "" && !m.isShellSession(sesName) {
+				key := "pgdown"
+				if msg.dir < 0 {
+					key = "pgup"
+				}
+				TmuxSendRawKeys(sesName, key)
+				return m, nil
+			}
 			if term := m.focusedTerminal(); term != nil {
 				// First scroll up: grab full scrollback
 				if !term.IsScrolledUp() && msg.dir < 0 {
-					sesName := m.workspace.FocusedSessionName()
 					if sesName != "" {
 						if content, err := TmuxCapturePaneFull(sesName); err == nil {
 							term.SetFullContent(content)
@@ -615,7 +631,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Worktree mode
 	if m.mode == viewWorktree {
-		return m.handleWorktreeKey(key)
+		return m.handleWorktreeKey(msg)
 	}
 
 	// Help mode
@@ -1048,6 +1064,11 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 	// on "started"/"tool" — and the attention escalation below uses
 	// itemWaiting() to escalate to desktop / external notifications.)
 
+	// Refresh git diff stats here (5s cadence) rather than in updateCaptures
+	// (100ms) — one git subprocess per active repo would otherwise flood the
+	// update loop and lag keystrokes.
+	m.updateDiffStats()
+
 	var cmds []tea.Cmd
 	if hasNewHighSeverity {
 		if m.cfg.Notifications.TabFlash && !m.flashing {
@@ -1187,15 +1208,8 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 		defaultBranch := fmt.Sprintf("split-%d", wtCount)
 
 		fields := make([]textinput.Model, wtFieldCount)
-		branchInput := textinput.New()
-		branchInput.Prompt = "Branch: "
-		branchInput.Placeholder = defaultBranch
-		branchInput.SetValue(defaultBranch)
-		fields[wtFieldBranch] = branchInput
-		promptInput := textinput.New()
-		promptInput.Prompt = "Prompt: "
-		promptInput.Placeholder = "optional task for Claude"
-		fields[wtFieldPrompt] = promptInput
+		fields[wtFieldBranch] = newWorktreeField("Branch: ", defaultBranch, defaultBranch)
+		fields[wtFieldPrompt] = newWorktreeField("Prompt: ", "optional task for Claude", "")
 		m.wtFields = fields
 		m.wtYolo = item.repo.Yolo
 		m.wtFocus = 0
@@ -1323,7 +1337,13 @@ func (m *model) updateCaptures() {
 		m.handleAttention(item, level)
 	}
 
-	// Update diff stats for active sessions
+}
+
+// updateDiffStats refreshes the "+N/-M" indicators by running git diff for
+// every active repo. Each call spawns one subprocess per repo, so it runs on
+// the slow health tick, NOT the 100ms capture tick — otherwise the subprocess
+// flood blocks the update loop and input lags by seconds.
+func (m *model) updateDiffStats() {
 	for i := range m.items {
 		item := &m.items[i]
 		if item.status == statusClaude || item.status == statusShell {
@@ -1483,6 +1503,19 @@ func (m *model) focusedTerminal() *ui.TerminalPane {
 		return nil
 	}
 	return split.Terminal
+}
+
+// isShellSession reports whether the named session is a plain shell. For
+// shells, tmux's scrollback IS the real history, so hive's capture-based
+// scroll is correct. For Claude (and other TUIs) the scrollback is just
+// raw redraw frames — those scroll by forwarding the wheel to the app.
+func (m *model) isShellSession(sesName string) bool {
+	for i := range m.items {
+		if m.items[i].tmuxSes == sesName {
+			return m.items[i].status == statusShell
+		}
+	}
+	return false
 }
 
 // renderWorkspaceStatusBar renders the status bar for workspace view.

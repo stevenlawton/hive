@@ -56,15 +56,7 @@ func (m model) View() tea.View {
 		tabBar := m.workspace.TabBar.View()
 		v = tea.NewView(tabBar + "\n" + m.viewBus())
 	case viewWorktree:
-		if m.wtSplitMode {
-			v = tea.NewView(m.viewWorktreeSplit())
-		} else {
-			listContent, l := m.viewList()
-			layout = l
-			m.manager.SetSize(m.width, m.height)
-			statusBar := m.renderStatusBar() + "\n" + m.renderKeyBarString()
-			v = tea.NewView(m.manager.View(listContent, statusBar))
-		}
+		v = tea.NewView(m.viewWorktreeModal())
 	case viewAttach:
 		v = tea.NewView("") // TUI hidden during attach
 	default:
@@ -196,29 +188,6 @@ func (m model) viewList() (string, listLayout) {
 		content.WriteString("\n")
 	}
 
-	if m.mode == viewWorktree {
-		content.WriteString(subtitleStyle.UnsetPadding().Render("  New worktree"))
-		content.WriteString("\n")
-		for i, f := range m.wtFields {
-			prefix := "  "
-			if i == m.wtFocus {
-				prefix = "> "
-			}
-			content.WriteString(prefix + f.View() + "\n")
-		}
-		check := "[ ]"
-		if m.wtYolo {
-			check = "[x]"
-		}
-		prefix := "  "
-		if m.wtFocus == wtFieldCount {
-			prefix = "> "
-		}
-		content.WriteString(prefix + check + " Yolo\n")
-		content.WriteString(subtitleStyle.UnsetPadding().Render("  ctrl+s to create, esc to cancel"))
-		content.WriteString("\n")
-	}
-
 	// Build display lines from displayOrder (already sorted: active > favourites > rest)
 	type displayLine struct {
 		text      string
@@ -265,11 +234,6 @@ func (m model) viewList() (string, listLayout) {
 	}
 	if m.mode == viewPromote {
 		reserved++
-	}
-	if m.mode == viewWorktree {
-		// Inline worktree form takes ~5 lines above the list:
-		// header + 2 input fields + yolo toggle + help line.
-		reserved += 5
 	}
 	if len(lines) > (m.height - reserved - 1) {
 		reserved++ // scroll indicator
@@ -406,10 +370,16 @@ func (m model) viewConfirmModal() string {
 	return out.String()
 }
 
-func (m model) viewWorktreeSplit() string {
+// viewWorktreeModal renders the worktree-creation form as a centered modal
+// box, used for both the manager-initiated worktree and the workspace split.
+func (m model) viewWorktreeModal() string {
 	var form strings.Builder
 
-	form.WriteString(titleStyle.UnsetPadding().Render("⚡ New Worktree Split"))
+	title := "⚡ New Worktree"
+	if m.wtSplitMode {
+		title = "⚡ New Worktree Split"
+	}
+	form.WriteString(titleStyle.UnsetPadding().Render(title))
 	form.WriteString("\n\n")
 
 	for i, f := range m.wtFields {

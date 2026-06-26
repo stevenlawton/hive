@@ -18,6 +18,38 @@ const (
 	wtFieldCount  = 2 // text fields only; yolo is a toggle
 )
 
+// worktreeFieldWidth is the text-input width inside the centered modal box.
+// editBoxStyle is 50 wide with a 1-cell border and 2-cell horizontal padding
+// (inner 44); minus the "> " marker and the "Branch: " prompt leaves ~32. An
+// explicit width is required — at width 0 bubbles renders only the first
+// character of a placeholder, which is what made the modal look broken.
+const worktreeFieldWidth = 32
+
+// newWorktreeField builds a worktree-form text input sized for the modal so
+// its placeholder/value render in full.
+func newWorktreeField(prompt, placeholder, value string) textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = prompt
+	ti.Placeholder = placeholder
+	ti.SetWidth(worktreeFieldWidth)
+	if value != "" {
+		ti.SetValue(value)
+	}
+	return ti
+}
+
+// defaultWorktreeBranch returns the next free wt-N branch name for a repo, so
+// the modal opens pre-filled with a usable, collision-free default.
+func defaultWorktreeBranch(repoPath string) string {
+	base := filepath.Join(repoPath, ".worktrees")
+	for n := 1; ; n++ {
+		name := fmt.Sprintf("wt-%d", n)
+		if _, err := os.Stat(filepath.Join(base, name)); err != nil {
+			return name
+		}
+	}
+}
+
 // openWorktreePanel shows the worktree creation prompt for the selected repo.
 func (m *model) openWorktreePanel() tea.Cmd {
 	item := m.selectedItem()
@@ -27,17 +59,10 @@ func (m *model) openWorktreePanel() tea.Cmd {
 
 	m.wtParent = item.repo.DirName
 
+	defaultBranch := defaultWorktreeBranch(item.repo.Path)
 	fields := make([]textinput.Model, wtFieldCount)
-
-	branchInput := textinput.New()
-	branchInput.Prompt = "Branch: "
-	branchInput.Placeholder = "feature-name"
-	fields[wtFieldBranch] = branchInput
-
-	promptInput := textinput.New()
-	promptInput.Prompt = "Prompt: "
-	promptInput.Placeholder = "optional task for Claude"
-	fields[wtFieldPrompt] = promptInput
+	fields[wtFieldBranch] = newWorktreeField("Branch: ", "feature-name", defaultBranch)
+	fields[wtFieldPrompt] = newWorktreeField("Prompt: ", "optional task for Claude", "")
 
 	m.wtFields = fields
 	m.wtYolo = item.repo.Yolo // inherit parent's yolo setting
@@ -48,7 +73,8 @@ func (m *model) openWorktreePanel() tea.Cmd {
 }
 
 // handleWorktreeKey handles keypresses in the worktree prompt panel.
-func (m *model) handleWorktreeKey(key string) (tea.Model, tea.Cmd) {
+func (m *model) handleWorktreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
 	switch key {
 	case "ctrl+s", "ctrl+enter":
 		return m, m.createWorktree()
@@ -99,10 +125,10 @@ func (m *model) handleWorktreeKey(key string) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Pass to text input
+	// Pass the real keypress to the focused text input so the user can type.
 	if m.wtFocus < wtFieldCount {
 		var cmd tea.Cmd
-		m.wtFields[m.wtFocus], cmd = m.wtFields[m.wtFocus].Update(tea.KeyPressMsg{})
+		m.wtFields[m.wtFocus], cmd = m.wtFields[m.wtFocus].Update(msg)
 		return m, cmd
 	}
 	return m, nil

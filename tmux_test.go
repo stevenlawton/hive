@@ -187,3 +187,14 @@ func TestTmuxTargetExactMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestBubbleteaToTmuxKeyPageKeys(t *testing.T) {
+	// Scroll forwarding for Claude sessions relies on these mapping to
+	// tmux's page-key names.
+	if got := bubbleteaToTmuxKey("pgup"); got != "PPage" {
+		t.Errorf("pgup: got %q, want PPage", got)
+	}
+	if got := bubbleteaToTmuxKey("pgdown"); got != "NPage" {
+		t.Errorf("pgdown: got %q, want NPage", got)
+	}
+}
