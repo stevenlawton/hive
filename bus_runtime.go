@@ -138,6 +138,12 @@ func peerFromRepo(item repoItem) (bus.Peer, bool) {
 	if item.tmuxSes == "" || item.repo.Path == "" {
 		return bus.Peer{}, false
 	}
+	// A deleted worktree can linger as an item whose tmux session outlived its
+	// directory. Don't offer it as a peer — the responder would only chdir
+	// into a missing directory and fail on every announcement.
+	if _, err := os.Stat(item.repo.Path); err != nil {
+		return bus.Peer{}, false
+	}
 	// Derive a readable sender name from the tmux session, matching what
 	// DetectSender would produce if invoked inside that session.
 	name := item.tmuxSes

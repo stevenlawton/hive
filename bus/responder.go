@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -40,6 +41,16 @@ func Respond(ctx context.Context, opts RespondOptions) error {
 	}
 	if opts.ClaudeBin == "" {
 		opts.ClaudeBin = "claude"
+	}
+
+	// A worktree can be deleted out from under a still-live peer (the tmux
+	// session outlives its directory). Spawning `claude -p` with cmd.Dir set
+	// to a missing directory fails at chdir before Claude even starts, and
+	// that happens on every bus announcement. Skip quietly instead.
+	if opts.Peer.Path != "" {
+		if _, err := os.Stat(opts.Peer.Path); err != nil {
+			return nil
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
