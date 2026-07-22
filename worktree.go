@@ -182,9 +182,9 @@ if branch == "" {
 	}
 
 	// Launch Claude in the worktree
-	claudeCmd := "claude"
+	claudeCmd := claudeLaunchBase
 	if yolo {
-		claudeCmd = "claude --permission-mode bypassPermissions"
+		claudeCmd = claudeLaunchBase + " --permission-mode bypassPermissions"
 	}
 	if prompt != "" {
 		claudeCmd += " -p " + shellQuote(prompt)

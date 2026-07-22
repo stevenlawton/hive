@@ -11,6 +11,14 @@ import (
 	"github.com/stevenlawton/hive/ui"
 )
 
+// claudeLaunchBase is the base `claude` invocation for every hive-spawned
+// session. `--tools default` forces the full built-in toolset — notably
+// TodoWrite, which the `hive bus todo-hook` (PostToolUse) depends on —
+// regardless of any ambient output-style or plugin config that might
+// otherwise drop it. It only governs built-in tools, so MCP servers
+// (hive_bus, SliceWize) are unaffected.
+const claudeLaunchBase = "claude --tools default"
+
 // PruneZombieSessions kills tmux sessions whose working directory no
 // longer exists on disk. Covers two categories:
 //
@@ -211,9 +219,9 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 	}
 
 	if withClaude {
-		claudeCmd := "claude"
+		claudeCmd := claudeLaunchBase
 		if repo.Yolo {
-			claudeCmd = "claude --permission-mode bypassPermissions"
+			claudeCmd = claudeLaunchBase + " --permission-mode bypassPermissions"
 		}
 		TmuxSendKeys(sessionName, claudeCmd)
 		item.status = statusClaude

@@ -221,7 +221,7 @@ func (m *model) takeoverTelegram() {
 		regKey = repo.DirName
 	}
 
-	claudeCmd := "claude --resume " + sessionID
+	claudeCmd := claudeLaunchBase + " --resume " + sessionID
 	if repo.Yolo {
 		claudeCmd += " --permission-mode bypassPermissions"
 	}
