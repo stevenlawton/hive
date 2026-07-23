@@ -24,10 +24,10 @@ func runTodoCmd(args []string) int {
 	case "add":
 		return runTodoAdd(args[1:])
 	case "done":
-		return runTodoSetStatus(args[1:], TodoDone)
+		return runTodoSetDone(args[1:], true)
 	case "reopen", "undone":
-		return runTodoSetStatus(args[1:], TodoPending)
-	case "current", "cur":
+		return runTodoSetDone(args[1:], false)
+	case "current", "cur", "claim":
 		return runTodoCurrent(args[1:])
 	case "rm", "del", "delete":
 		return runTodoRm(args[1:])
@@ -45,32 +45,30 @@ func todoCwd() string {
 	return "."
 }
 
-func statusGlyph(s TodoStatus) string {
-	switch s {
-	case TodoCurrent:
-		return "[~]"
-	case TodoDone:
-		return "[x]"
-	default:
-		return "[ ]"
-	}
-}
-
 func runTodoList() int {
-	todos := loadTodos(todoCwd())
+	cwd := todoCwd()
+	todos := loadTodos(cwd)
 	if len(todos) == 0 {
-		fmt.Println("(no tasks — hive todo add <headline>)")
+		fmt.Println("(no tasks — hive todo add <subject — description>)")
 		return 0
 	}
+	mine := worktreeClaim(cwd)
 	section := ""
 	for i, t := range todos {
 		if s := t.sectionOrDefault(); s != section {
 			section = s
 			fmt.Printf("\n### %s\n", section)
 		}
-		line := fmt.Sprintf("%d  %s %s", i+1, statusGlyph(t.Status), t.Subject)
+		line := fmt.Sprintf("%d  [%s] %s", i+1, t.boxChar(), t.Subject)
 		if t.Description != "" {
 			line += emDash + t.Description
+		}
+		if !t.Done && t.Claim != "" {
+			if t.Claim == mine {
+				line += "  (yours)"
+			} else {
+				line += "  🔒@" + t.Claim
+			}
 		}
 		fmt.Println(line)
 	}
@@ -89,40 +87,51 @@ func runTodoAdd(args []string) int {
 	return saveAndReport(cwd, todos, fmt.Sprintf("added #%d: %s", len(todos), subj))
 }
 
-func runTodoSetStatus(args []string, status TodoStatus) int {
+func runTodoSetDone(args []string, done bool) int {
 	cwd := todoCwd()
 	todos := loadTodos(cwd)
 	i, ok := todoIndex(args, len(todos))
 	if !ok {
 		return 1
 	}
-	todos[i].Status = status
-	word := map[TodoStatus]string{TodoDone: "done", TodoPending: "reopened"}[status]
+	todos[i].Done = done
+	if done {
+		todos[i].Claim = ""
+	}
+	word := "done"
+	if !done {
+		word = "reopened"
+	}
 	return saveAndReport(cwd, todos, fmt.Sprintf("%s #%d: %s", word, i+1, todos[i].Subject))
 }
 
+// runTodoCurrent claims (or releases) a task for this worktree, so parallel
+// worktrees don't all grab the same "next" item.
 func runTodoCurrent(args []string) int {
 	cwd := todoCwd()
+	owner := worktreeClaim(cwd)
+	if owner == "" {
+		fmt.Fprintln(os.Stderr, "error: not in a git worktree — can't claim")
+		return 1
+	}
 	todos := loadTodos(cwd)
 	if len(args) > 0 && (args[0] == "clear" || args[0] == "none") {
-		for j := range todos {
-			if todos[j].Status == TodoCurrent {
-				todos[j].Status = TodoPending
-			}
-		}
-		return saveAndReport(cwd, todos, "cleared current task")
+		return saveAndReport(cwd, releaseClaim(todos, owner), "released your claims")
 	}
 	i, ok := todoIndex(args, len(todos))
 	if !ok {
 		return 1
 	}
-	for j := range todos {
-		if todos[j].Status == TodoCurrent {
-			todos[j].Status = TodoPending
-		}
+	updated, changed := claimTodo(todos, i, owner)
+	if !changed {
+		fmt.Fprintf(os.Stderr, "error: #%d is claimed by %s\n", i+1, todos[i].Claim)
+		return 1
 	}
-	todos[i].Status = TodoCurrent
-	return saveAndReport(cwd, todos, fmt.Sprintf("current → #%d: %s", i+1, todos[i].Subject))
+	verb := "claimed"
+	if updated[i].Claim == "" {
+		verb = "released"
+	}
+	return saveAndReport(cwd, updated, fmt.Sprintf("%s #%d: %s", verb, i+1, updated[i].Subject))
 }
 
 func runTodoRm(args []string) int {
@@ -163,16 +172,22 @@ func saveAndReport(cwd string, todos []Todo, msg string) int {
 // runTodoStatusline prints the current task + progress for use as a Claude Code
 // statusLine command. Claude pipes session JSON on stdin; we read cwd from it.
 func runTodoStatusline() int {
-	todos := loadTodos(statuslineCwd())
+	cwd := statuslineCwd()
+	todos := loadTodos(cwd)
 	done, total := countDone(todos)
 	if total == 0 {
 		return 0 // nothing to show
 	}
-	headline := "all done ✓"
-	if cur := currentTodo(todos); cur != nil {
-		headline = truncStr(cur.Subject, 60)
+	owner := worktreeClaim(cwd)
+	label := "all done ✓"
+	if cur := currentForClaim(todos, owner); cur != nil {
+		if owner != "" && cur.Claim == owner {
+			label = "▸ " + truncStr(cur.Subject, 58) // your claimed task
+		} else {
+			label = "next: " + truncStr(cur.Subject, 55) // unclaimed — up for grabs
+		}
 	}
-	fmt.Printf("▸ %s · %d/%d", headline, done, total)
+	fmt.Printf("%s · %d/%d", label, done, total)
 	return 0
 }
 

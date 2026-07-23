@@ -109,6 +109,7 @@ type model struct {
 	drawerOpen     bool
 	drawerRepo     string // repo path whose list is loaded
 	drawerRepoName string // display name for the drawer title
+	drawerClaim    string // this worktree's claim identity (branch)
 	drawerTodos    []Todo
 	drawerCursor   int
 	drawerInput    textinput.Model

@@ -8,25 +8,20 @@ import (
 	"time"
 )
 
-// TodoStatus is the state of a task in a repo's todo list.
-type TodoStatus int
-
-const (
-	TodoPending TodoStatus = iota // "- [ ]"
-	TodoCurrent                   // "- [~]" — the task you're on
-	TodoDone                      // "- [x]"
-)
-
 // Todo is one task in the rich TODO.md format:
 //
-//   - [box] **subject** — description
+//   - [box] **subject** — description <!-- @claim -->
 //
-// grouped under "### section" headers inside a TASKS:BEGIN/END block.
+// grouped under "### section" headers inside a TASKS:BEGIN/END block. "In
+// progress" is a per-worktree Claim (the claiming worktree's branch), so
+// parallel worktrees each track their own current task and can see which items
+// others have taken. box: ' ' open · '~' claimed · 'x' done.
 type Todo struct {
-	Status      TodoStatus
+	Done        bool
 	Section     string // the "### " header this task lives under
 	Subject     string // the bold subject (may carry a #NNN id prefix)
 	Description string // free text after " — " (may be empty)
+	Claim       string // branch/worktree that claimed it; "" = unclaimed
 }
 
 const (
@@ -49,6 +44,23 @@ func mainWorktree(repoPath string) string {
 		}
 	}
 	return repoPath
+}
+
+// worktreeClaim is the identity a worktree uses to claim tasks — its branch,
+// or the worktree directory name when detached. "" if not a git repo.
+func worktreeClaim(cwd string) string {
+	out, err := exec.Command("git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" || branch == "HEAD" {
+		if top, err := exec.Command("git", "-C", cwd, "rev-parse", "--show-toplevel").Output(); err == nil {
+			return filepath.Base(strings.TrimSpace(string(top)))
+		}
+		return ""
+	}
+	return branch
 }
 
 // todoFilePath is the backlog file for a repo: docs/TODO.md if present, else a
@@ -144,8 +156,8 @@ func blockBounds(lines []string) (begin, end int) {
 	return begin, end
 }
 
-// parseTodos parses "### section" headers and "- [box] **subject** — desc"
-// task lines. Anything else (blank lines, a Last-sync line) is ignored.
+// parseTodos parses "### section" headers and task lines. Anything else (blank
+// lines, a Last-sync line) is ignored.
 func parseTodos(block string) []Todo {
 	var todos []Todo
 	section := defaultSection
@@ -167,14 +179,11 @@ func parseTodoLine(s string) (Todo, bool) {
 	if !strings.HasPrefix(s, "- [") || len(s) < 6 || s[4] != ']' {
 		return Todo{}, false
 	}
-	var status TodoStatus
+	var t Todo
 	switch s[3] {
-	case ' ':
-		status = TodoPending
-	case '~':
-		status = TodoCurrent
+	case ' ', '~': // open / claimed (owner from the marker below)
 	case 'x', 'X':
-		status = TodoDone
+		t.Done = true
 	default:
 		return Todo{}, false
 	}
@@ -182,23 +191,34 @@ func parseTodoLine(s string) (Todo, bool) {
 	if rest == "" {
 		return Todo{}, false
 	}
-	subject, description := rest, ""
-	// Bold subject: **subject**[ — description]
-	if strings.HasPrefix(rest, "**") {
-		if close := strings.Index(rest[2:], "**"); close >= 0 {
-			subject = rest[2 : 2+close]
-			tail := strings.TrimSpace(rest[2+close+2:])
-			description = strings.TrimPrefix(tail, strings.TrimSpace(emDash))
-			description = strings.TrimSpace(description)
+
+	// Trailing claim marker: <!-- @owner -->
+	if i := strings.LastIndex(rest, "<!--"); i >= 0 {
+		if j := strings.Index(rest[i:], "-->"); j >= 0 {
+			inner := strings.TrimSpace(rest[i+4 : i+j])
+			if owner, ok := strings.CutPrefix(inner, "@"); ok {
+				t.Claim = strings.TrimSpace(owner)
+				rest = strings.TrimSpace(rest[:i])
+			}
 		}
-	} else if i := strings.Index(rest, emDash); i >= 0 {
-		subject = strings.TrimSpace(rest[:i])
-		description = strings.TrimSpace(rest[i+len(emDash):])
+	}
+
+	subject, description := rest, ""
+	if strings.HasPrefix(rest, "**") {
+		if c := strings.Index(rest[2:], "**"); c >= 0 {
+			subject = rest[2 : 2+c]
+			tail := strings.TrimSpace(rest[2+c+2:])
+			description = strings.TrimSpace(strings.TrimPrefix(tail, strings.TrimSpace(emDash)))
+		}
+	} else if k := strings.Index(rest, emDash); k >= 0 {
+		subject = strings.TrimSpace(rest[:k])
+		description = strings.TrimSpace(rest[k+len(emDash):])
 	}
 	if subject == "" {
 		return Todo{}, false
 	}
-	return Todo{Status: status, Subject: subject, Description: description}, true
+	t.Subject, t.Description = subject, description
+	return t, true
 }
 
 // formatTodos renders tasks back into the block body: a Last-sync line, then
@@ -226,6 +246,9 @@ func formatTodos(todos []Todo) string {
 			if t.Description != "" {
 				b.WriteString(emDash + t.Description)
 			}
+			if !t.Done && t.Claim != "" {
+				b.WriteString(" <!-- @" + t.Claim + " -->")
+			}
 			b.WriteByte('\n')
 		}
 	}
@@ -240,11 +263,11 @@ func (t Todo) sectionOrDefault() string {
 }
 
 func (t Todo) boxChar() string {
-	switch t.Status {
-	case TodoCurrent:
-		return "~"
-	case TodoDone:
+	switch {
+	case t.Done:
 		return "x"
+	case t.Claim != "":
+		return "~"
 	default:
 		return " "
 	}
@@ -259,7 +282,6 @@ func addTodo(todos []Todo, section, subject, description string) []Todo {
 		section = defaultSection
 	}
 	return append(todos, Todo{
-		Status:      TodoPending,
 		Section:     section,
 		Subject:     subject,
 		Description: strings.TrimSpace(description),
@@ -270,30 +292,40 @@ func toggleTodoDone(todos []Todo, i int) []Todo {
 	if i < 0 || i >= len(todos) {
 		return todos
 	}
-	if todos[i].Status == TodoDone {
-		todos[i].Status = TodoPending
-	} else {
-		todos[i].Status = TodoDone
+	todos[i].Done = !todos[i].Done
+	if todos[i].Done {
+		todos[i].Claim = "" // completing releases any claim
 	}
 	return todos
 }
 
-// setTodoCurrent marks i as the current task, demoting any other current task
-// so there is at most one. Toggling the current task clears it.
-func setTodoCurrent(todos []Todo, i int) []Todo {
-	if i < 0 || i >= len(todos) {
+// claimTodo toggles owner's claim on task i: claims if free, releases if it's
+// already owner's, and refuses (ok=false) if another worktree holds it.
+func claimTodo(todos []Todo, i int, owner string) ([]Todo, bool) {
+	if i < 0 || i >= len(todos) || owner == "" || todos[i].Done {
+		return todos, false
+	}
+	switch todos[i].Claim {
+	case owner:
+		todos[i].Claim = ""
+	case "":
+		todos[i].Claim = owner
+	default:
+		return todos, false // held by another worktree
+	}
+	return todos, true
+}
+
+// releaseClaim drops every claim held by owner.
+func releaseClaim(todos []Todo, owner string) []Todo {
+	if owner == "" {
 		return todos
 	}
-	if todos[i].Status == TodoCurrent {
-		todos[i].Status = TodoPending
-		return todos
-	}
-	for j := range todos {
-		if todos[j].Status == TodoCurrent {
-			todos[j].Status = TodoPending
+	for i := range todos {
+		if todos[i].Claim == owner {
+			todos[i].Claim = ""
 		}
 	}
-	todos[i].Status = TodoCurrent
 	return todos
 }
 
@@ -304,16 +336,19 @@ func deleteTodo(todos []Todo, i int) []Todo {
 	return append(todos[:i], todos[i+1:]...)
 }
 
-// currentTodo is what the statusline shows: the current task, else the first
-// pending one, else nil.
-func currentTodo(todos []Todo) *Todo {
-	for i := range todos {
-		if todos[i].Status == TodoCurrent {
-			return &todos[i]
+// currentForClaim is what a worktree's statusline shows: the task this worktree
+// has claimed, else the first unclaimed open task (the next thing to pick up),
+// else nil.
+func currentForClaim(todos []Todo, owner string) *Todo {
+	if owner != "" {
+		for i := range todos {
+			if !todos[i].Done && todos[i].Claim == owner {
+				return &todos[i]
+			}
 		}
 	}
 	for i := range todos {
-		if todos[i].Status == TodoPending {
+		if !todos[i].Done && todos[i].Claim == "" {
 			return &todos[i]
 		}
 	}
@@ -323,7 +358,7 @@ func currentTodo(todos []Todo) *Todo {
 func countDone(todos []Todo) (done, total int) {
 	for _, t := range todos {
 		total++
-		if t.Status == TodoDone {
+		if t.Done {
 			done++
 		}
 	}

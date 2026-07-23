@@ -42,6 +42,7 @@ func (m *model) toggleDrawer() tea.Cmd {
 	}
 	m.drawerRepo = path
 	m.drawerRepoName = name
+	m.drawerClaim = worktreeClaim(path)
 	m.drawerTodos = loadTodos(path)
 	m.drawerCursor = 0
 	m.drawerInputOn = false
@@ -96,6 +97,7 @@ func (m *model) reloadDrawerForContext() {
 	}
 	m.drawerRepo = path
 	m.drawerRepoName = name
+	m.drawerClaim = worktreeClaim(path)
 	m.drawerTodos = loadTodos(path)
 	m.drawerCursor = 0
 	m.stopDrawerInput()
@@ -223,9 +225,13 @@ func (m model) handleDrawerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "space", " ", "x":
 		m.drawerTodos = toggleTodoDone(m.drawerTodos, m.drawerCursor)
 		m.persistDrawer()
-	case "~", "enter":
-		m.drawerTodos = setTodoCurrent(m.drawerTodos, m.drawerCursor)
-		m.persistDrawer()
+	case "~", "enter", "c":
+		if todos, ok := claimTodo(m.drawerTodos, m.drawerCursor, m.drawerClaim); ok {
+			m.drawerTodos = todos
+			m.persistDrawer()
+		} else if m.drawerCursor >= 0 && m.drawerCursor < len(m.drawerTodos) {
+			m.err = fmt.Errorf("task claimed by %s", m.drawerTodos[m.drawerCursor].Claim)
+		}
 	case "d":
 		m.drawerTodos = deleteTodo(m.drawerTodos, m.drawerCursor)
 		if m.drawerCursor >= len(m.drawerTodos) {
@@ -253,13 +259,15 @@ func (m model) drawerPanelHeight() int {
 }
 
 var (
-	drawerTitleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ff8c00"))
-	drawerHintStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
-	drawerDoneStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Strikethrough(true)
-	drawerCurStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00")).Bold(true)
-	drawerEmptyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Italic(true)
-	drawerSectionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Bold(true)
-	drawerDescStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+	drawerTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ff8c00"))
+	drawerHintStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+	drawerDoneStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Strikethrough(true)
+	drawerCurStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff8c00")).Bold(true)
+	drawerEmptyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Italic(true)
+	drawerSectionStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Bold(true)
+	drawerDescStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+	drawerClaimedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#777777"))
+	drawerClaimTagStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#0088cc"))
 )
 
 // drawerLine is one rendered row in the drawer: a section header (todoIdx -1)
@@ -281,7 +289,7 @@ func (m model) drawerLines(width int) (lines []drawerLine, cursorLine int) {
 		if i == m.drawerCursor {
 			cursorLine = len(lines)
 		}
-		lines = append(lines, drawerLine{text: drawerRow(t, i == m.drawerCursor, width), todoIdx: i})
+		lines = append(lines, drawerLine{text: drawerRow(t, i == m.drawerCursor, m.drawerClaim, width), todoIdx: i})
 	}
 	return lines, cursorLine
 }
@@ -330,7 +338,7 @@ func (m model) renderTodoDrawer(width, height int) string {
 	if m.drawerInputOn {
 		lines = append(lines, "  "+ui.CursorSentinel+m.drawerInput.View())
 	} else {
-		lines = append(lines, drawerHintStyle.Render("  a add · e edit · space done · ~ current · d delete · j/k move · esc close"))
+		lines = append(lines, drawerHintStyle.Render("  a add · e edit · space done · ~ claim · d delete · j/k move · esc close"))
 	}
 
 	if len(lines) > height {
@@ -339,13 +347,19 @@ func (m model) renderTodoDrawer(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-func drawerRow(t Todo, selected bool, width int) string {
+func drawerRow(t Todo, selected bool, myClaim string, width int) string {
 	cursor := "  "
 	if selected {
 		cursor = cursorStyle.Render("▸ ")
 	}
-	avail := max(1, width-6) // cursor(2) + "[x] "(4)
 
+	// Tag tasks another worktree holds so they read as taken.
+	tag := ""
+	if !t.Done && t.Claim != "" && t.Claim != myClaim {
+		tag = " 🔒@" + t.Claim
+	}
+
+	avail := max(1, width-6-len([]rune(tag))) // cursor(2) + "[x] "(4) + tag
 	subject := t.Subject
 	if len([]rune(subject)) > avail {
 		subject = truncStr(subject, avail)
@@ -357,17 +371,22 @@ func drawerRow(t Todo, selected bool, width int) string {
 	}
 
 	var box, subjStyled string
-	switch t.Status {
-	case TodoDone:
+	switch {
+	case t.Done:
 		box, subjStyled = "[x]", drawerDoneStyle.Render(subject)
-	case TodoCurrent:
-		box, subjStyled = drawerCurStyle.Render("[~]"), drawerCurStyle.Render(subject)
+	case t.Claim != "" && t.Claim == myClaim:
+		box, subjStyled = drawerCurStyle.Render("[~]"), drawerCurStyle.Render(subject) // mine
+	case t.Claim != "":
+		box, subjStyled = "[~]", drawerClaimedStyle.Render(subject) // held by another worktree
 	default:
 		box, subjStyled = "[ ]", subject
 	}
 	line := fmt.Sprintf("%s%s %s", cursor, box, subjStyled)
 	if desc != "" {
 		line += drawerDescStyle.Render(desc)
+	}
+	if tag != "" {
+		line += drawerClaimTagStyle.Render(tag)
 	}
 	return line
 }
