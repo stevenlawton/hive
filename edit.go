@@ -50,6 +50,10 @@ func (m *model) openEditPanel() tea.Cmd {
 	descInput.Placeholder = "short description"
 	fields[editFieldDesc] = descInput
 
+	for i := range fields {
+		visibleCursorStyle(&fields[i])
+	}
+
 	m.editFields = fields
 	m.editToggles = []bool{repo.Yolo, repo.Remote, repo.Favourite, repo.IsCollection}
 	m.editFocus = editFieldName
@@ -107,7 +111,7 @@ func (m *model) saveEditPanel() {
 		if item.repo.Remote {
 			rcName := TmuxSessionName(item.repo.DirName, true)
 			if !TmuxHasSession(rcName) {
-				TmuxNewSessionWithCmd(rcName, item.repo.Path, "claude remote-control")
+				TmuxNewSessionWithCmd(rcName, item.repo.Path, claudeCommand("remote-control"))
 				if item.status == statusNone {
 					item.status = statusRemote
 				}
@@ -125,7 +129,7 @@ func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	switch key {
-	case "escape":
+	case "esc", "escape":
 		m.mode = viewManager
 		return m, nil
 
@@ -160,7 +164,7 @@ func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.focusEditField()
 
-	case " ":
+	case "space", " ":
 		// Space toggles on toggle fields
 		if m.editFocus >= editToggleYolo {
 			toggleIdx := m.editFocus - editToggleYolo

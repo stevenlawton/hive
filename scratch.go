@@ -116,7 +116,7 @@ func (m *model) createScratch() tea.Cmd {
 	}
 
 	if m.cfg.DefaultAction == "claude" {
-		TmuxSendKeys(sessionName, claudeLaunchBase)
+		TmuxSendKeys(sessionName, claudeCommand(""))
 		item.status = statusClaude
 	} else {
 		item.status = statusShell

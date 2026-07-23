@@ -11,10 +11,26 @@ import (
 	"github.com/stevenlawton/hive/bus"
 	"github.com/stevenlawton/hive/ui"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
 )
 
+// visibleCursorStyle switches a textinput to a real hardware cursor. The bubbles
+// v2 default is an in-text "virtual" reverse-video block that the framework
+// renders instead of the terminal's own cursor — but hive returns plain
+// tea.NewView frames (View.Cursor == nil), which makes the renderer HIDE the
+// hardware cursor, and the virtual block reads as "no cursor at all" here.
+// Disabling the virtual cursor lets textinput.Cursor() report a real cursor,
+// which View() then positions via the sentinel (see resolveFrameCursor). The
+// orange accent + blink make it obvious where the user is typing.
+func visibleCursorStyle(ti *textinput.Model) {
+	ti.SetVirtualCursor(false)
+	s := ti.Styles()
+	s.Cursor.Color = lipgloss.Color("#ff8c00")
+	s.Cursor.Blink = true
+	ti.SetStyles(s)
+}
 
 type viewMode int
 
@@ -66,25 +82,38 @@ type repoItem struct {
 }
 
 type model struct {
-	cfg       *Config
-	cfgPath   string
-	items     []repoItem
-	cursor    int
-	mode      viewMode
+	cfg          *Config
+	cfgPath      string
+	items        []repoItem
+	cursor       int
+	mode         viewMode
 	filter       textinput.Model
 	filtering    bool
-	filtered     []int // indices into items that match filter
-	displayOrder []int            // indices into items, ordered: active > favourites > rest
-	itemSection  map[int]string   // item index → section name ("active", "favourites", "repos", "archived")
+	filtered     []int          // indices into items that match filter
+	displayOrder []int          // indices into items, ordered: active > favourites > rest
+	itemSection  map[int]string // item index → section name ("active", "favourites", "repos", "archived")
 	promote      textinput.Model
-	keys      keyMap
-	width     int
-	height    int
-	err       error
-	alerts   map[string]string
-	flashing bool
+	keys         keyMap
+	width        int
+	height       int
+	err          error
+	alerts       map[string]string
+	flashing     bool
 
 	showArchived bool // toggle to show/hide archived repos
+
+	resizeMode      bool // split-divider resize mode (ctrl+space s), workspace only
+	draggingDivider int  // index of divider being mouse-dragged; -1 when inactive
+
+	// Todo drawer state (bottom panel over the manager list or the active tab)
+	drawerOpen     bool
+	drawerRepo     string // repo path whose list is loaded
+	drawerRepoName string // display name for the drawer title
+	drawerTodos    []Todo
+	drawerCursor   int
+	drawerInput    textinput.Model
+	drawerInputOn  bool // text input active (add or edit)
+	drawerEditIdx  int  // -1 = adding a new task; >=0 = editing that task
 
 	// New UI components
 	manager   *ui.ManagerView
@@ -94,9 +123,9 @@ type model struct {
 	// Worktree prompt state
 	wtFields      []textinput.Model // 0=branch, 1=prompt
 	wtYolo        bool
-	wtFocus       int    // focused field index
-	wtParent      string // DirName of parent repo
-	wtSplitMode   bool   // true = add as split pane, false = return to manager
+	wtFocus       int                 // focused field index
+	wtParent      string              // DirName of parent repo
+	wtSplitMode   bool                // true = add as split pane, false = return to manager
 	wtOrientation ui.SplitOrientation // orientation for the split
 
 	// Confirm dialog state
@@ -106,15 +135,15 @@ type model struct {
 
 	// Edit panel state
 	editFields  []textinput.Model
-	editToggles []bool   // remote, favourite, collection
-	editFocus   int      // which field is focused (0-2 = text, 3-5 = toggles)
-	editDirName string   // which repo we're editing
+	editToggles []bool // remote, favourite, collection
+	editFocus   int    // which field is focused (0-2 = text, 3-5 = toggles)
+	editDirName string // which repo we're editing
 
 	// Bus state
-	bus         *bus.Bus
-	busCompose  textinput.Model
-	busRt       *busRuntime
-	busViewTop  int // -1 = tail mode (follow newest); otherwise absolute line index of top visible row
+	bus          *bus.Bus
+	busCompose   textinput.Model
+	busRt        *busRuntime
+	busViewTop   int // -1 = tail mode (follow newest); otherwise absolute line index of top visible row
 	busLineCount int // last rendered total line count (for scroll clamping)
 }
 
@@ -141,14 +170,17 @@ func newModel(cfg *Config, cfgPath string) model {
 	fi := textinput.New()
 	fi.Prompt = "/ "
 	fi.Placeholder = "filter..."
+	visibleCursorStyle(&fi)
 
 	pr := textinput.New()
 	pr.Prompt = "name: "
 	pr.Placeholder = "new-project-name"
+	visibleCursorStyle(&pr)
 
 	busInput := textinput.New()
 	busInput.Prompt = "> "
 	busInput.Placeholder = "working: | waiting: | done: | ? question | r:<id> reply | plain fyi"
+	visibleCursorStyle(&busInput)
 
 	busClient, busErr := bus.Open("steve")
 	if busErr != nil {
@@ -157,22 +189,23 @@ func newModel(cfg *Config, cfgPath string) model {
 	busRt := newBusRuntime(busClient)
 
 	m := model{
-		cfg:         cfg,
-		cfgPath:     cfgPath,
-		items:       items,
-		keys:        newKeyMap(),
-		filter:      fi,
-		promote:     pr,
-		filtered:    allIndicesFor(len(items)),
-		alerts:      make(map[string]string),
-		manager:     ui.NewManagerView(),
-		workspace:   ui.NewWorkspaceView(),
-		chord:       NewChordHandler(500 * time.Millisecond),
-		mode:        viewManager,
-		bus:         busClient,
-		busCompose:  busInput,
-		busRt:       busRt,
-		busViewTop:  -1, // start in tail mode
+		cfg:             cfg,
+		cfgPath:         cfgPath,
+		items:           items,
+		keys:            newKeyMap(),
+		filter:          fi,
+		promote:         pr,
+		filtered:        allIndicesFor(len(items)),
+		alerts:          make(map[string]string),
+		manager:         ui.NewManagerView(),
+		workspace:       ui.NewWorkspaceView(),
+		chord:           NewChordHandler(500 * time.Millisecond),
+		mode:            viewManager,
+		draggingDivider: -1,
+		bus:             busClient,
+		busCompose:      busInput,
+		busRt:           busRt,
+		busViewTop:      -1, // start in tail mode
 	}
 	m.rebuildDisplayOrder()
 
@@ -377,6 +410,9 @@ type keyBarClickMsg struct{ action string }
 type scrollMsg struct{ dir int }
 type splitClickMsg struct{ index int }
 type tabClickMsg struct{ index int }
+type dividerPressMsg struct{ index int } // start dragging divider `index`
+type dividerDragMsg struct{ pos int }    // pointer axis position during a drag
+type dividerReleaseMsg struct{}          // end the drag
 
 type tickMsg time.Time
 
@@ -432,6 +468,11 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(healthTick(), waitForEvent(), captureTick())
 }
 
+// claudeScrollNotches is how many SGR wheel notches to forward per hive scroll
+// step in a Claude session. Claude scrolls ~3-5 lines per notch, so 2 lands in
+// the ~6-10 line range that reads as a comfortable step.
+const claudeScrollNotches = 2
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -463,8 +504,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reconnectSessions()
 		return m, nil
 	case itemClickMsg:
+		// A click both selects and opens — same as pressing Enter on the row
+		// (itemClickMsg is only emitted from the manager/list view).
 		if msg.index >= 0 && msg.index < len(m.displayOrder) {
 			m.cursor = msg.index
+			if m.promptTelegramPickup() {
+				return m, nil
+			}
+			return m, m.openSelected(true)
 		}
 		return m, nil
 	case keyBarClickMsg:
@@ -489,23 +536,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case dividerPressMsg:
+		m.draggingDivider = msg.index
+		return m, nil
+	case dividerDragMsg:
+		if m.draggingDivider >= 0 {
+			if tab := m.workspace.ActiveTab(); tab != nil {
+				tab.SplitPane.SetDividerAt(m.draggingDivider, msg.pos)
+			}
+		}
+		return m, nil
+	case dividerReleaseMsg:
+		m.draggingDivider = -1
+		return m, nil
 	case scrollMsg:
 		if m.mode == viewWorkspace {
 			sesName := m.workspace.FocusedSessionName()
 			// Claude renders fullscreen on the alternate screen, which has
 			// no tmux scrollback — its transcript only scrolls in-app. Forward
-			// PageUp/PageDown so Claude scrolls its OWN history, rather than
-			// hive freezing and walking tmux's raw redraw frames (the
-			// "terminal history" the user was seeing). PgUp/PgDn is the
-			// reliable signal: mouse-wheel forwarding is tmux-mouse-mode
-			// dependent and hits a known Claude wheel→arrow-key regression.
-			// Plain shells have real tmux scrollback, so keep capture-scroll.
+			// SGR mouse-wheel events (as raw bytes, so tmux passes them through
+			// rather than translating the wheel to arrow keys) so Claude scrolls
+			// its OWN history a few lines at a time. PageUp/PageDown jump half a
+			// viewport, which felt too coarse. Plain shells have real tmux
+			// scrollback, so keep capture-scroll.
 			if sesName != "" && !m.isShellSession(sesName) {
-				key := "pgdown"
-				if msg.dir < 0 {
-					key = "pgup"
-				}
-				TmuxSendRawKeys(sesName, key)
+				TmuxSendWheel(sesName, msg.dir < 0, claudeScrollNotches)
 				return m, nil
 			}
 			if term := m.focusedTerminal(); term != nil {
@@ -577,8 +632,17 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	// Todo drawer owns all input while open, in whichever mode it was opened
+	// (manager list or an active workspace tab).
+	if m.drawerOpen {
+		return m.handleDrawerKey(msg)
+	}
+
 	// Workspace mode: chord handling and key forwarding
 	if m.mode == viewWorkspace {
+		if m.resizeMode {
+			return m.handleResizeKey(msg)
+		}
 		if m.chord.Pending() {
 			action, ok := m.chord.Complete(keystroke)
 			if ok {
@@ -636,7 +700,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Help mode
 	if m.mode == viewHelp {
-		if key == "?" || key == "escape" {
+		if key == "?" || key == "esc" || key == "escape" {
 			m.mode = viewManager
 		}
 		return m, nil
@@ -655,7 +719,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.mode = viewManager
 			}
-		case "n", "N", "escape":
+		case "n", "N", "esc", "escape":
 			if m.confirmReturn != 0 {
 				m.mode = m.confirmReturn
 				m.confirmReturn = 0
@@ -677,7 +741,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.mode = viewManager
 			m.promote.SetValue("")
 			return m, nil
-		case "escape":
+		case "esc", "escape":
 			m.mode = viewManager
 			m.promote.SetValue("")
 			return m, nil
@@ -710,7 +774,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.filtering = false
 			m.filter.Blur()
 			return m, nil
-		case "escape":
+		case "esc", "escape":
 			m.filtering = false
 			m.filter.SetValue("")
 			m.filter.Blur()
@@ -772,6 +836,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "w":
 		return m, m.openWorktreePanel()
+	case "t":
+		return m, m.toggleDrawer()
 	case "E":
 		return m, m.openEditPanel()
 	case "s":
@@ -1133,11 +1199,64 @@ func (m *model) syncModeFromActiveTab() {
 	default:
 		m.mode = viewWorkspace
 	}
+	m.resizeMode = false // resize state doesn't survive a tab switch
+	m.draggingDivider = -1
+	m.reloadDrawerForContext()
+}
+
+// handleResizeKey drives split-divider resize mode (ctrl+space s). Arrows move
+// the divider adjacent to the focused pane; = equalizes; esc/enter exit. All
+// other keys are swallowed so nothing leaks into the embedded session.
+func (m *model) handleResizeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	tab := m.workspace.ActiveTab()
+	if tab == nil || len(tab.SplitPane.Splits) < 2 {
+		m.resizeMode = false
+		return m, nil
+	}
+	sp := tab.SplitPane
+	n := len(sp.Splits)
+	// Divider adjacent to the focused pane; the last pane adjusts against its
+	// previous neighbour.
+	divider := sp.FocusIdx
+	if divider >= n-1 {
+		divider = n - 2
+	}
+	const step = 2
+
+	switch msg.String() {
+	case "esc", "escape", "enter":
+		m.resizeMode = false
+	case "=":
+		sp.Equalize()
+	case "left":
+		if sp.Orientation == ui.SplitVertical {
+			sp.AdjustRatio(divider, -step)
+		}
+	case "right":
+		if sp.Orientation == ui.SplitVertical {
+			sp.AdjustRatio(divider, step)
+		}
+	case "up":
+		if sp.Orientation == ui.SplitHorizontal {
+			sp.AdjustRatio(divider, -step)
+		}
+	case "down":
+		if sp.Orientation == ui.SplitHorizontal {
+			sp.AdjustRatio(divider, step)
+		}
+	}
+	return m, nil
 }
 
 // handleChordAction executes a workspace chord action.
 func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 	switch action {
+	case ChordResizeMode:
+		if tab := m.workspace.ActiveTab(); tab != nil && len(tab.SplitPane.Splits) > 1 {
+			m.resizeMode = true
+		}
+	case ChordToggleDrawer:
+		return m, m.toggleDrawer()
 	case ChordReturnManager:
 		m.workspace.TabBar.SetActiveByID(ui.HomeTabID)
 		m.mode = viewManager
@@ -1252,6 +1371,10 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 
 // updateCaptures polls tmux capture-pane for visible sessions.
 func (m *model) updateCaptures() {
+	// Keep an open drawer in sync with external writes (/todo, the CLI, a peer
+	// session) — re-read the file each tick unless the user is mid-edit.
+	m.refreshDrawerFromDisk()
+
 	// Update preview in manager view
 	if m.mode == viewManager {
 		if sel := m.selectedItem(); sel != nil && sel.tmuxSes != "" {
@@ -1287,6 +1410,20 @@ func (m *model) updateCaptures() {
 				}
 				if content, err := TmuxCapturePane(s.SessionName); err == nil {
 					s.Terminal.SetContent(content)
+					// Grab the cursor position for the focused split only —
+					// capture-pane doesn't include it, so this is what lets us
+					// draw a real cursor over the session (see TerminalPane.View).
+					if i == tab.SplitPane.FocusIdx {
+						if cx, cy, ok := TmuxCursorPos(s.SessionName); ok {
+							s.Terminal.ShowCursor = true
+							s.Terminal.CursorX = cx
+							s.Terminal.CursorY = cy
+						} else {
+							s.Terminal.ShowCursor = false
+						}
+					} else {
+						s.Terminal.ShowCursor = false
+					}
 					// This session IS visible (we're iterating the active
 					// tab's splits), so use the longer grace period.
 					for j := range m.items {
@@ -1405,6 +1542,8 @@ func (m *model) handleAttention(item *repoItem, level int) {
 
 // closeSplit handles the smart cleanup flow for closing a workspace split.
 func (m model) closeSplit(tab *ui.WorkspaceTab, split *ui.Split) (tea.Model, tea.Cmd) {
+	m.resizeMode = false // dropping a split exits resize mode cleanly
+	m.draggingDivider = -1
 	// Find the item for this split
 	var item *repoItem
 	for i := range m.items {
@@ -1521,6 +1660,16 @@ func (m *model) isShellSession(sesName string) bool {
 // renderWorkspaceStatusBar renders the status bar for workspace view.
 func (m model) renderWorkspaceStatusBar() string {
 	tab := m.workspace.ActiveTab()
+
+	if m.resizeMode {
+		arrows := "←→"
+		if tab != nil && tab.SplitPane.Orientation == ui.SplitHorizontal {
+			arrows = "↑↓"
+		}
+		return ui.KeyStyle.Render(" RESIZE ") + " " +
+			ui.WaitStyle.Render(arrows+" adjust · = equalize · Esc done")
+	}
+
 	tabCount := len(m.workspace.TabBar.Tabs)
 	splitCount := 0
 	if tab != nil {
@@ -1605,7 +1754,7 @@ func (m model) handleBusKey(msg tea.KeyPressMsg, keystroke, key string) (tea.Mod
 	}
 
 	switch key {
-	case "escape":
+	case "esc", "escape":
 		m.workspace.TabBar.SetActiveByID(ui.HomeTabID)
 		m.syncModeFromActiveTab()
 		m.busCompose.Blur()
@@ -1692,4 +1841,3 @@ func (m *model) busScrollBy(delta int) {
 		m.busViewTop = -1
 	}
 }
-

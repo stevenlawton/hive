@@ -38,43 +38,67 @@ type viewItem struct {
 }
 
 func (m model) View() tea.View {
-	var v tea.View
+	var content string
+	var paneCursor *tea.Cursor
 	var layout listLayout
 	switch m.mode {
 	case viewHelp:
-		v = tea.NewView(m.viewHelp())
+		content = m.viewHelp()
 	case viewEdit:
-		v = tea.NewView(m.viewEdit())
+		content = m.viewEdit()
 	case viewConfirm:
-		v = tea.NewView(m.viewConfirmModal())
+		content = m.viewConfirmModal()
 	case viewWorkspace:
 		m.workspace.SetSize(m.width, m.height)
 		statusBar := m.renderWorkspaceStatusBar()
-		v = tea.NewView(m.workspace.View(statusBar))
+		content = m.workspace.View(statusBar)
+		paneCursor = m.workspaceCursorLocal()
+		if m.drawerOpen {
+			panel := m.renderTodoDrawer(m.width, m.drawerPanelHeight())
+			content = overlayBottom(content, panel, m.height)
+			paneCursor = nil // drawer owns focus; its input cursor resolves via the sentinel
+		}
 	case viewBus:
 		m.workspace.TabBar.Width = m.width
 		tabBar := m.workspace.TabBar.View()
-		v = tea.NewView(tabBar + "\n" + m.viewBus())
+		content = tabBar + "\n" + m.viewBus()
 	case viewWorktree:
-		v = tea.NewView(m.viewWorktreeModal())
+		content = m.viewWorktreeModal()
 	case viewAttach:
-		v = tea.NewView("") // TUI hidden during attach
+		content = "" // TUI hidden during attach
 	default:
 		// Manager view — two-pane layout with tab bar always visible
 		m.workspace.TabBar.Width = m.width
 		tabBar := m.workspace.TabBar.View()
 		managerHeight := m.height - 1 // reserve one line for the tab bar
+		drawerPanel := ""
+		if m.drawerOpen {
+			dh := m.drawerPanelHeight()
+			drawerPanel = m.renderTodoDrawer(m.width, dh)
+			managerHeight -= dh
+		}
 		listContent, l := m.viewList()
 		layout = l
 		m.manager.SetSize(m.width, managerHeight)
 		statusBar := m.renderStatusBar() + "\n" + m.renderKeyBarString()
 		managerContent := m.manager.View(listContent, statusBar)
-		v = tea.NewView(tabBar + "\n" + managerContent)
+		content = tabBar + "\n" + managerContent
+		if drawerPanel != "" {
+			content += "\n" + drawerPanel
+		}
 		// Shift layout Y positions down for tab bar
 		for k, y := range layout.itemY {
 			layout.itemY[k] = y + 1
 		}
 		layout.keyBarY++
+	}
+
+	// Locate the sentinel embedded at the active input (text field or session
+	// pane), turn it into a real hardware cursor, and strip it from the frame.
+	content, cur := m.resolveFrameCursor(content, paneCursor)
+	v := tea.NewView(content)
+	if cur != nil {
+		v.Cursor = cur
 	}
 	v.AltScreen = true
 	if m.mode == viewWorkspace {
@@ -98,6 +122,14 @@ func (m model) View() tea.View {
 							return func() tea.Msg { return tabClickMsg{index: idx} }
 						}
 						x += w
+					}
+				}
+				// Press on a divider → start dragging it (takes priority over
+				// pane focus so a divider press doesn't also switch focus).
+				if tab := m.workspace.ActiveTab(); tab != nil {
+					if di := m.dividerHitTest(tab, mouse.X, mouse.Y); di >= 0 {
+						d := di
+						return func() tea.Msg { return dividerPressMsg{index: d} }
 					}
 				}
 				// Click on split pane → focus it
@@ -138,8 +170,17 @@ func (m model) View() tea.View {
 				}
 			}
 		case tea.MouseMotionMsg:
-			// Auto-focus split pane on hover
 			if m.mode == viewWorkspace {
+				// Dragging a divider consumes motion (and suppresses hover-focus).
+				if m.draggingDivider >= 0 {
+					pos := mouse.X
+					if tab := m.workspace.ActiveTab(); tab != nil && tab.SplitPane.Orientation == ui.SplitHorizontal {
+						pos = mouse.Y - 1
+					}
+					p := pos
+					return func() tea.Msg { return dividerDragMsg{pos: p} }
+				}
+				// Auto-focus split pane on hover
 				if tab := m.workspace.ActiveTab(); tab != nil && len(tab.SplitPane.Splits) > 1 {
 					idx := m.splitHitTest(tab, mouse.X, mouse.Y)
 					if idx >= 0 && idx != tab.SplitPane.FocusIdx {
@@ -147,6 +188,10 @@ func (m model) View() tea.View {
 						return func() tea.Msg { return splitClickMsg{index: i} }
 					}
 				}
+			}
+		case tea.MouseReleaseMsg:
+			if m.draggingDivider >= 0 {
+				return func() tea.Msg { return dividerReleaseMsg{} }
 			}
 		case tea.MouseWheelMsg:
 			dir := 1
@@ -159,6 +204,91 @@ func (m model) View() tea.View {
 	}
 
 	return v
+}
+
+// overlayBottom draws panel over the bottom rows of content without resizing
+// the underlying panes — content is normalized to height lines, then the last
+// len(panel) lines are replaced. Used to float the todo drawer over a tab.
+func overlayBottom(content, panel string, height int) string {
+	lines := strings.Split(content, "\n")
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	panelLines := strings.Split(panel, "\n")
+	if len(panelLines) > height {
+		panelLines = panelLines[len(panelLines)-height:]
+	}
+	start := height - len(panelLines)
+	for i, pl := range panelLines {
+		lines[start+i] = pl
+	}
+	return strings.Join(lines, "\n")
+}
+
+// resolveFrameCursor converts the zero-width cursor sentinel embedded in the
+// composed frame into a real hardware cursor. The offset (paneCursor for a
+// session pane, else the focused text field's own cursor) is added to the
+// sentinel's screen position; the sentinel is then stripped from the frame.
+func (m model) resolveFrameCursor(frame string, paneCursor *tea.Cursor) (string, *tea.Cursor) {
+	local := paneCursor
+	if local == nil {
+		local = m.focusedInputCursor()
+	}
+	idx := strings.Index(frame, ui.CursorSentinel)
+	if idx < 0 || local == nil {
+		if idx >= 0 {
+			frame = strings.ReplaceAll(frame, ui.CursorSentinel, "")
+		}
+		return frame, nil
+	}
+	pre := frame[:idx]
+	row := strings.Count(pre, "\n")
+	col := lipgloss.Width(pre[strings.LastIndex(pre, "\n")+1:])
+	frame = strings.ReplaceAll(frame, ui.CursorSentinel, "")
+
+	cur := tea.NewCursor(col+local.X, row+local.Y)
+	cur.Color = local.Color
+	cur.Shape = local.Shape
+	cur.Blink = local.Blink
+	return frame, cur
+}
+
+// focusedInputCursor returns the real cursor of whichever hive text field is
+// focused (nil if none). Fields have their virtual cursor disabled, so
+// Cursor() reports a hardware cursor offset within the field.
+func (m model) focusedInputCursor() *tea.Cursor {
+	switch {
+	case m.drawerOpen && m.drawerInputOn:
+		return m.drawerInput.Cursor()
+	case m.mode == viewWorktree && m.wtFocus < wtFieldCount:
+		return m.wtFields[m.wtFocus].Cursor()
+	case m.mode == viewEdit && m.editFocus < len(m.editFields):
+		return m.editFields[m.editFocus].Cursor()
+	case m.mode == viewBus:
+		return m.busCompose.Cursor()
+	case m.mode == viewPromote:
+		return m.promote.Cursor()
+	case m.filtering:
+		return m.filter.Cursor()
+	}
+	return nil
+}
+
+// workspaceCursorLocal returns the focused session pane's cursor offset (its
+// tmux cursor position, translated to on-screen rows by TerminalPane.View),
+// or nil when the pane isn't showing a cursor (unfocused, scrolled, hidden).
+func (m model) workspaceCursorLocal() *tea.Cursor {
+	term := m.focusedTerminal()
+	if term == nil || !term.CursorResolved {
+		return nil
+	}
+	c := tea.NewCursor(term.CursorLocalX, term.CursorLocalY)
+	c.Color = lipgloss.Color("#ff8c00")
+	c.Blink = true
+	return c
 }
 
 type listLayout struct {
@@ -178,13 +308,13 @@ func (m model) viewList() (string, listLayout) {
 	var content strings.Builder
 
 	if m.filtering {
-		content.WriteString(subtitleStyle.UnsetPadding().Render(" " + m.filter.View()))
+		content.WriteString(subtitleStyle.UnsetPadding().Render(" " + ui.CursorSentinel + m.filter.View()))
 		content.WriteString("\n")
 	}
 
 	if m.mode == viewPromote {
 		content.WriteString(subtitleStyle.UnsetPadding().Render(" Promote to ~/repos/"))
-		content.WriteString(m.promote.View())
+		content.WriteString(ui.CursorSentinel + m.promote.View())
 		content.WriteString("\n")
 	}
 
@@ -384,10 +514,12 @@ func (m model) viewWorktreeModal() string {
 
 	for i, f := range m.wtFields {
 		marker := "  "
+		sentinel := ""
 		if i == m.wtFocus {
 			marker = editActiveStyle.Render("> ")
+			sentinel = ui.CursorSentinel
 		}
-		form.WriteString(marker + f.View() + "\n")
+		form.WriteString(marker + sentinel + f.View() + "\n")
 	}
 
 	check := "[ ]"
@@ -435,10 +567,12 @@ func (m model) viewEdit() string {
 	// Text fields
 	for i, field := range m.editFields {
 		marker := "  "
+		sentinel := ""
 		if i == m.editFocus {
 			marker = editActiveStyle.Render("> ")
+			sentinel = ui.CursorSentinel
 		}
-		b.WriteString(marker + field.View() + "\n")
+		b.WriteString(marker + sentinel + field.View() + "\n")
 	}
 
 	b.WriteString("\n")
@@ -891,7 +1025,7 @@ func (m model) viewBus() string {
 	// Status line above the compose
 	b.WriteString(status + "\n")
 	b.WriteString(dividerStyle.Render(strings.Repeat("─", m.width)) + "\n")
-	b.WriteString("  " + m.busCompose.View() + "\n")
+	b.WriteString("  " + ui.CursorSentinel + m.busCompose.View() + "\n")
 	b.WriteString(helpStyle.UnsetPadding().Render("  enter send · ↑↓ pgup/pgdn home/end scroll · esc back"))
 
 	return b.String()
@@ -899,6 +1033,42 @@ func (m model) viewBus() string {
 
 // splitHitTest returns the split index under the given mouse coordinates,
 // or -1 if the coordinates are outside any split.
+// dividerHitTest returns the index of the divider (between pane i and i+1) the
+// pointer is over, with ±1 cell of forgiveness, or -1. Mirrors splitHitTest's
+// coordinate model (vertical walks X from 0; horizontal walks Y from row 1).
+func (m model) dividerHitTest(tab *ui.WorkspaceTab, mx, my int) int {
+	sp := tab.SplitPane
+	n := len(sp.Splits)
+	if n < 2 {
+		return -1
+	}
+	if sp.Orientation == ui.SplitHorizontal {
+		cum := 1 // tab bar row
+		for i := 0; i < n-1; i++ {
+			cum += sp.Splits[i].Terminal.Height
+			if absInt(my-cum) <= 1 {
+				return i
+			}
+		}
+	} else {
+		cum := 0
+		for i := 0; i < n-1; i++ {
+			cum += sp.Splits[i].Terminal.Width
+			if absInt(mx-cum) <= 1 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
 func (m model) splitHitTest(tab *ui.WorkspaceTab, mx, my int) int {
 	sp := tab.SplitPane
 	if sp.Orientation == ui.SplitHorizontal {

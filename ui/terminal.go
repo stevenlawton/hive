@@ -13,6 +13,12 @@ var scrollStatusStyle = lipgloss.NewStyle().
 	Background(lipgloss.Color("#333333")).
 	Bold(true)
 
+// CursorSentinel is a zero-width marker embedded at the spot where the real
+// terminal cursor should sit. It has display width 0 (so it never shifts
+// layout), survives lipgloss rendering, and is located + stripped from the
+// fully-composed frame just before display. See model.resolveFrameCursor.
+const CursorSentinel = "​"
+
 // TerminalPane renders tmux pane output and optionally forwards input.
 type TerminalPane struct {
 	SessionName  string
@@ -25,6 +31,18 @@ type TerminalPane struct {
 	fullContent  string
 	lastResizeW  int // last width we resized tmux to
 	lastResizeH  int // last height we resized tmux to
+
+	// Real-cursor overlay. tmux capture-pane omits the cursor, so when this
+	// pane is focused we ask tmux where the cursor is (ShowCursor/CursorX/
+	// CursorY, set by the capture tick) and View injects the sentinel at its
+	// content origin, resolving the on-screen offset into CursorLocalX/Y for
+	// the top-level frame to place a hardware cursor. See model.resolveFrameCursor.
+	ShowCursor     bool
+	CursorX        int // tmux pane cursor column (0-based)
+	CursorY        int // tmux pane cursor row (0-based, from top of pane)
+	CursorLocalX   int // resolved column within this pane's rendered content
+	CursorLocalY   int // resolved row within this pane's rendered content
+	CursorResolved bool
 }
 
 // NewTerminalPane creates a terminal pane for the given tmux session.
@@ -159,6 +177,11 @@ func (t *TerminalPane) View() string {
 		contentHeight = 1
 	}
 
+	// carry accumulates SGR state over any rows above the visible slice so
+	// styles that span rows (e.g. full-width diff backgrounds) survive the
+	// per-line reset below. capture-pane -e only emits codes where they
+	// change, so a row's starting state is implicit in the rows before it.
+	carry := newSGRCarry()
 	var rendered string
 	if scrolled {
 		// Frozen — show slice anchored at absolute line position.
@@ -171,17 +194,28 @@ func (t *TerminalPane) View() string {
 		if end > len(allLines) {
 			end = len(allLines)
 		}
+		for _, line := range allLines[:start] {
+			carry.Consume(line)
+		}
 		rendered = strings.Join(allLines[start:end], "\n")
 	} else {
 		// Live / tail mode — show bottom of current capture.
+		all := strings.Split(t.Content, "\n")
+		if drop := len(all) - contentHeight; drop > 0 {
+			for _, line := range all[:drop] {
+				carry.Consume(line)
+			}
+		}
 		rendered = TruncateToHeight(t.Content, contentHeight)
 	}
 
-	// Clamp each line to inner width, reset ANSI state, and erase to
-	// end of line.
+	// Clamp each line to inner width, restore carried ANSI state at the
+	// start, reset at the end, and erase to end of line.
 	lines := strings.Split(rendered, "\n")
 	for i, line := range lines {
-		lines[i] = ClampToWidth(line, iw) + "\033[0m\033[K"
+		prefix := carry.Prefix()
+		carry.Consume(line)
+		lines[i] = prefix + ClampToWidth(line, iw) + "\033[0m\033[K"
 	}
 
 	// Append scroll status bar when paused.
@@ -193,6 +227,26 @@ func (t *TerminalPane) View() string {
 		}
 		status := fmt.Sprintf("⏸ scrolled · %d rows hidden below · end to resume", hidden)
 		lines = append(lines, scrollStatusStyle.Render(ClampToWidth(status, iw))+"\033[K")
+	}
+
+	// Cursor overlay (tail mode only — a frozen scroll has no live cursor).
+	// tmux reports the cursor relative to the top of the pane; the tail view
+	// may have dropped rows off the top, so shift by that amount. Mark the
+	// origin with the sentinel and hand the resolved local offset upward.
+	t.CursorResolved = false
+	if t.ShowCursor && !scrolled && len(lines) > 0 {
+		total := strings.Count(t.Content, "\n") + 1
+		firstShown := 0
+		if total > contentHeight {
+			firstShown = total - contentHeight
+		}
+		row := t.CursorY - firstShown
+		if row >= 0 && row < len(lines) && t.CursorX >= 0 && t.CursorX < iw {
+			lines[0] = CursorSentinel + lines[0]
+			t.CursorLocalX = t.CursorX
+			t.CursorLocalY = row
+			t.CursorResolved = true
+		}
 	}
 
 	return strings.Join(lines, "\n")

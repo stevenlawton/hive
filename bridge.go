@@ -221,10 +221,11 @@ func (m *model) takeoverTelegram() {
 		regKey = repo.DirName
 	}
 
-	claudeCmd := claudeLaunchBase + " --resume " + sessionID
+	args := "--resume " + sessionID
 	if repo.Yolo {
-		claudeCmd += " --permission-mode bypassPermissions"
+		args += " --permission-mode bypassPermissions"
 	}
+	claudeCmd := claudeCommand(args)
 
 	pickupName := TmuxPickupSessionName(repo.DirName)
 	if TmuxHasSession(pickupName) {

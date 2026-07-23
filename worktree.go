@@ -35,6 +35,7 @@ func newWorktreeField(prompt, placeholder, value string) textinput.Model {
 	if value != "" {
 		ti.SetValue(value)
 	}
+	visibleCursorStyle(&ti)
 	return ti
 }
 
@@ -78,7 +79,7 @@ func (m *model) handleWorktreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "ctrl+s", "ctrl+enter":
 		return m, m.createWorktree()
-	case "escape":
+	case "esc", "escape":
 		if m.wtSplitMode {
 			m.mode = viewWorkspace
 			m.wtSplitMode = false
@@ -118,7 +119,7 @@ func (m *model) handleWorktreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		// Enter submits the form (branch has a default, prompt is optional)
 		return m, m.createWorktree()
-	case " ":
+	case "space", " ":
 		if m.wtFocus == wtFieldCount {
 			m.wtYolo = !m.wtYolo
 			return m, nil
@@ -182,14 +183,17 @@ if branch == "" {
 	}
 
 	// Launch Claude in the worktree
-	claudeCmd := claudeLaunchBase
+	args := ""
 	if yolo {
-		claudeCmd = claudeLaunchBase + " --permission-mode bypassPermissions"
+		args = "--permission-mode bypassPermissions"
 	}
 	if prompt != "" {
-		claudeCmd += " -p " + shellQuote(prompt)
+		if args != "" {
+			args += " "
+		}
+		args += "-p " + shellQuote(prompt)
 	}
-	TmuxSendKeys(sessionName, claudeCmd)
+	TmuxSendKeys(sessionName, claudeCommand(args))
 
 	// Add worktree item to the model
 	wtRepo := Repo{

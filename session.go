@@ -11,13 +11,33 @@ import (
 	"github.com/stevenlawton/hive/ui"
 )
 
-// claudeLaunchBase is the base `claude` invocation for every hive-spawned
-// session. `--tools default` forces the full built-in toolset — notably
-// TodoWrite, which the `hive bus todo-hook` (PostToolUse) depends on —
-// regardless of any ambient output-style or plugin config that might
-// otherwise drop it. It only governs built-in tools, so MCP servers
-// (hive_bus, SliceWize) are unaffected.
-const claudeLaunchBase = "claude --tools default"
+// claudeCodeEnvVars are variables the parent claude CLI injects into the
+// environment of subprocesses it spawns. Left in place, they make a
+// hive-launched session behave as a nested child session.
+var claudeCodeEnvVars = []string{
+	"CLAUDE_CODE_CHILD_SESSION",
+	"CLAUDE_CODE_ENTRYPOINT",
+	"CLAUDE_CODE_SESSION_ID",
+	"CLAUDE_CODE_EXECPATH",
+}
+
+// claudeCommand builds a claude launch string with inherited Claude Code
+// session env vars stripped at the shell, so hive-spawned sessions are
+// top-level regardless of what the tmux pane inherited.
+func claudeCommand(args string) string {
+	var b strings.Builder
+	b.WriteString("env")
+	for _, v := range claudeCodeEnvVars {
+		b.WriteString(" -u ")
+		b.WriteString(v)
+	}
+	b.WriteString(" claude")
+	if args != "" {
+		b.WriteString(" ")
+		b.WriteString(args)
+	}
+	return b.String()
+}
 
 // PruneZombieSessions kills tmux sessions whose working directory no
 // longer exists on disk. Covers two categories:
@@ -219,11 +239,11 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 	}
 
 	if withClaude {
-		claudeCmd := claudeLaunchBase
+		args := ""
 		if repo.Yolo {
-			claudeCmd = claudeLaunchBase + " --permission-mode bypassPermissions"
+			args = "--permission-mode bypassPermissions"
 		}
-		TmuxSendKeys(sessionName, claudeCmd)
+		TmuxSendKeys(sessionName, claudeCommand(args))
 		item.status = statusClaude
 	} else {
 		item.status = statusShell
@@ -292,7 +312,7 @@ func (m *model) toggleRemote() tea.Cmd {
 		// Remote is already running
 	} else {
 		// Start remote session
-		if err := TmuxNewSessionWithCmd(rcName, repo.Path, "claude remote-control"); err != nil {
+		if err := TmuxNewSessionWithCmd(rcName, repo.Path, claudeCommand("remote-control")); err != nil {
 			m.err = err
 			return nil
 		}
@@ -316,7 +336,7 @@ func (m *model) startConfiguredRemotes() {
 		if TmuxHasSession(rcName) {
 			continue // already running
 		}
-		if err := TmuxNewSessionWithCmd(rcName, item.repo.Path, "claude remote-control"); err != nil {
+		if err := TmuxNewSessionWithCmd(rcName, item.repo.Path, claudeCommand("remote-control")); err != nil {
 			continue
 		}
 		if item.status == statusNone {
@@ -346,7 +366,7 @@ func (m *model) toggleRemoteFlag() {
 	if item.repo.Remote {
 		rcName := TmuxSessionName(item.repo.DirName, true)
 		if !TmuxHasSession(rcName) {
-			TmuxNewSessionWithCmd(rcName, item.repo.Path, "claude remote-control")
+			TmuxNewSessionWithCmd(rcName, item.repo.Path, claudeCommand("remote-control"))
 			if item.status == statusNone {
 				item.status = statusRemote
 			}

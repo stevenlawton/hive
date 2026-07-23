@@ -96,10 +96,11 @@ alongside Bash/Read/Edit and should be preferred over the CLI:
   know how to unblock you.
 
 Hive automatically injects new unread bus messages at the start of each
-turn (via UserPromptSubmit and SessionStart hooks). When you see a
-'new bus announcement' block at the top of a prompt, read the headlines,
-dig into bodies only if relevant, and reply or engage if you have
-something useful to add.
+turn (UserPromptSubmit + SessionStart hooks) and also between tool calls
+while you work (a PostToolUse hook), so messages reach you mid-task, not
+only at prompt boundaries. When you see a 'new bus announcement' block,
+read the headlines, dig into bodies only if relevant, and reply or engage
+if you have something useful to add.
 
 The legacy CLI (` + "`hive bus intent …`" + `, etc.) still works and is
 equivalent — use whichever is more convenient, but the MCP tools are
@@ -225,6 +226,15 @@ func InstallClaudeHook(hiveBinary string) error {
 	// on the bus.
 	todoCommand := fmt.Sprintf("%s bus todo-hook", hiveBinary)
 	ensureBusHook(hooks, "PostToolUse", todoCommand, "TodoWrite")
+
+	// Also surface the inbox on PostToolUse (all tools) so a heads-down agent
+	// picks up unread messages BETWEEN tool calls, not just at prompt/session
+	// boundaries. PostToolUse stdout isn't read by the model, so this variant
+	// emits JSON hookSpecificOutput.additionalContext (see `bus inbox
+	// --posttooluse`). It shares the same seen-cursor as the prompt/start
+	// hooks, so each message is injected exactly once.
+	inboxJSONCommand := fmt.Sprintf("%s bus inbox --posttooluse", hiveBinary)
+	ensureBusHook(hooks, "PostToolUse", inboxJSONCommand, "")
 
 	// Ensure preferredNotifChannel is set to terminal_bell so Claude Code
 	// emits a BEL character on turn completion — Hive's attention

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/stevenlawton/hive/bus"
 
@@ -11,9 +12,20 @@ import (
 )
 
 func main() {
+	// Drop any Claude Code session vars inherited from a parent claude
+	// process, so sessions hive spawns start as top-level, not children.
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "CLAUDE_CODE_") {
+			os.Unsetenv(k)
+		}
+	}
+
 	// CLI subcommand dispatch — must come before the TUI opens.
 	if len(os.Args) > 1 && os.Args[1] == "bus" {
 		os.Exit(runBusCmd(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "todo" {
+		os.Exit(runTodoCmd(os.Args[2:]))
 	}
 
 	home, _ := os.UserHomeDir()

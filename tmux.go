@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -282,6 +283,29 @@ func TmuxCapturePaneFull(sessionName string) (string, error) {
 	return tmuxOutput(tmuxCapturePaneFullArgs(sessionName)...)
 }
 
+// TmuxCursorPos reports the pane's cursor position (0-based column, row from the
+// top of the visible pane) and whether the cursor is currently visible. tmux's
+// capture-pane omits the cursor entirely, so this is how hive learns where to
+// draw a real cursor over a captured session. ok is false when the running app
+// has hidden the cursor (cursor_flag == 0) or the query fails.
+func TmuxCursorPos(sessionName string) (x, y int, ok bool) {
+	out, err := tmuxOutput("display-message", "-p", "-t", tmuxPaneTarget(sessionName),
+		"-F", "#{cursor_x} #{cursor_y} #{cursor_flag}")
+	if err != nil {
+		return 0, 0, false
+	}
+	fields := strings.Fields(out)
+	if len(fields) < 3 || fields[2] == "0" {
+		return 0, 0, false
+	}
+	cx, err1 := strconv.Atoi(fields[0])
+	cy, err2 := strconv.Atoi(fields[1])
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return cx, cy, true
+}
+
 // bubbleteaToTmuxKey translates a Bubbletea v2 key string to the
 // equivalent tmux send-keys key name.
 func bubbleteaToTmuxKey(key string) string {
@@ -359,6 +383,31 @@ func TmuxSendRawKeys(sessionName string, keys ...string) error {
 		translated[i] = bubbleteaToTmuxKey(k)
 	}
 	cmd := "send-keys -t " + tmuxPaneTarget(sessionName) + " " + strings.Join(translated, " ")
+	return TmuxControlSend(cmd)
+}
+
+// TmuxSendWheel forwards SGR mouse wheel events to a pane, `count` notches at a
+// time. Claude renders fullscreen on the alternate screen and scrolls its
+// transcript only a few lines per wheel notch (scroll:lineUp/lineDown);
+// PageUp/PageDown jump half a viewport, which is too coarse. We send the raw
+// SGR sequence (ESC[<64;1;1M up / ESC[<65;1;1M down) as hex codepoints so tmux
+// passes it straight through to the app, bypassing alternate-scroll's
+// wheel→arrow translation.
+func TmuxSendWheel(sessionName string, up bool, count int) error {
+	if count < 1 {
+		count = 1
+	}
+	// ESC [ < 6 4 ; 1 ; 1 M  — the '4' (0x34) becomes '5' (0x35) for wheel-down.
+	seq := []string{"1b", "5b", "3c", "36", "34", "3b", "31", "3b", "31", "4d"}
+	if !up {
+		seq[4] = "35"
+	}
+	one := strings.Join(seq, " ")
+	hexes := make([]string, count)
+	for i := range hexes {
+		hexes[i] = one
+	}
+	cmd := "send-keys -t " + tmuxPaneTarget(sessionName) + " -H " + strings.Join(hexes, " ")
 	return TmuxControlSend(cmd)
 }
 

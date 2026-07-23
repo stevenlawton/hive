@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stevenlawton/hive/bus"
 )
@@ -151,6 +153,7 @@ func busReplyCmd(args []string) int {
 func busInboxCmd(args []string) int {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	peek := fs.Bool("peek", false, "don't advance the seen cursor")
+	postToolUse := fs.Bool("posttooluse", false, "emit PostToolUse JSON additionalContext instead of plain text")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -182,13 +185,17 @@ func busInboxCmd(args []string) int {
 		return 0
 	}
 
-	fmt.Printf("📬 %d new bus announcement(s) since your last check:\n\n", len(unseen))
-	for _, msg := range unseen {
-		printDigestLine(msg)
+	digest := buildInboxDigest(unseen)
+	if *postToolUse {
+		env, err := postToolUseEnvelope(digest)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "envelope: %v\n", err)
+			return 1
+		}
+		fmt.Println(env)
+	} else {
+		fmt.Print(digest)
 	}
-	fmt.Println()
-	fmt.Println("Use `hive bus read <id>` for full body.")
-	fmt.Println("Use `hive bus announce <headline>` to broadcast, `hive bus reply <id> <text>` to thread.")
 
 	if !*peek {
 		if err := seen.Set(key, b.LatestID()); err != nil {
@@ -239,13 +246,57 @@ func busReadCmd(args []string) int {
 	return 0
 }
 
-func printDigestLine(msg bus.Announcement) {
+func digestLine(msg bus.Announcement) string {
 	icon := msg.Icon()
 	if msg.ReplyTo != "" {
 		icon += "→" + msg.ReplyTo
 	}
 	age := humanAge(time.Since(msg.At))
-	fmt.Printf("  [%s] %s · %s · %s %s\n", msg.ID, age, msg.From, icon, msg.Headline)
+	return fmt.Sprintf("  [%s] %s · %s · %s %s", msg.ID, age, msg.From, icon, msg.Headline)
+}
+
+func printDigestLine(msg bus.Announcement) {
+	fmt.Println(digestLine(msg))
+}
+
+// buildInboxDigest renders the unread-message digest shown to a session — the
+// same text whether it's emitted as plain stdout (UserPromptSubmit/SessionStart)
+// or wrapped as PostToolUse additionalContext.
+func buildInboxDigest(unseen []bus.Announcement) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "📬 %d new bus announcement(s) since your last check:\n\n", len(unseen))
+	for _, msg := range unseen {
+		b.WriteString(digestLine(msg))
+		b.WriteByte('\n')
+	}
+	b.WriteString("\nUse `hive bus read <id>` for full body.\n")
+	b.WriteString("Use `hive bus announce <headline>` to broadcast, `hive bus reply <id> <text>` to thread.\n")
+	return b.String()
+}
+
+// postToolUseEnvelope wraps digest text in the JSON a PostToolUse hook must
+// emit to inject context — plain stdout from PostToolUse only reaches debug
+// logs, not the model. additionalContext is capped at Claude Code's 10k limit
+// (trimmed to a valid UTF-8 boundary).
+func postToolUseEnvelope(context string) (string, error) {
+	const maxContext = 10000
+	if len(context) > maxContext {
+		context = context[:maxContext]
+		for len(context) > 0 && !utf8.ValidString(context) {
+			context = context[:len(context)-1]
+		}
+	}
+	env := map[string]any{
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":     "PostToolUse",
+			"additionalContext": context,
+		},
+	}
+	data, err := json.Marshal(env)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func printFull(msg bus.Announcement) {
