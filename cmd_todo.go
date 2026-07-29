@@ -31,6 +31,8 @@ func runTodoCmd(args []string) int {
 		return runTodoCurrent(args[1:])
 	case "show", "mine":
 		return runTodoShow()
+	case "defer", "park":
+		return runTodoDefer(args[1:])
 	case "normalize", "resave":
 		return runTodoNormalize()
 	case "rm", "del", "delete":
@@ -138,6 +140,22 @@ func runTodoCurrent(args []string) int {
 	return saveAndReport(cwd, updated, fmt.Sprintf("%s #%d: %s", verb, i+1, updated[i].Subject))
 }
 
+// runTodoDefer toggles the parked state on a task.
+func runTodoDefer(args []string) int {
+	cwd := todoCwd()
+	todos := loadTodos(cwd)
+	i, ok := todoIndex(args, len(todos))
+	if !ok {
+		return 1
+	}
+	todos = deferTodo(todos, i)
+	state := "deferred"
+	if !todos[i].Deferred {
+		state = "un-deferred"
+	}
+	return saveAndReport(cwd, todos, fmt.Sprintf("%s #%d: %s", state, i+1, todos[i].Subject))
+}
+
 func runTodoRm(args []string) int {
 	cwd := todoCwd()
 	todos := loadTodos(cwd)
@@ -206,20 +224,24 @@ func saveAndReport(cwd string, todos []Todo, msg string) int {
 func runTodoStatusline() int {
 	cwd := statuslineCwd()
 	todos := loadTodos(cwd)
-	done, total := countDone(todos)
-	if total == 0 {
+	done, active, deferred := todoProgress(todos)
+	if active+deferred == 0 {
 		return 0 // nothing to show
 	}
 	owner := worktreeClaim(cwd)
 	label := "all done ✓"
 	if cur := currentForClaim(todos, owner); cur != nil {
 		if owner != "" && cur.Claim == owner {
-			label = "▸ " + truncStr(cur.Subject, 58) // your claimed task
+			label = "▸ " + truncStr(cur.Subject, 55) // your claimed task
 		} else {
-			label = "next: " + truncStr(cur.Subject, 55) // unclaimed — up for grabs
+			label = "next: " + truncStr(cur.Subject, 52) // unclaimed — up for grabs
 		}
 	}
-	fmt.Printf("%s · %d/%d", label, done, total)
+	out := fmt.Sprintf("%s · %d/%d", label, done, active)
+	if deferred > 0 {
+		out += fmt.Sprintf(" · %d parked", deferred)
+	}
+	fmt.Print(out)
 	return 0
 }
 

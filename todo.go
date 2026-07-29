@@ -18,6 +18,7 @@ import (
 // others have taken. box: ' ' open · '~' claimed · 'x' done.
 type Todo struct {
 	Done        bool
+	Deferred    bool   // parked — kept out of "next" and sunk to the bottom
 	Section     string // the "### " header this task lives under
 	Subject     string // the bold subject (may carry a #NNN id prefix)
 	Description string // free text after " — " (may be empty)
@@ -185,6 +186,8 @@ func parseTodoLine(s string) (Todo, bool) {
 	var t Todo
 	switch s[3] {
 	case ' ', '~': // open / claimed (owner from the marker below)
+	case '-':
+		t.Deferred = true
 	case 'x', 'X':
 		t.Done = true
 	default:
@@ -238,20 +241,28 @@ func formatTodos(todos []Todo) string {
 			order = append(order, sec)
 		}
 	}
+	writeTodo := func(t Todo) {
+		b.WriteString("- [" + t.boxChar() + "] **" + t.Subject + "**")
+		if t.Description != "" {
+			b.WriteString(descSep + t.Description)
+		}
+		if !t.Done && !t.Deferred && t.Claim != "" {
+			b.WriteString(" <!-- @" + t.Claim + " -->")
+		}
+		b.WriteByte('\n')
+	}
 	for _, sec := range order {
 		b.WriteString("\n### " + sec + "\n\n")
+		// Active first, then deferred sunk to the bottom of the section.
 		for _, t := range todos {
-			if t.sectionOrDefault() != sec {
-				continue
+			if t.sectionOrDefault() == sec && !t.Deferred {
+				writeTodo(t)
 			}
-			b.WriteString("- [" + t.boxChar() + "] **" + t.Subject + "**")
-			if t.Description != "" {
-				b.WriteString(descSep + t.Description)
+		}
+		for _, t := range todos {
+			if t.sectionOrDefault() == sec && t.Deferred {
+				writeTodo(t)
 			}
-			if !t.Done && t.Claim != "" {
-				b.WriteString(" <!-- @" + t.Claim + " -->")
-			}
-			b.WriteByte('\n')
 		}
 	}
 	return b.String()
@@ -268,6 +279,8 @@ func (t Todo) boxChar() string {
 	switch {
 	case t.Done:
 		return "x"
+	case t.Deferred:
+		return "-"
 	case t.Claim != "":
 		return "~"
 	default:
@@ -302,10 +315,16 @@ func toggleTodoDone(todos []Todo, i int) []Todo {
 }
 
 // claimTodo toggles owner's claim on task i: claims if free, releases if it's
-// already owner's, and refuses (ok=false) if another worktree holds it.
+// already owner's, and refuses (ok=false) if another worktree holds it. Claiming
+// a deferred task un-parks it (you're picking it up).
 func claimTodo(todos []Todo, i int, owner string) ([]Todo, bool) {
 	if i < 0 || i >= len(todos) || owner == "" || todos[i].Done {
 		return todos, false
+	}
+	if todos[i].Deferred {
+		todos[i].Deferred = false
+		todos[i].Claim = owner
+		return todos, true
 	}
 	switch todos[i].Claim {
 	case owner:
@@ -316,6 +335,20 @@ func claimTodo(todos []Todo, i int, owner string) ([]Todo, bool) {
 		return todos, false // held by another worktree
 	}
 	return todos, true
+}
+
+// deferTodo toggles the parked state on task i. Parking releases any claim and
+// clears done.
+func deferTodo(todos []Todo, i int) []Todo {
+	if i < 0 || i >= len(todos) {
+		return todos
+	}
+	todos[i].Deferred = !todos[i].Deferred
+	if todos[i].Deferred {
+		todos[i].Claim = ""
+		todos[i].Done = false
+	}
+	return todos
 }
 
 // releaseClaim drops every claim held by owner.
@@ -344,27 +377,33 @@ func deleteTodo(todos []Todo, i int) []Todo {
 func currentForClaim(todos []Todo, owner string) *Todo {
 	if owner != "" {
 		for i := range todos {
-			if !todos[i].Done && todos[i].Claim == owner {
+			if !todos[i].Done && !todos[i].Deferred && todos[i].Claim == owner {
 				return &todos[i]
 			}
 		}
 	}
 	for i := range todos {
-		if !todos[i].Done && todos[i].Claim == "" {
+		if !todos[i].Done && !todos[i].Deferred && todos[i].Claim == "" {
 			return &todos[i]
 		}
 	}
 	return nil
 }
 
-func countDone(todos []Todo) (done, total int) {
+// todoProgress counts completed, active (non-deferred), and parked tasks.
+func todoProgress(todos []Todo) (done, active, deferred int) {
 	for _, t := range todos {
-		total++
-		if t.Done {
+		switch {
+		case t.Deferred:
+			deferred++
+		case t.Done:
 			done++
+			active++
+		default:
+			active++
 		}
 	}
-	return done, total
+	return done, active, deferred
 }
 
 // indexSeparator finds the first subject/description separator — " — " (the

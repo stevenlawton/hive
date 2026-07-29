@@ -140,6 +140,62 @@ func TestCurrentForClaim(t *testing.T) {
 	}
 }
 
+func TestReleaseClaimOnlyOwnersClaims(t *testing.T) {
+	// Regression: releasing a claim must not touch, let alone claim, any other
+	// task (reported: `claim clear` grabbing an unrelated ticket).
+	todos := []Todo{
+		{Subject: "a", Claim: "wt1"},
+		{Subject: "b"}, // unclaimed — must stay untouched
+		{Subject: "c", Claim: "wt2"},
+	}
+	todos = releaseClaim(todos, "wt1")
+	if todos[0].Claim != "" {
+		t.Errorf("own claim not released: %+v", todos[0])
+	}
+	if todos[1].Claim != "" {
+		t.Errorf("unclaimed task got a claim: %+v", todos[1])
+	}
+	if todos[2].Claim != "wt2" {
+		t.Errorf("another worktree's claim was disturbed: %+v", todos[2])
+	}
+}
+
+func TestDeferTodo(t *testing.T) {
+	todos := []Todo{{Subject: "a", Claim: "wt1"}}
+	todos = deferTodo(todos, 0)
+	if !todos[0].Deferred || todos[0].Claim != "" {
+		t.Errorf("defer should park + release claim: %+v", todos[0])
+	}
+	if got := todos[0].boxChar(); got != "-" {
+		t.Errorf("deferred boxChar = %q want -", got)
+	}
+	// un-defer toggles back
+	todos = deferTodo(todos, 0)
+	if todos[0].Deferred {
+		t.Errorf("defer toggle failed: %+v", todos[0])
+	}
+	// claiming a deferred task un-parks it
+	todos = deferTodo(todos, 0)
+	todos, ok := claimTodo(todos, 0, "wt1")
+	if !ok || todos[0].Deferred || todos[0].Claim != "wt1" {
+		t.Errorf("claiming a deferred task should un-park + claim: %+v ok=%v", todos[0], ok)
+	}
+}
+
+func TestCurrentForClaimSkipsDeferred(t *testing.T) {
+	todos := []Todo{
+		{Subject: "parked", Deferred: true},
+		{Subject: "free"},
+	}
+	if c := currentForClaim(todos, "wt3"); c == nil || c.Subject != "free" {
+		t.Errorf("next should skip deferred, got %+v", c)
+	}
+	// only a deferred task left → no "next"
+	if c := currentForClaim([]Todo{{Subject: "p", Deferred: true}}, "wt3"); c != nil {
+		t.Errorf("deferred-only should yield no next, got %+v", c)
+	}
+}
+
 func TestToggleDoneClearsClaim(t *testing.T) {
 	todos := []Todo{{Subject: "a", Claim: "wt1"}}
 	todos = toggleTodoDone(todos, 0)

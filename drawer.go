@@ -242,6 +242,9 @@ func (m model) handleDrawerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else if m.drawerCursor >= 0 && m.drawerCursor < len(m.drawerTodos) {
 			m.err = fmt.Errorf("task claimed by %s", m.drawerTodos[m.drawerCursor].Claim)
 		}
+	case ">":
+		m.drawerTodos = deferTodo(m.drawerTodos, m.drawerCursor)
+		m.persistDrawer()
 	case "d":
 		m.drawerTodos = deleteTodo(m.drawerTodos, m.drawerCursor)
 		if m.drawerCursor >= len(m.drawerTodos) {
@@ -278,6 +281,7 @@ var (
 	drawerDescStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
 	drawerClaimedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#777777"))
 	drawerClaimTagStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#0088cc"))
+	drawerDeferStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Italic(true)
 )
 
 // drawerLine is one rendered row in the drawer: a section header (todoIdx -1)
@@ -310,13 +314,17 @@ func (m model) renderTodoDrawer(width, height int) string {
 	if height < 3 {
 		height = 3
 	}
-	done, total := countDone(m.drawerTodos)
+	done, active, deferred := todoProgress(m.drawerTodos)
 
 	title := " TODO — " + m.drawerRepoName
 	if m.drawerClaim != "" {
 		title += " @" + m.drawerClaim
 	}
-	title += fmt.Sprintf("  (%d/%d done)", done, total)
+	title += fmt.Sprintf("  (%d/%d done", done, active)
+	if deferred > 0 {
+		title += fmt.Sprintf(" · %d parked", deferred)
+	}
+	title += ")"
 	lines := []string{
 		dividerStyle.Render(strings.Repeat("─", width)),
 		drawerTitleStyle.Render(title),
@@ -353,7 +361,7 @@ func (m model) renderTodoDrawer(width, height int) string {
 	if m.drawerInputOn {
 		lines = append(lines, "  "+ui.CursorSentinel+m.drawerInput.View())
 	} else {
-		lines = append(lines, drawerHintStyle.Render("  a add · e edit · space done · ~ claim · d delete · j/k move · esc close"))
+		lines = append(lines, drawerHintStyle.Render("  a add · e edit · space done · ~ claim · > park · d delete · j/k move · esc close"))
 	}
 
 	if len(lines) > height {
@@ -389,6 +397,8 @@ func drawerRow(t Todo, selected bool, myClaim string, width int) string {
 	switch {
 	case t.Done:
 		box, subjStyled = "[x]", drawerDoneStyle.Render(subject)
+	case t.Deferred:
+		box, subjStyled = "[-]", drawerDeferStyle.Render(subject) // parked
 	case t.Claim != "" && t.Claim == myClaim:
 		box, subjStyled = drawerCurStyle.Render("[~]"), drawerCurStyle.Render(subject) // mine
 	case t.Claim != "":
