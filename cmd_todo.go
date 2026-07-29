@@ -29,6 +29,8 @@ func runTodoCmd(args []string) int {
 		return runTodoSetDone(args[1:], false)
 	case "current", "cur", "claim":
 		return runTodoCurrent(args[1:])
+	case "show", "mine":
+		return runTodoShow()
 	case "rm", "del", "delete":
 		return runTodoRm(args[1:])
 	default:
@@ -146,6 +148,21 @@ func runTodoRm(args []string) int {
 	return saveAndReport(cwd, todos, "removed: "+removed)
 }
 
+// runTodoShow prints this worktree's claimed task in a structured form for the
+// /pickup skill to load context from. Nothing claimed → a hint.
+func runTodoShow() int {
+	cwd := todoCwd()
+	owner := worktreeClaim(cwd)
+	for _, t := range loadTodos(cwd) {
+		if !t.Done && owner != "" && t.Claim == owner {
+			fmt.Printf("section: %s\nsubject: %s\ndescription: %s\n", t.sectionOrDefault(), t.Subject, t.Description)
+			return 0
+		}
+	}
+	fmt.Println("(no task claimed in this worktree — run: hive todo claim <n>)")
+	return 0
+}
+
 // todoIndex parses a 1-based task number from args and bounds-checks it.
 func todoIndex(args []string, n int) (int, bool) {
 	if len(args) == 0 {
@@ -191,8 +208,10 @@ func runTodoStatusline() int {
 	return 0
 }
 
-// statuslineCwd extracts the working directory from the JSON Claude Code sends
-// on stdin, falling back to the process cwd.
+// statuslineCwd extracts the session's working directory from the JSON Claude
+// Code sends on stdin. Prefer `cwd` — for a split running in a worktree it's
+// that worktree, whereas `workspace.current_dir` can resolve to the project
+// root (main), which would make every split claim as the same branch.
 func statuslineCwd() string {
 	if data, err := io.ReadAll(os.Stdin); err == nil && len(data) > 0 {
 		var p struct {
@@ -202,11 +221,11 @@ func statuslineCwd() string {
 			} `json:"workspace"`
 		}
 		if json.Unmarshal(data, &p) == nil {
-			if p.Workspace.CurrentDir != "" {
-				return p.Workspace.CurrentDir
-			}
 			if p.Cwd != "" {
 				return p.Cwd
+			}
+			if p.Workspace.CurrentDir != "" {
+				return p.Workspace.CurrentDir
 			}
 		}
 	}
@@ -215,3 +234,4 @@ func statuslineCwd() string {
 	}
 	return "."
 }
+

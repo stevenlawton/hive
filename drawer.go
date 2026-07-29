@@ -56,6 +56,15 @@ func (m *model) toggleDrawer() tea.Cmd {
 func (m model) drawerTargetRepo() (path, name string, ok bool) {
 	if m.mode == viewWorkspace {
 		if tab := m.workspace.ActiveTab(); tab != nil {
+			// Prefer the focused split's session — each split is its own
+			// worktree, so the drawer claims for the pane you're looking at.
+			if split := tab.SplitPane.FocusedSplit(); split != nil && split.SessionName != "" {
+				for i := range m.items {
+					if m.items[i].tmuxSes == split.SessionName {
+						return m.items[i].repo.Path, m.items[i].repo.Name, true
+					}
+				}
+			}
 			for i := range m.items {
 				if m.items[i].repo.DirName == tab.ID {
 					return m.items[i].repo.Path, m.items[i].repo.Name, true
@@ -302,9 +311,14 @@ func (m model) renderTodoDrawer(width, height int) string {
 	}
 	done, total := countDone(m.drawerTodos)
 
+	title := " TODO — " + m.drawerRepoName
+	if m.drawerClaim != "" {
+		title += " @" + m.drawerClaim
+	}
+	title += fmt.Sprintf("  (%d/%d done)", done, total)
 	lines := []string{
 		dividerStyle.Render(strings.Repeat("─", width)),
-		drawerTitleStyle.Render(fmt.Sprintf(" TODO — %s  (%d/%d done)", m.drawerRepoName, done, total)),
+		drawerTitleStyle.Render(title),
 	}
 
 	bodyRows := height - 3 // divider + title + hint

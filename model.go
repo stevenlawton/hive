@@ -536,6 +536,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		m.reloadDrawerForContext() // drawer follows the focused split's worktree
 		return m, nil
 	case dividerPressMsg:
 		m.draggingDivider = msg.index
@@ -1275,10 +1276,12 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 		if tab := m.workspace.ActiveTab(); tab != nil {
 			tab.SplitPane.FocusLeft()
 		}
+		m.reloadDrawerForContext() // drawer follows the focused split's worktree
 	case ChordFocusRight:
 		if tab := m.workspace.ActiveTab(); tab != nil {
 			tab.SplitPane.FocusRight()
 		}
+		m.reloadDrawerForContext()
 	case ChordVSplit, ChordHSplit:
 		tab := m.workspace.ActiveTab()
 		if tab == nil {
