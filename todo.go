@@ -147,12 +147,24 @@ func replaceBlock(content, blockBody string) string {
 	return content + sep + "\n" + strings.Join(block, "\n") + "\n"
 }
 
+// blockBounds finds the TASKS:BEGIN/END marker lines. Only real HTML-comment
+// marker lines (trimmed, starting with "<!--") qualify — so prose that merely
+// mentions the marker names (a "how this file works" note, a changelog entry)
+// can't latch a boundary onto the wrong line and eat everything between it and
+// the real END. END is only accepted after BEGIN is found.
 func blockBounds(lines []string) (begin, end int) {
 	begin, end = -1, -1
 	for i, l := range lines {
-		if begin < 0 && strings.Contains(l, "TASKS:BEGIN") {
-			begin = i
-		} else if strings.Contains(l, "TASKS:END") {
+		if !strings.HasPrefix(strings.TrimSpace(l), "<!--") {
+			continue
+		}
+		if begin < 0 {
+			if strings.Contains(l, "TASKS:BEGIN") {
+				begin = i
+			}
+			continue
+		}
+		if strings.Contains(l, "TASKS:END") {
 			end = i
 			break
 		}

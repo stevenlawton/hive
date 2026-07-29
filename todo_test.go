@@ -89,6 +89,36 @@ func TestReplaceBlockPreservesSurroundings(t *testing.T) {
 	}
 }
 
+func TestBlockBoundsIgnoresProseMentions(t *testing.T) {
+	// Regression: prose that names the markers above the block must not latch
+	// the boundary onto itself (which ate the real marker + intro lines).
+	content := "# Title\n\n" +
+		"Edit with `hive todo`. Anything outside the `TASKS:BEGIN`/`TASKS:END` markers is left alone.\n\n" +
+		"---\n\n" +
+		tasksBegin + "\nLast sync: **x**\n- [ ] **old**\n" + tasksEnd + "\n\n## Notes\nkeep\n"
+
+	out := replaceBlock(content, "### S\n\n- [ ] **new**\n")
+
+	if !strings.Contains(out, "Anything outside the") {
+		t.Errorf("prose marker-mention line was eaten:\n%s", out)
+	}
+	if strings.Count(out, tasksBegin) != 1 {
+		t.Errorf("real BEGIN marker lost/duplicated (count=%d):\n%s", strings.Count(out, tasksBegin), out)
+	}
+	if !strings.Contains(out, "## Notes") || !strings.Contains(out, "new") || strings.Contains(out, "old") {
+		t.Errorf("block not replaced correctly:\n%s", out)
+	}
+}
+
+func TestBlockBoundsProseEndMention(t *testing.T) {
+	// A prose TASKS:END mention above the block must not set end with begin=-1.
+	content := "note: the `TASKS:END` marker closes the block\n\n" +
+		tasksBegin + "\n- [ ] **a**\n" + tasksEnd + "\n"
+	if got := parseTodos(extractBlock(content)); len(got) != 1 || got[0].Subject != "a" {
+		t.Errorf("extractBlock fooled by a prose END mention: %+v", got)
+	}
+}
+
 func TestReplaceBlockScaffoldsWhenAbsent(t *testing.T) {
 	out := replaceBlock("", "### S\n\n- [ ] **task**\n")
 	if got := parseTodos(extractBlock(out)); len(got) != 1 || got[0].Subject != "task" {
