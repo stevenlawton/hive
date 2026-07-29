@@ -125,10 +125,11 @@ func (m *model) refreshDrawerFromDisk() {
 	}
 }
 
-// splitSubjectDesc parses drawer input "subject — description" into its parts.
+// splitSubjectDesc parses drawer input "subject - description" (accepting an
+// em-dash too) into its parts.
 func splitSubjectDesc(s string) (subject, desc string) {
-	if i := strings.Index(s, emDash); i >= 0 {
-		return strings.TrimSpace(s[:i]), strings.TrimSpace(s[i+len(emDash):])
+	if i := indexSeparator(s); i >= 0 {
+		return strings.TrimSpace(s[:i]), trimSeparator(s[i:])
 	}
 	return strings.TrimSpace(s), ""
 }
@@ -136,7 +137,7 @@ func splitSubjectDesc(s string) (subject, desc string) {
 // todoEditText reconstructs the editable "subject — description" line.
 func todoEditText(t Todo) string {
 	if t.Description != "" {
-		return t.Subject + emDash + t.Description
+		return t.Subject + descSep + t.Description
 	}
 	return t.Subject
 }
@@ -381,7 +382,7 @@ func drawerRow(t Todo, selected bool, myClaim string, width int) string {
 	rem := avail - len([]rune(subject))
 	desc := ""
 	if t.Description != "" && rem > 3 {
-		desc = truncStr(emDash+t.Description, rem)
+		desc = truncStr(descSep+t.Description, rem)
 	}
 
 	var box, subjStyled string

@@ -28,7 +28,10 @@ const (
 	defaultSection = "Tasks"
 	tasksBegin     = "<!-- TASKS:BEGIN (managed by hive — edit tasks via the drawer / `hive todo`, not by hand) -->"
 	tasksEnd       = "<!-- TASKS:END -->"
-	emDash         = " — "
+	// descSep is the subject/description separator hive writes. A hyphen (not an
+	// em-dash) so it survives a unicode normalizer unchanged — no git churn. The
+	// parser (indexSeparator/trimSeparator) still accepts an em-dash on read.
+	descSep = " - "
 )
 
 // mainWorktree resolves a repo's primary worktree — the first entry of
@@ -207,12 +210,11 @@ func parseTodoLine(s string) (Todo, bool) {
 	if strings.HasPrefix(rest, "**") {
 		if c := strings.Index(rest[2:], "**"); c >= 0 {
 			subject = rest[2 : 2+c]
-			tail := strings.TrimSpace(rest[2+c+2:])
-			description = strings.TrimSpace(strings.TrimPrefix(tail, strings.TrimSpace(emDash)))
+			description = trimSeparator(rest[2+c+2:])
 		}
-	} else if k := strings.Index(rest, emDash); k >= 0 {
-		subject = strings.TrimSpace(rest[:k])
-		description = strings.TrimSpace(rest[k+len(emDash):])
+	} else if i := indexSeparator(rest); i >= 0 {
+		subject = strings.TrimSpace(rest[:i])
+		description = trimSeparator(rest[i:])
 	}
 	if subject == "" {
 		return Todo{}, false
@@ -244,7 +246,7 @@ func formatTodos(todos []Todo) string {
 			}
 			b.WriteString("- [" + t.boxChar() + "] **" + t.Subject + "**")
 			if t.Description != "" {
-				b.WriteString(emDash + t.Description)
+				b.WriteString(descSep + t.Description)
 			}
 			if !t.Done && t.Claim != "" {
 				b.WriteString(" <!-- @" + t.Claim + " -->")
@@ -363,6 +365,30 @@ func countDone(todos []Todo) (done, total int) {
 		}
 	}
 	return done, total
+}
+
+// indexSeparator finds the first subject/description separator — " — " (the
+// em-dash hive writes) or " - " (what a unicode normalizer leaves behind) — or
+// -1 if neither is present.
+func indexSeparator(s string) int {
+	em := strings.Index(s, " — ")
+	hy := strings.Index(s, " - ")
+	switch {
+	case em < 0:
+		return hy
+	case hy < 0:
+		return em
+	case hy < em:
+		return hy
+	default:
+		return em
+	}
+}
+
+// trimSeparator strips a leading separator run (em-dashes, hyphens, spaces) so
+// the description survives an em-dash→hyphen normalizer without leaking a "- ".
+func trimSeparator(s string) string {
+	return strings.TrimLeft(strings.TrimSpace(s), "—- ")
 }
 
 // truncStr shortens s to at most max display runes, adding an ellipsis.

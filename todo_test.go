@@ -13,6 +13,9 @@ func TestParseTodoLine(t *testing.T) {
 		desc    string
 	}{
 		{"- [ ] **#142 fix cache** — add a bounded cache", true, false, "", "#142 fix cache", "add a bounded cache"},
+		{"- [ ] **subj** - hyphen sep (normalized)", true, false, "", "subj", "hyphen sep (normalized)"},
+		{"- [ ] **subj** — - leaked double sep", true, false, "", "subj", "leaked double sep"},
+		{"- [ ] plain - hyphen desc", true, false, "", "plain", "hyphen desc"},
 		{"- [~] **claimed one** — desc <!-- @feature-x -->", true, false, "feature-x", "claimed one", "desc"},
 		{"- [x] **done thing** — it shipped", true, true, "", "done thing", "it shipped"},
 		{"- [ ] plain subject — no bold", true, false, "", "plain subject", "no bold"},

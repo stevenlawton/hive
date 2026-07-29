@@ -31,6 +31,8 @@ func runTodoCmd(args []string) int {
 		return runTodoCurrent(args[1:])
 	case "show", "mine":
 		return runTodoShow()
+	case "normalize", "resave":
+		return runTodoNormalize()
 	case "rm", "del", "delete":
 		return runTodoRm(args[1:])
 	default:
@@ -63,7 +65,7 @@ func runTodoList() int {
 		}
 		line := fmt.Sprintf("%d  [%s] %s", i+1, t.boxChar(), t.Subject)
 		if t.Description != "" {
-			line += emDash + t.Description
+			line += descSep + t.Description
 		}
 		if !t.Done && t.Claim != "" {
 			if t.Claim == mine {
@@ -146,6 +148,19 @@ func runTodoRm(args []string) int {
 	removed := todos[i].Subject
 	todos = deleteTodo(todos, i)
 	return saveAndReport(cwd, todos, "removed: "+removed)
+}
+
+// runTodoNormalize re-reads and re-writes the block, cleaning up formatting
+// drift (e.g. separator artifacts left by an em-dash→hyphen normalizer).
+func runTodoNormalize() int {
+	cwd := todoCwd()
+	todos := loadTodos(cwd)
+	if err := saveTodos(cwd, todos); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("normalized %d tasks\n", len(todos))
+	return 0
 }
 
 // runTodoShow prints this worktree's claimed task in a structured form for the
@@ -234,4 +249,3 @@ func statuslineCwd() string {
 	}
 	return "."
 }
-
