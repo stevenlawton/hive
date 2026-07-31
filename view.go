@@ -912,7 +912,7 @@ func (m model) renderBusLines() []string {
 			icon = busReplyStyle.Render("💬")
 		}
 		ts := busTimeStyle.Render(msg.At.Format("15:04"))
-		from := busFromStyle.Render(msg.From)
+		from := busFromStyle.Render(msg.From + msg.AutoMarker())
 		idShort := msg.ID
 		if len(idShort) > 12 {
 			idShort = idShort[:12]

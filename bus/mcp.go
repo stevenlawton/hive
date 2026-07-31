@@ -133,24 +133,34 @@ func initializeResult() map[string]any {
 // because LLMs pick up specific named tools more reliably than generic
 // tools with discriminator parameters.
 func toolDefinitions() []map[string]any {
-	return []map[string]any{
-		announceTool(
-			"hive_bus_intent",
-			"Announce on the Hive bus that you are about to work on something. Use this BEFORE making changes to shared code, interfaces, or types so peer Claude sessions in other worktrees can flag conflicts or offer context. Short headlines are best — one sentence on what you're about to touch.",
-		),
-		announceTool(
-			"hive_bus_waiting",
-			"Announce on the Hive bus that you are blocked waiting on something — a code review, another worktree's change, a deployment, etc. Peer sessions can see what you're waiting on and chime in if they can unblock you.",
-		),
-		announceTool(
-			"hive_bus_done",
-			"Announce on the Hive bus that you have finished something. Use this after committing a significant change, completing a task, or resolving a blocker so peers know the work is settled and they can plan around it.",
-		),
+	tools := []map[string]any{}
+
+	// An auto-responder shares its worktree's bus identity, so it may not post
+	// coordination verbs — see CheckAutoVerb. Withholding the tools keeps it
+	// from trying; Announce refuses anyway if it finds another route.
+	if !IsAutoResponder() {
+		tools = append(tools,
+			announceTool(
+				"hive_bus_intent",
+				"Announce on the Hive bus that you are about to work on something. Use this BEFORE making changes to shared code, interfaces, or types so peer Claude sessions in other worktrees can flag conflicts or offer context. Short headlines are best — one sentence on what you're about to touch.",
+			),
+			announceTool(
+				"hive_bus_waiting",
+				"Announce on the Hive bus that you are blocked waiting on something — a code review, another worktree's change, a deployment, etc. Peer sessions can see what you're waiting on and chime in if they can unblock you.",
+			),
+			announceTool(
+				"hive_bus_done",
+				"Announce on the Hive bus that you have finished something. Use this after committing a significant change, completing a task, or resolving a blocker so peers know the work is settled and they can plan around it.",
+			),
+		)
+	}
+
+	tools = append(tools,
 		announceTool(
 			"hive_bus_ask",
 			"Ask peer Claude sessions on the Hive bus for information you don't have — 'anyone using X?', 'who owns Y?', 'is Z still valid?'. Peers in other worktrees may have the answer from work they're doing. Replies arrive in your inbox digest on your next turn.",
 		),
-		{
+		map[string]any{
 			"name":        "hive_bus_reply",
 			"description": "Reply to a specific existing bus message by its id. Use when you saw a peer's announcement or question in your inbox digest and have something useful to tell them. Keeps the conversation threaded.",
 			"inputSchema": map[string]any{
@@ -172,7 +182,7 @@ func toolDefinitions() []map[string]any {
 				"required": []string{"msg_id", "text"},
 			},
 		},
-		{
+		map[string]any{
 			"name":        "hive_bus_list",
 			"description": "List recent messages on the Hive bus. Use when you want to see the full recent chatter — the inbox digest only shows unread messages, but this shows everything. Returns headline, sender, kind, and id so you can hive_bus_read <id> for details or hive_bus_reply <id> to thread.",
 			"inputSchema": map[string]any{
@@ -185,7 +195,7 @@ func toolDefinitions() []map[string]any {
 				},
 			},
 		},
-		{
+		map[string]any{
 			"name":        "hive_bus_read",
 			"description": "Read the full body of one bus message by its id. Use when a headline in the inbox digest or hive_bus_list caught your attention and you want the full details before deciding how to respond.",
 			"inputSchema": map[string]any{
@@ -199,7 +209,9 @@ func toolDefinitions() []map[string]any {
 				"required": []string{"id"},
 			},
 		},
-	}
+	)
+
+	return tools
 }
 
 // announceTool is a helper for building the three lifecycle announce
@@ -339,7 +351,7 @@ func callList(b *Bus, id json.RawMessage, raw json.RawMessage) *jsonRPCResponse 
 	var sb strings.Builder
 	for _, m := range msgs {
 		age := m.At.Format("15:04")
-		fmt.Fprintf(&sb, "[%s] %s · %s · %s %s\n", m.ID, age, m.From, m.Icon(), m.Headline)
+		fmt.Fprintf(&sb, "[%s] %s · %s%s · %s %s\n", m.ID, age, m.From, m.AutoMarker(), m.Icon(), m.Headline)
 		if m.ReplyTo != "" {
 			fmt.Fprintf(&sb, "      ↳ reply to %s\n", m.ReplyTo)
 		}
@@ -365,7 +377,7 @@ func callRead(b *Bus, id json.RawMessage, raw json.RawMessage) *jsonRPCResponse 
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "id:       %s\n", msg.ID)
-	fmt.Fprintf(&sb, "from:     %s\n", msg.From)
+	fmt.Fprintf(&sb, "from:     %s%s\n", msg.From, msg.AutoMarker())
 	fmt.Fprintf(&sb, "at:       %s\n", msg.At.Format("2006-01-02 15:04:05"))
 	fmt.Fprintf(&sb, "kind:     %s\n", msg.KindOrDefault())
 	if msg.ReplyTo != "" {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -123,6 +124,12 @@ func busAnnounceCmd(args []string, defaultKind string) int {
 	}
 	sent, err := b.Announce(msg)
 	if err != nil {
+		var verbErr bus.AutoVerbError
+		if errors.As(err, &verbErr) {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "       use: hive bus reply <id> \"...\"\n")
+			return 3
+		}
 		fmt.Fprintf(os.Stderr, "announce: %v\n", err)
 		return 1
 	}
@@ -252,7 +259,7 @@ func digestLine(msg bus.Announcement) string {
 		icon += "→" + msg.ReplyTo
 	}
 	age := humanAge(time.Since(msg.At))
-	return fmt.Sprintf("  [%s] %s · %s · %s %s", msg.ID, age, msg.From, icon, msg.Headline)
+	return fmt.Sprintf("  [%s] %s · %s%s · %s %s", msg.ID, age, msg.From, msg.AutoMarker(), icon, msg.Headline)
 }
 
 func printDigestLine(msg bus.Announcement) {
@@ -306,7 +313,7 @@ func printFull(msg bus.Announcement) {
 		icon = "💬 reply to " + msg.ReplyTo
 	}
 	fmt.Printf("id:       %s\n", msg.ID)
-	fmt.Printf("from:     %s\n", msg.From)
+	fmt.Printf("from:     %s%s\n", msg.From, msg.AutoMarker())
 	fmt.Printf("at:       %s\n", msg.At.Format(time.RFC3339))
 	fmt.Printf("kind:     %s\n", icon)
 	fmt.Printf("headline: %s\n", msg.Headline)

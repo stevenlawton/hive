@@ -76,3 +76,24 @@ func TestPostToolUseEnvelopeShape(t *testing.T) {
 		t.Errorf("additionalContext = %q", parsed.HookSpecificOutput.AdditionalContext)
 	}
 }
+
+// A responder may still post a question, which carries no ReplyTo. Left
+// unguarded that wakes every other peer's responder, each free to ask again —
+// so nothing a responder emits may trigger another round.
+func TestResponderOutputDoesNotTriggerResponders(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  bus.Announcement
+		want bool
+	}{
+		{"fresh intent from a session", bus.Announcement{Kind: bus.KindIntent}, true},
+		{"reply", bus.Announcement{ReplyTo: "msg_abc"}, false},
+		{"auto reply", bus.Announcement{ReplyTo: "msg_abc", Auto: true}, false},
+		{"auto question", bus.Announcement{Kind: bus.KindQuestion, Auto: true}, false},
+	}
+	for _, tc := range cases {
+		if got := shouldTriggerResponders(tc.msg); got != tc.want {
+			t.Errorf("%s: shouldTriggerResponders = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

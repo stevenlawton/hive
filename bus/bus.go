@@ -43,9 +43,15 @@ func Open(self string) (*Bus, error) {
 // message-specific fields (headline, body, etc.); the bus fills in ID, From,
 // and At.
 func (b *Bus) Announce(msg Announcement) (Announcement, error) {
+	// Single choke point for the auto-responder rule, so every write path —
+	// CLI, MCP, and anything added later — is covered by construction.
+	if err := CheckAutoVerb(msg); err != nil {
+		return Announcement{}, err
+	}
 	msg.ID = newID()
 	msg.From = b.Self
 	msg.At = time.Now()
+	msg.Auto = IsAutoResponder()
 	if err := b.store.Append(msg); err != nil {
 		return Announcement{}, err
 	}

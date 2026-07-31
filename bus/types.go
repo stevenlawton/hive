@@ -29,6 +29,17 @@ type Announcement struct {
 	Body     string    `json:"body,omitempty"`
 	Touches  []string  `json:"touches,omitempty"`  // file globs the work affects
 	ReplyTo  string    `json:"reply_to,omitempty"` // parent message id
+	Auto     bool      `json:"auto,omitempty"`     // posted by the bus auto-responder, not the worktree's own session
+}
+
+// AutoMarker returns a suffix identifying messages posted by the bus
+// auto-responder. It shares the worktree's sender id, so without this a
+// reader cannot tell it from the session a human is driving.
+func (a Announcement) AutoMarker() string {
+	if a.Auto {
+		return " 🤖auto"
+	}
+	return ""
 }
 
 // KindOrDefault returns the announcement's Kind, defaulting to KindFYI if empty.

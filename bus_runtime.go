@@ -87,9 +87,7 @@ func (r *busRuntime) Stop() {
 // For each active peer (excluding the sender), it spawns a one-shot
 // `claude -p` responder. Loop guard: replies don't trigger responders.
 func (r *busRuntime) handleNewMessage(ctx context.Context, msg bus.Announcement, peers []bus.Peer) {
-	// Skip replies — they're responses, not triggers for another round of
-	// responders. Without this guard we'd get reply chains forever.
-	if msg.ReplyTo != "" {
+	if !shouldTriggerResponders(msg) {
 		return
 	}
 
@@ -112,6 +110,17 @@ func (r *busRuntime) handleNewMessage(ctx context.Context, msg bus.Announcement,
 
 		go r.runResponder(ctx, peer, msg)
 	}
+}
+
+// shouldTriggerResponders reports whether a new announcement should fan out to
+// the peer worktrees' responders.
+//
+// Replies are responses, not triggers — without that guard we'd get reply
+// chains forever. A responder's own output is excluded for the same reason at
+// one remove: a responder may still post a question, which carries no ReplyTo
+// and would otherwise wake every other peer, each free to ask again.
+func shouldTriggerResponders(msg bus.Announcement) bool {
+	return msg.ReplyTo == "" && !msg.Auto
 }
 
 func (r *busRuntime) runResponder(ctx context.Context, peer bus.Peer, msg bus.Announcement) {

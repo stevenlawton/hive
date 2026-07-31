@@ -61,6 +61,7 @@ func Respond(ctx context.Context, opts RespondOptions) error {
 	cmd.Dir = opts.Peer.Path
 	cmd.Env = append(cmd.Environ(),
 		"HIVE_SENDER="+opts.Peer.Name,
+		AutoResponderEnv+"=1",
 	)
 
 	var stdout, stderr bytes.Buffer
@@ -108,11 +109,15 @@ Respond using the hive bus CLI:
 `)
 	fmt.Fprintf(&b, "  %s bus reply %s \"your reply text\"\n", hive, msg.ID)
 	fmt.Fprintf(&b, "  %s bus ask     \"follow-up question\"\n", hive)
-	fmt.Fprintf(&b, "  %s bus intent  \"I'm about to X\"\n", hive)
-	fmt.Fprintf(&b, "  %s bus waiting \"blocked on X\"\n", hive)
-	fmt.Fprintf(&b, "  %s bus done    \"X finished\"\n", hive)
 
 	b.WriteString(`
+Those two are the only verbs available to you. You are an automated responder
+sharing this worktree's bus identity, so you cannot post intent/waiting/done —
+a claim or release from you is indistinguishable from one made by the session
+the human is driving, and peers act on it. Anything you do post is marked as
+automated. If the worktree needs to claim or release a shared resource, say so
+in a reply and leave it to the session that owns the work.
+
 Guidelines:
 - If the message is NOT relevant to your worktree, do nothing — just exit.
   Do not post anything; do not reply "not relevant". Silence is the default.
