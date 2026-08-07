@@ -376,3 +376,42 @@ func TestNewTodoIDAvoidsCollisions(t *testing.T) {
 		taken[id] = true
 	}
 }
+
+func TestResolveTodoRef(t *testing.T) {
+	todos := []Todo{
+		{Subject: "first", ID: "kdx"},
+		{Subject: "second", ID: "mfp"},
+		{Subject: "third", ID: "qrz"},
+	}
+	cases := []struct {
+		arg  string
+		want int
+		ok   bool
+	}{
+		{"kdx", 0, true},
+		{"KDX", 0, true},  // case-insensitive
+		{"qrz", 2, true},
+		{"1", 0, true},    // positional fallback
+		{"3", 2, true},
+		{"0", 0, false},   // positions are 1-based
+		{"4", 0, false},   // out of range
+		{"zzz", 0, false}, // unknown id
+		{"", 0, false},
+	}
+	for _, c := range cases {
+		got, ok := resolveTodoRef(todos, c.arg)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Errorf("resolveTodoRef(%q) = %d,%v; want %d,%v", c.arg, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestIndexByID(t *testing.T) {
+	todos := []Todo{{Subject: "a", ID: "kdx"}, {Subject: "b"}}
+	if i, ok := indexByID(todos, "kdx"); !ok || i != 0 {
+		t.Errorf("indexByID(kdx) = %d,%v; want 0,true", i, ok)
+	}
+	if _, ok := indexByID(todos, ""); ok {
+		t.Error("indexByID(\"\") should not match the id-less task")
+	}
+}

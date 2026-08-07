@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -521,6 +522,36 @@ func backfillIDs(todos []Todo) []Todo {
 		}
 	}
 	return todos
+}
+
+// indexByID finds a task by exact id, case-insensitively. An empty id never
+// matches, so tasks not yet backfilled are not addressable this way.
+func indexByID(todos []Todo, id string) (int, bool) {
+	if id == "" {
+		return 0, false
+	}
+	lower := strings.ToLower(id)
+	for i := range todos {
+		if todos[i].ID != "" && strings.ToLower(todos[i].ID) == lower {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// resolveTodoRef maps a CLI argument to an index: an id first, then a 1-based
+// position. Ids contain no digits, so the two forms cannot collide. Callers must
+// resolve inside withTodos, against the on-disk list — a position read from an
+// earlier `list` may point at a different task by now.
+func resolveTodoRef(todos []Todo, arg string) (int, bool) {
+	arg = strings.TrimSpace(arg)
+	if i, ok := indexByID(todos, arg); ok {
+		return i, true
+	}
+	if v, err := strconv.Atoi(arg); err == nil && v >= 1 && v <= len(todos) {
+		return v - 1, true
+	}
+	return 0, false
 }
 
 // truncStr shortens s to at most max display runes, adding an ellipsis.
