@@ -39,7 +39,7 @@ you found, not a restatement of the ticket title.
 ### 📊 Current status
 Pick one, with evidence:
 - **✅ Already fixed / obsolete** — cite the commit SHA or the code that now
-  handles it, and recommend `hive todo done <n>` (or drop the claim with
+  handles it, and recommend `hive todo done <ref>` (or drop the claim with
   `hive todo claim clear`). STOP here — nothing to plan.
 - **⚠️ Still an issue** — pin the concrete repro: the exact code path, input, or
   failing case, quoting the offending lines.
