@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -474,6 +475,52 @@ func indexSeparator(s string) int {
 // the description survives an em-dash→hyphen normalizer without leaking a "- ".
 func trimSeparator(s string) string {
 	return strings.TrimLeft(strings.TrimSpace(s), "—- ")
+}
+
+// idAlphabet is lowercase consonants. No digits, so an id can never be mistaken
+// for a positional argument; no vowels, so an id never spells a word.
+const idAlphabet = "bcdfghjklmnpqrstvwxyz"
+
+// newTodoID returns a short id absent from taken, widening the id by a character
+// if three proves crowded rather than looping forever.
+func newTodoID(taken map[string]bool) string {
+	for n := 3; ; n++ {
+		for attempt := 0; attempt < 100; attempt++ {
+			if id := randomID(n); !taken[id] {
+				return id
+			}
+		}
+	}
+}
+
+// randomID draws n characters from idAlphabet. The modulo bias across 21 symbols
+// is irrelevant here — ids only need to not collide, not to be uniform.
+func randomID(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b) // crypto/rand.Read panics rather than returning an error
+	out := make([]byte, n)
+	for i, v := range b {
+		out[i] = idAlphabet[int(v)%len(idAlphabet)]
+	}
+	return string(out)
+}
+
+// backfillIDs stamps an id onto every task lacking one, leaving existing ids
+// alone. Run on every write, so a hand-edited file heals itself.
+func backfillIDs(todos []Todo) []Todo {
+	taken := make(map[string]bool, len(todos))
+	for _, t := range todos {
+		if t.ID != "" {
+			taken[t.ID] = true
+		}
+	}
+	for i := range todos {
+		if todos[i].ID == "" {
+			todos[i].ID = newTodoID(taken)
+			taken[todos[i].ID] = true
+		}
+	}
+	return todos
 }
 
 // truncStr shortens s to at most max display runes, adding an ellipsis.

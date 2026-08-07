@@ -329,3 +329,50 @@ func TestMarkerRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestBackfillIDsStampsOnlyMissing(t *testing.T) {
+	todos := []Todo{
+		{Subject: "keeps its id", ID: "kdx"},
+		{Subject: "needs one"},
+		{Subject: "also needs one"},
+	}
+	got := backfillIDs(todos)
+
+	if got[0].ID != "kdx" {
+		t.Errorf("existing id was overwritten: %q", got[0].ID)
+	}
+	seen := map[string]bool{}
+	for i, td := range got {
+		if td.ID == "" {
+			t.Fatalf("todo %d still has no id", i)
+		}
+		if seen[td.ID] {
+			t.Errorf("duplicate id %q", td.ID)
+		}
+		seen[td.ID] = true
+		if strings.ContainsAny(td.ID, "0123456789") {
+			t.Errorf("id %q contains a digit — ids must never be confusable with a position", td.ID)
+		}
+	}
+}
+
+func TestBackfillIDsIsIdempotent(t *testing.T) {
+	first := backfillIDs([]Todo{{Subject: "a"}, {Subject: "b"}})
+	second := backfillIDs(append([]Todo{}, first...))
+	for i := range first {
+		if first[i].ID != second[i].ID {
+			t.Errorf("todo %d renumbered on second pass: %q -> %q", i, first[i].ID, second[i].ID)
+		}
+	}
+}
+
+func TestNewTodoIDAvoidsCollisions(t *testing.T) {
+	taken := map[string]bool{}
+	for i := 0; i < 500; i++ {
+		id := newTodoID(taken)
+		if taken[id] {
+			t.Fatalf("newTodoID returned a taken id %q", id)
+		}
+		taken[id] = true
+	}
+}
