@@ -261,3 +261,71 @@ func TestTruncStr(t *testing.T) {
 		t.Errorf("trunc = %q want %q", got, "hell…")
 	}
 }
+
+func TestParseTodoLineMarker(t *testing.T) {
+	cases := []struct {
+		line    string
+		claim   string
+		id      string
+		subject string
+		desc    string
+	}{
+		{"- [ ] **subj** - desc <!-- id:kdx -->", "", "kdx", "subj", "desc"},
+		{"- [~] **subj** - desc <!-- @split-1 id:kdx -->", "split-1", "kdx", "subj", "desc"},
+		{"- [~] **subj** - desc <!-- id:kdx @split-1 -->", "split-1", "kdx", "subj", "desc"},
+		{"- [~] **subj** - desc <!-- @split-1 -->", "split-1", "", "subj", "desc"},
+		{"- [x] **subj** - desc <!-- id:kdx -->", "", "kdx", "subj", "desc"},
+		{"- [ ] **subj** - desc <!-- @split-1 id:kdx future:9 -->", "split-1", "kdx", "subj", "desc"},
+		{"- [ ] **subj** - desc <!-- just a note -->", "", "", "subj", "desc <!-- just a note -->"},
+	}
+	for _, c := range cases {
+		got, ok := parseTodoLine(c.line)
+		if !ok {
+			t.Errorf("parseTodoLine(%q) failed to parse", c.line)
+			continue
+		}
+		if got.Claim != c.claim || got.ID != c.id || got.Subject != c.subject || got.Description != c.desc {
+			t.Errorf("parseTodoLine(%q) = claim=%q id=%q subj=%q desc=%q; want claim=%q id=%q subj=%q desc=%q",
+				c.line, got.Claim, got.ID, got.Subject, got.Description, c.claim, c.id, c.subject, c.desc)
+		}
+	}
+}
+
+// A done or deferred task must keep its id — otherwise it cannot be addressed
+// to reopen it — while its claim is dropped.
+func TestFormatKeepsIDInEveryState(t *testing.T) {
+	cases := []struct {
+		todo Todo
+		want string
+	}{
+		{Todo{Subject: "s", ID: "kdx"}, "- [ ] **s** <!-- id:kdx -->"},
+		{Todo{Subject: "s", ID: "kdx", Claim: "wt"}, "- [~] **s** <!-- @wt id:kdx -->"},
+		{Todo{Subject: "s", ID: "kdx", Done: true, Claim: "wt"}, "- [x] **s** <!-- id:kdx -->"},
+		{Todo{Subject: "s", ID: "kdx", Deferred: true, Claim: "wt"}, "- [-] **s** <!-- id:kdx -->"},
+		{Todo{Subject: "s"}, "- [ ] **s**"},
+	}
+	for _, c := range cases {
+		out := formatTodos([]Todo{c.todo})
+		if !strings.Contains(out, c.want) {
+			t.Errorf("formatTodos(%+v) = %q; want it to contain %q", c.todo, out, c.want)
+		}
+	}
+}
+
+func TestMarkerRoundTrip(t *testing.T) {
+	in := []Todo{
+		{Section: "Alpha", Subject: "one", Description: "first", ID: "kdx"},
+		{Section: "Alpha", Subject: "two", ID: "mfp", Claim: "split-1"},
+		{Section: "Alpha", Subject: "three", ID: "qrz", Done: true},
+	}
+	got := parseTodos(formatTodos(in))
+	if len(got) != len(in) {
+		t.Fatalf("round trip produced %d todos, want %d", len(got), len(in))
+	}
+	for i := range in {
+		if got[i].ID != in[i].ID || got[i].Claim != in[i].Claim || got[i].Done != in[i].Done {
+			t.Errorf("todo %d round-tripped as %+v, want id=%q claim=%q done=%v",
+				i, got[i], in[i].ID, in[i].Claim, in[i].Done)
+		}
+	}
+}

@@ -23,6 +23,7 @@ type Todo struct {
 	Subject     string // the bold subject (may carry a #NNN id prefix)
 	Description string // free text after " — " (may be empty)
 	Claim       string // branch/worktree that claimed it; "" = unclaimed
+	ID          string // stable short id — addresses the task across peers
 }
 
 const (
@@ -191,6 +192,23 @@ func parseTodos(block string) []Todo {
 	return todos
 }
 
+// parseTodoMarker reads the trailing "<!-- @owner id:xyz -->" marker. Tokens are
+// order-independent and each is optional; unrecognised tokens are ignored so a
+// marker written by a newer hive still parses here. ok is false when no token was
+// recognised, in which case the caller leaves the comment in the text — a plain
+// HTML comment in a description is not ours to eat.
+func parseTodoMarker(inner string) (claim, id string, ok bool) {
+	for _, tok := range strings.Fields(inner) {
+		switch {
+		case strings.HasPrefix(tok, "@"):
+			claim, ok = tok[1:], true
+		case strings.HasPrefix(tok, "id:"):
+			id, ok = tok[3:], true
+		}
+	}
+	return claim, id, ok
+}
+
 func parseTodoLine(s string) (Todo, bool) {
 	if !strings.HasPrefix(s, "- [") || len(s) < 6 || s[4] != ']' {
 		return Todo{}, false
@@ -210,12 +228,11 @@ func parseTodoLine(s string) (Todo, bool) {
 		return Todo{}, false
 	}
 
-	// Trailing claim marker: <!-- @owner -->
+	// Trailing marker comment: <!-- @owner id:xyz -->
 	if i := strings.LastIndex(rest, "<!--"); i >= 0 {
 		if j := strings.Index(rest[i:], "-->"); j >= 0 {
-			inner := strings.TrimSpace(rest[i+4 : i+j])
-			if owner, ok := strings.CutPrefix(inner, "@"); ok {
-				t.Claim = strings.TrimSpace(owner)
+			if claim, id, ok := parseTodoMarker(rest[i+4 : i+j]); ok {
+				t.Claim, t.ID = claim, id
 				rest = strings.TrimSpace(rest[:i])
 			}
 		}
@@ -258,8 +275,8 @@ func formatTodos(todos []Todo) string {
 		if t.Description != "" {
 			b.WriteString(descSep + t.Description)
 		}
-		if !t.Done && !t.Deferred && t.Claim != "" {
-			b.WriteString(" <!-- @" + t.Claim + " -->")
+		if mk := t.marker(); mk != "" {
+			b.WriteString(" " + mk)
 		}
 		b.WriteByte('\n')
 	}
@@ -298,6 +315,23 @@ func (t Todo) boxChar() string {
 	default:
 		return " "
 	}
+}
+
+// marker renders the trailing comment. The id is written in every state — a done
+// task that lost its id could not be addressed to reopen it — while the claim is
+// only meaningful while the task is live.
+func (t Todo) marker() string {
+	var toks []string
+	if t.Claim != "" && !t.Done && !t.Deferred {
+		toks = append(toks, "@"+t.Claim)
+	}
+	if t.ID != "" {
+		toks = append(toks, "id:"+t.ID)
+	}
+	if len(toks) == 0 {
+		return ""
+	}
+	return "<!-- " + strings.Join(toks, " ") + " -->"
 }
 
 func addTodo(todos []Todo, section, subject, description string) []Todo {
