@@ -23,12 +23,21 @@ func withTodos(repoPath string, mutate func([]Todo) []Todo) ([]Todo, error) {
 
 	path := todoFilePath(repoPath)
 	existing := ""
+	existed := false
 	if data, err := os.ReadFile(path); err == nil {
 		existing = string(data)
+		existed = true
 	}
 
 	todos := backfillIDs(mutate(backfillIDs(parseTodos(extractBlock(existing)))))
-	if err := writeTodoFile(path, replaceBlock(existing, formatTodos(todos))); err != nil {
+	rendered := replaceBlock(existing, formatTodos(todos))
+	if rendered == existing {
+		return todos, nil
+	}
+	if !existed && len(todos) == 0 {
+		return todos, nil
+	}
+	if err := writeTodoFile(path, rendered); err != nil {
 		return todos, err
 	}
 	return todos, nil

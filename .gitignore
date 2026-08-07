@@ -1,6 +1,7 @@
 /hive
 .superpowers/
 .worktrees/
+.TODO.md.*.tmp
 
 # Claude eval session logs (any depth) — never commit
 **/.claude/evals/sessions/

@@ -119,10 +119,9 @@ func (m *model) refreshDrawerFromDisk() {
 	if !m.drawerOpen || m.drawerInputOn {
 		return
 	}
+	id := m.cursorTodoID()
 	m.drawerTodos = loadTodos(m.drawerRepo)
-	if m.drawerCursor >= len(m.drawerTodos) {
-		m.drawerCursor = max(0, len(m.drawerTodos)-1)
-	}
+	m.restoreCursor(id)
 }
 
 // splitSubjectDesc parses drawer input "subject - description" (accepting an
@@ -151,8 +150,9 @@ func (m model) drawerCursorSection() string {
 }
 
 // loadDrawerTodos loads a repo's list for display, stamping ids on any task that
-// lacks one so every visible row is addressable by the delta handlers. The write
-// is content-identical once a file has been stamped, so it causes no git churn.
+// lacks one so every visible row is addressable by the delta handlers. withTodos
+// skips the write when nothing changed, but the rendered Last-sync date still
+// differs on the first call of a new day, rewriting the file once then.
 func (m *model) loadDrawerTodos(path string) {
 	todos, err := withTodos(path, func(ts []Todo) []Todo { return ts })
 	if err != nil {

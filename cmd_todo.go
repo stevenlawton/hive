@@ -214,7 +214,7 @@ func runTodoShow() int {
 			return 0
 		}
 	}
-	fmt.Println("(no task claimed in this worktree — run: hive todo claim <n>)")
+	fmt.Println("(no task claimed in this worktree — run: hive todo claim <ref>)")
 	return 0
 }
 

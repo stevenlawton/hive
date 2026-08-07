@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -89,6 +91,43 @@ func TestDrawerCursorFollowsItsTaskByID(t *testing.T) {
 	if m.drawerTodos[m.drawerCursor].ID != wantID {
 		t.Errorf("cursor landed on %q, want the task it was on (%q)",
 			m.drawerTodos[m.drawerCursor].ID, wantID)
+	}
+}
+
+// The 100ms tick path re-reads the list by index, not by id. A peer insert
+// landing between ticks must not slide the cursor onto a different task —
+// otherwise the next keypress (e.g. delete) acts on the wrong one.
+func TestRefreshDrawerFromDiskKeepsCursorOnItsTaskByID(t *testing.T) {
+	m, dir := newDrawerModel(t, "alpha", "beta", "gamma")
+	m.drawerCursor = 2
+	wantID := m.drawerTodos[2].ID
+
+	// A peer inserts a task above the cursor.
+	if _, err := withTodos(dir, func(ts []Todo) []Todo {
+		return append([]Todo{{Section: "Tasks", Subject: "inserted"}}, ts...)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	m.refreshDrawerFromDisk()
+
+	if m.drawerCursor < 0 || m.drawerCursor >= len(m.drawerTodos) || m.drawerTodos[m.drawerCursor].ID != wantID {
+		t.Errorf("cursor landed on index %d, want the task it was on (id %q)", m.drawerCursor, wantID)
+	}
+}
+
+// Opening the drawer on a repo that never had a TODO.md must not create one —
+// it should be a pure read, like it was before withTodos existed.
+func TestLoadDrawerTodosDoesNotCreateFileWhenNoneExists(t *testing.T) {
+	dir := t.TempDir()
+	var m model
+	m.loadDrawerTodos(dir)
+
+	if _, err := os.Stat(filepath.Join(dir, "docs", "TODO.md")); !os.IsNotExist(err) {
+		t.Error("loadDrawerTodos created docs/TODO.md in a repo that never had one")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs")); !os.IsNotExist(err) {
+		t.Error("loadDrawerTodos created a docs/ directory in a repo that never had one")
 	}
 }
 

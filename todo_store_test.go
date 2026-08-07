@@ -122,6 +122,37 @@ func TestWriteTodoFileLeavesNoTempFiles(t *testing.T) {
 	}
 }
 
+// A mutate that changes nothing must not rewrite the file: no mtime bump, no
+// spurious trigger for mtime-based watchers or rsync-style deploy syncs. We
+// compare inode identity (os.SameFile) rather than mtime, since a rename can
+// land within the same mtime tick on coarser filesystems and produce a false
+// pass on the unfixed code; inode identity flags the rewrite unconditionally.
+func TestWithTodosNoopMutateDoesNotRewrite(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := withTodos(dir, func(ts []Todo) []Todo {
+		return addTodo(ts, "Tasks", "existing", "")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path := todoFilePath(dir)
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := withTodos(dir, func(ts []Todo) []Todo { return ts }); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error("no-op mutate rewrote the file (new inode) on the second call")
+	}
+}
+
 func TestTodoLockPathIsOutsideTheRepo(t *testing.T) {
 	dir := t.TempDir()
 	got := todoLockPath(dir)
