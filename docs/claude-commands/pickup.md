@@ -15,7 +15,7 @@ If **$ARGUMENTS** is a task number, claim it first: `hive todo claim $ARGUMENTS`
 
 Then read your claimed task: `hive todo show` (prints `section` / `subject` /
 `description`). If it says nothing is claimed, run `hive todo` and STOP — ask the
-user which number to claim (`hive todo claim <n>`).
+user which task to claim by its id (`hive todo claim <ref>`).
 
 ## 2. Load the full context
 
