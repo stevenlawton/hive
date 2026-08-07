@@ -150,9 +150,9 @@ func (m model) drawerCursorSection() string {
 }
 
 // loadDrawerTodos loads a repo's list for display, stamping ids on any task that
-// lacks one so every visible row is addressable by the delta handlers. withTodos
-// skips the write when nothing changed, but the rendered Last-sync date still
-// differs on the first call of a new day, rewriting the file once then.
+// lacks one so every visible row is addressable by the delta handlers. Opening a
+// list whose tasks all carry ids touches nothing: withTodos skips the write when
+// only the generated Last-sync date would differ.
 func (m *model) loadDrawerTodos(path string) {
 	todos, err := withTodos(path, func(ts []Todo) []Todo { return ts })
 	if err != nil {

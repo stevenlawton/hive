@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -31,7 +32,7 @@ func withTodos(repoPath string, mutate func([]Todo) []Todo) ([]Todo, error) {
 
 	todos := backfillIDs(mutate(backfillIDs(parseTodos(extractBlock(existing)))))
 	rendered := replaceBlock(existing, formatTodos(todos))
-	if rendered == existing {
+	if stripSyncLine(rendered) == stripSyncLine(existing) {
 		return todos, nil
 	}
 	if !existed && len(todos) == 0 {
@@ -41,6 +42,24 @@ func withTodos(repoPath string, mutate func([]Todo) []Todo) ([]Todo, error) {
 		return todos, err
 	}
 	return todos, nil
+}
+
+// stripSyncLine drops the generated "Last sync" line. formatTodos stamps it with
+// today's date on every render, so comparing without it is what distinguishes a
+// real content change from the mere passing of midnight — otherwise the first
+// write of each day would rewrite a git-tracked file nobody touched. Comparing
+// both sides with it removed is safe: replaceBlock preserves everything outside
+// the markers verbatim, so the two strings can only differ inside the block.
+func stripSyncLine(s string) string {
+	lines := strings.Split(s, "\n")
+	out := lines[:0]
+	for _, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "Last sync: **") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return strings.Join(out, "\n")
 }
 
 // lockTodos takes an exclusive advisory lock for a repo's backlog. The returned

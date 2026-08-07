@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -222,5 +223,80 @@ func TestCLIRejectsUnknownRef(t *testing.T) {
 	}
 	if rc := runTodoSetDone([]string{"99"}, true); rc == 0 {
 		t.Error("done with an out-of-range position should have failed")
+	}
+}
+
+// The generated "Last sync" line carries today's date, so without a guard the
+// first write of each day rewrites a git-tracked file nobody changed. The
+// fixture is built through withTodos so it is canonically formatted, then
+// back-dated to stand in for a file written on an earlier day.
+func backdatedTodoFile(t *testing.T) (dir, path string) {
+	t.Helper()
+	dir = t.TempDir()
+	if _, err := withTodos(dir, func(ts []Todo) []Todo {
+		return addTodo(ts, "Tasks", "already stamped", "")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path = todoFilePath(dir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back := regexp.MustCompile(`Last sync: \*\*\d{4}-\d{2}-\d{2}\*\*`).
+		ReplaceAllString(string(data), "Last sync: **2020-01-01**")
+	if back == string(data) {
+		t.Fatal("fixture setup: no Last-sync line found to back-date")
+	}
+	if err := os.WriteFile(path, []byte(back), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir, path
+}
+
+func TestWithTodosDoesNotRewriteWhenOnlyTheSyncDateWouldChange(t *testing.T) {
+	dir, path := backdatedTodoFile(t)
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := withTodos(dir, func(ts []Todo) []Todo { return ts }); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error("file was rewritten though only the Last-sync date would have changed")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "2020-01-01") {
+		t.Error("the stale sync date was rewritten despite no content change")
+	}
+}
+
+// The converse: a real content change must still refresh the date, so the guard
+// cannot be over-eager.
+func TestWithTodosUpdatesSyncDateWhenContentChanges(t *testing.T) {
+	dir, path := backdatedTodoFile(t)
+
+	if _, err := withTodos(dir, func(ts []Todo) []Todo {
+		return addTodo(ts, "Tasks", "a real change", "")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "2020-01-01") {
+		t.Error("the sync date was not refreshed despite a real content change")
 	}
 }
