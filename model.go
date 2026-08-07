@@ -114,7 +114,8 @@ type model struct {
 	drawerCursor   int
 	drawerInput    textinput.Model
 	drawerInputOn  bool // text input active (add or edit)
-	drawerEditIdx  int  // -1 = adding a new task; >=0 = editing that task
+	drawerEditID   string // id being edited; meaningful only when drawerAdding is false
+	drawerAdding   bool   // input is an add rather than an edit
 
 	// New UI components
 	manager   *ui.ManagerView

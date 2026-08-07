@@ -43,10 +43,10 @@ func (m *model) toggleDrawer() tea.Cmd {
 	m.drawerRepo = path
 	m.drawerRepoName = name
 	m.drawerClaim = worktreeClaim(path)
-	m.drawerTodos = loadTodos(path)
+	m.loadDrawerTodos(path)
 	m.drawerCursor = 0
 	m.drawerInputOn = false
-	m.drawerEditIdx = -1
+	m.drawerEditID, m.drawerAdding = "", false
 	m.drawerOpen = true
 	return nil
 }
@@ -90,7 +90,7 @@ func (m *model) stopDrawerInput() {
 		m.drawerInput.SetValue("")
 	}
 	m.drawerInputOn = false
-	m.drawerEditIdx = -1
+	m.drawerEditID, m.drawerAdding = "", false
 }
 
 // reloadDrawerForContext re-points an open drawer at the currently-focused
@@ -107,7 +107,7 @@ func (m *model) reloadDrawerForContext() {
 	m.drawerRepo = path
 	m.drawerRepoName = name
 	m.drawerClaim = worktreeClaim(path)
-	m.drawerTodos = loadTodos(path)
+	m.loadDrawerTodos(path)
 	m.drawerCursor = 0
 	m.stopDrawerInput()
 }
@@ -150,9 +150,48 @@ func (m model) drawerCursorSection() string {
 	return defaultSection
 }
 
-func (m *model) persistDrawer() {
-	if _, err := withTodos(m.drawerRepo, func([]Todo) []Todo { return m.drawerTodos }); err != nil {
+// loadDrawerTodos loads a repo's list for display, stamping ids on any task that
+// lacks one so every visible row is addressable by the delta handlers. The write
+// is content-identical once a file has been stamped, so it causes no git churn.
+func (m *model) loadDrawerTodos(path string) {
+	todos, err := withTodos(path, func(ts []Todo) []Todo { return ts })
+	if err != nil {
 		m.err = err
+		todos = loadTodos(path)
+	}
+	m.drawerTodos = todos
+}
+
+// applyDrawer runs a delta against the on-disk list and adopts the result, so a
+// peer's concurrent edits survive. The cursor stays on the task it was on, even
+// if the peer inserted rows above it.
+func (m *model) applyDrawer(mutate func([]Todo) []Todo) {
+	id := m.cursorTodoID()
+	todos, err := withTodos(m.drawerRepo, mutate)
+	if err != nil {
+		m.err = err
+		return
+	}
+	m.drawerTodos = todos
+	m.restoreCursor(id)
+}
+
+func (m model) cursorTodoID() string {
+	if m.drawerCursor >= 0 && m.drawerCursor < len(m.drawerTodos) {
+		return m.drawerTodos[m.drawerCursor].ID
+	}
+	return ""
+}
+
+// restoreCursor puts the cursor back on id, clamping when it is gone — deleted
+// here or by a peer.
+func (m *model) restoreCursor(id string) {
+	if i, ok := indexByID(m.drawerTodos, id); ok {
+		m.drawerCursor = i
+		return
+	}
+	if m.drawerCursor >= len(m.drawerTodos) {
+		m.drawerCursor = max(0, len(m.drawerTodos)-1)
 	}
 }
 
@@ -169,15 +208,27 @@ func (m model) handleDrawerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			val := strings.TrimSpace(m.drawerInput.Value())
 			if val != "" {
 				subj, desc := splitSubjectDesc(val)
-				if m.drawerEditIdx >= 0 && m.drawerEditIdx < len(m.drawerTodos) {
-					m.drawerTodos[m.drawerEditIdx].Subject = subj
-					m.drawerTodos[m.drawerEditIdx].Description = desc
-					m.drawerCursor = m.drawerEditIdx
+				if m.drawerAdding {
+					section := m.drawerCursorSection()
+					todos, err := withTodos(m.drawerRepo, func(ts []Todo) []Todo {
+						return addTodo(ts, section, subj, desc)
+					})
+					if err != nil {
+						m.err = err
+					} else {
+						m.drawerTodos = todos
+						m.restoreCursor(todos[len(todos)-1].ID)
+					}
 				} else {
-					m.drawerTodos = addTodo(m.drawerTodos, m.drawerCursorSection(), subj, desc)
-					m.drawerCursor = len(m.drawerTodos) - 1
+					editID := m.drawerEditID
+					m.applyDrawer(func(ts []Todo) []Todo {
+						if i, ok := indexByID(ts, editID); ok {
+							ts[i].Subject, ts[i].Description = subj, desc
+						}
+						return ts
+					})
+					m.restoreCursor(editID)
 				}
-				m.persistDrawer()
 			}
 			m.stopDrawerInput()
 			return m, nil
@@ -215,13 +266,13 @@ func (m model) handleDrawerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		m.drawerInput = newDrawerInput("add: ", "subject — optional description", "")
 		m.drawerInputOn = true
-		m.drawerEditIdx = -1
+		m.drawerEditID, m.drawerAdding = "", true
 		return m, m.drawerInput.Focus()
 	case "e":
 		if m.drawerCursor >= 0 && m.drawerCursor < len(m.drawerTodos) {
 			m.drawerInput = newDrawerInput("edit: ", "", todoEditText(m.drawerTodos[m.drawerCursor]))
 			m.drawerInputOn = true
-			m.drawerEditIdx = m.drawerCursor
+			m.drawerEditID, m.drawerAdding = m.drawerTodos[m.drawerCursor].ID, false
 			return m, m.drawerInput.Focus()
 		}
 	case "up", "k":
@@ -233,24 +284,47 @@ func (m model) handleDrawerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.drawerCursor++
 		}
 	case "space", " ", "x":
-		m.drawerTodos = toggleTodoDone(m.drawerTodos, m.drawerCursor)
-		m.persistDrawer()
+		id := m.cursorTodoID()
+		m.applyDrawer(func(ts []Todo) []Todo {
+			if i, ok := indexByID(ts, id); ok {
+				return toggleTodoDone(ts, i)
+			}
+			return ts
+		})
 	case "~", "enter", "c":
-		if todos, ok := claimTodo(m.drawerTodos, m.drawerCursor, m.drawerClaim); ok {
-			m.drawerTodos = todos
-			m.persistDrawer()
-		} else if m.drawerCursor >= 0 && m.drawerCursor < len(m.drawerTodos) {
-			m.err = fmt.Errorf("task claimed by %s", m.drawerTodos[m.drawerCursor].Claim)
+		id := m.cursorTodoID()
+		var held string
+		m.applyDrawer(func(ts []Todo) []Todo {
+			i, ok := indexByID(ts, id)
+			if !ok {
+				return ts
+			}
+			out, changed := claimTodo(ts, i, m.drawerClaim)
+			if !changed {
+				held = ts[i].Claim
+				return ts
+			}
+			return out
+		})
+		if held != "" {
+			m.err = fmt.Errorf("task claimed by %s", held)
 		}
 	case ">":
-		m.drawerTodos = deferTodo(m.drawerTodos, m.drawerCursor)
-		m.persistDrawer()
+		id := m.cursorTodoID()
+		m.applyDrawer(func(ts []Todo) []Todo {
+			if i, ok := indexByID(ts, id); ok {
+				return deferTodo(ts, i)
+			}
+			return ts
+		})
 	case "d":
-		m.drawerTodos = deleteTodo(m.drawerTodos, m.drawerCursor)
-		if m.drawerCursor >= len(m.drawerTodos) {
-			m.drawerCursor = max(0, len(m.drawerTodos)-1)
-		}
-		m.persistDrawer()
+		id := m.cursorTodoID()
+		m.applyDrawer(func(ts []Todo) []Todo {
+			if i, ok := indexByID(ts, id); ok {
+				return deleteTodo(ts, i)
+			}
+			return ts
+		})
 	}
 	return m, nil
 }
