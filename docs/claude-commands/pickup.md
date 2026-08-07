@@ -11,7 +11,7 @@ if needed**) that the user confirms before anything is touched.
 
 ## 1. Get the ticket
 
-If **$ARGUMENTS** is a task number, claim it first: `hive todo claim $ARGUMENTS`.
+If **$ARGUMENTS** is a task id, claim it first: `hive todo claim $ARGUMENTS`.
 
 Then read your claimed task: `hive todo show` (prints `section` / `subject` /
 `description`). If it says nothing is claimed, run `hive todo` and STOP — ask the
