@@ -46,7 +46,7 @@ func (c *ChordHandler) Start() {
 
 // Pending returns whether a chord is in progress.
 func (c *ChordHandler) Pending() bool {
-	return c != nil && c.pending
+	return c.pending
 }
 
 // TimedOut returns whether the chord has exceeded its timeout.

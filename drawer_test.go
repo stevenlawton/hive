@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -18,7 +19,7 @@ func newDrawerModel(t *testing.T, subjects ...string) (model, string) {
 			t.Fatal(err)
 		}
 	}
-	m := model{drawerOpen: true, drawerRepo: dir, drawerClaim: "wt-test"}
+	m := model{drawerOpen: true, drawerRepo: dir, drawerClaim: "wt-test", chord: NewChordHandler(500 * time.Millisecond)}
 	m.loadDrawerTodos(dir)
 	return m, dir
 }
