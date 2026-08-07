@@ -113,7 +113,7 @@ type model struct {
 	drawerTodos    []Todo
 	drawerCursor   int
 	drawerInput    textinput.Model
-	drawerInputOn  bool // text input active (add or edit)
+	drawerInputOn  bool   // text input active (add or edit)
 	drawerEditID   string // id being edited; meaningful only when drawerAdding is false
 	drawerAdding   bool   // input is an add rather than an edit
 

@@ -389,9 +389,9 @@ func TestResolveTodoRef(t *testing.T) {
 		ok   bool
 	}{
 		{"kdx", 0, true},
-		{"KDX", 0, true},  // case-insensitive
+		{"KDX", 0, true}, // case-insensitive
 		{"qrz", 2, true},
-		{"1", 0, true},    // positional fallback
+		{"1", 0, true}, // positional fallback
 		{"3", 2, true},
 		{"0", 0, false},   // positions are 1-based
 		{"4", 0, false},   // out of range
