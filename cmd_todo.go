@@ -65,7 +65,11 @@ func runTodoList() int {
 			section = s
 			fmt.Printf("\n### %s\n", section)
 		}
-		line := fmt.Sprintf("%d  [%s] %s", i+1, t.boxChar(), t.Subject)
+		handle := t.ID
+		if handle == "" {
+			handle = strconv.Itoa(i + 1) // not yet stamped; `hive todo normalize` fixes this
+		}
+		line := fmt.Sprintf("%-4s [%s] %s", handle, t.boxChar(), t.Subject)
 		if t.Description != "" {
 			line += descSep + t.Description
 		}
@@ -89,26 +93,33 @@ func runTodoAdd(args []string) int {
 	}
 	subj, desc := splitSubjectDesc(text)
 	cwd := todoCwd()
-	todos := addTodo(loadTodos(cwd), defaultSection, subj, desc)
-	return saveAndReport(cwd, todos, fmt.Sprintf("added #%d: %s", len(todos), subj))
+	todos, err := withTodos(cwd, func(ts []Todo) []Todo {
+		return addTodo(ts, defaultSection, subj, desc)
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("added %s: %s\n", todos[len(todos)-1].ID, subj)
+	return 0
 }
 
 func runTodoSetDone(args []string, done bool) int {
-	cwd := todoCwd()
-	todos := loadTodos(cwd)
-	i, ok := todoIndex(args, len(todos))
+	ref, ok := todoRef(args)
 	if !ok {
 		return 1
-	}
-	todos[i].Done = done
-	if done {
-		todos[i].Claim = ""
 	}
 	word := "done"
 	if !done {
 		word = "reopened"
 	}
-	return saveAndReport(cwd, todos, fmt.Sprintf("%s #%d: %s", word, i+1, todos[i].Subject))
+	return mutateOne(todoCwd(), ref, func(ts []Todo, i int) ([]Todo, string) {
+		ts[i].Done = done
+		if done {
+			ts[i].Claim = ""
+		}
+		return ts, fmt.Sprintf("%s %s: %s", word, ts[i].ID, ts[i].Subject)
+	})
 }
 
 // runTodoCurrent claims (or releases) a task for this worktree, so parallel
@@ -120,60 +131,71 @@ func runTodoCurrent(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: not in a git worktree — can't claim")
 		return 1
 	}
-	todos := loadTodos(cwd)
 	if len(args) > 0 && (args[0] == "clear" || args[0] == "none") {
-		return saveAndReport(cwd, releaseClaim(todos, owner), "released your claims")
+		if _, err := withTodos(cwd, func(ts []Todo) []Todo {
+			return releaseClaim(ts, owner)
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Println("released your claims")
+		return 0
 	}
-	i, ok := todoIndex(args, len(todos))
+	ref, ok := todoRef(args)
 	if !ok {
 		return 1
 	}
-	updated, changed := claimTodo(todos, i, owner)
-	if !changed {
-		fmt.Fprintf(os.Stderr, "error: #%d is claimed by %s\n", i+1, todos[i].Claim)
-		return 1
+	var held string
+	rc := mutateOne(cwd, ref, func(ts []Todo, i int) ([]Todo, string) {
+		out, changed := claimTodo(ts, i, owner)
+		if !changed {
+			held = ts[i].Claim
+			return ts, ""
+		}
+		verb := "claimed"
+		if out[i].Claim == "" {
+			verb = "released"
+		}
+		return out, fmt.Sprintf("%s %s: %s", verb, out[i].ID, out[i].Subject)
+	})
+	if held != "" {
+		fmt.Fprintf(os.Stderr, "error: claimed by %s\n", held)
 	}
-	verb := "claimed"
-	if updated[i].Claim == "" {
-		verb = "released"
-	}
-	return saveAndReport(cwd, updated, fmt.Sprintf("%s #%d: %s", verb, i+1, updated[i].Subject))
+	return rc
 }
 
 // runTodoDefer toggles the parked state on a task.
 func runTodoDefer(args []string) int {
-	cwd := todoCwd()
-	todos := loadTodos(cwd)
-	i, ok := todoIndex(args, len(todos))
+	ref, ok := todoRef(args)
 	if !ok {
 		return 1
 	}
-	todos = deferTodo(todos, i)
-	state := "deferred"
-	if !todos[i].Deferred {
-		state = "un-deferred"
-	}
-	return saveAndReport(cwd, todos, fmt.Sprintf("%s #%d: %s", state, i+1, todos[i].Subject))
+	return mutateOne(todoCwd(), ref, func(ts []Todo, i int) ([]Todo, string) {
+		ts = deferTodo(ts, i)
+		state := "deferred"
+		if !ts[i].Deferred {
+			state = "un-deferred"
+		}
+		return ts, fmt.Sprintf("%s %s: %s", state, ts[i].ID, ts[i].Subject)
+	})
 }
 
 func runTodoRm(args []string) int {
-	cwd := todoCwd()
-	todos := loadTodos(cwd)
-	i, ok := todoIndex(args, len(todos))
+	ref, ok := todoRef(args)
 	if !ok {
 		return 1
 	}
-	removed := todos[i].Subject
-	todos = deleteTodo(todos, i)
-	return saveAndReport(cwd, todos, "removed: "+removed)
+	return mutateOne(todoCwd(), ref, func(ts []Todo, i int) ([]Todo, string) {
+		removed := ts[i].Subject
+		return deleteTodo(ts, i), "removed: " + removed
+	})
 }
 
-// runTodoNormalize re-reads and re-writes the block, cleaning up formatting
-// drift (e.g. separator artifacts left by an em-dash→hyphen normalizer).
+// runTodoNormalize re-reads and re-writes the block, cleaning up formatting drift
+// and stamping ids onto any task still lacking one.
 func runTodoNormalize() int {
-	cwd := todoCwd()
-	todos := loadTodos(cwd)
-	if err := saveTodos(cwd, todos); err != nil {
+	todos, err := withTodos(todoCwd(), func(ts []Todo) []Todo { return ts })
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -196,27 +218,44 @@ func runTodoShow() int {
 	return 0
 }
 
-// todoIndex parses a 1-based task number from args and bounds-checks it.
-func todoIndex(args []string, n int) (int, bool) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: need a task number (see: hive todo list)")
-		return 0, false
-	}
-	v, err := strconv.Atoi(args[0])
-	if err != nil || v < 1 || v > n {
-		fmt.Fprintf(os.Stderr, "error: invalid task number %q (have %d tasks)\n", args[0], n)
-		return 0, false
-	}
-	return v - 1, true
-}
-
-func saveAndReport(cwd string, todos []Todo, msg string) int {
-	if err := saveTodos(cwd, todos); err != nil {
+// mutateOne resolves ref and applies a change under the backlog lock. Resolution
+// happens inside the closure, against the list as it is on disk: a position read
+// from an earlier `list` may point at a different task by now. apply returns the
+// message to print, or "" when it declined and reported the reason itself.
+func mutateOne(cwd, ref string, apply func([]Todo, int) ([]Todo, string)) int {
+	var msg string
+	var missing bool
+	_, err := withTodos(cwd, func(ts []Todo) []Todo {
+		i, ok := resolveTodoRef(ts, ref)
+		if !ok {
+			missing = true
+			return ts
+		}
+		out, m := apply(ts, i)
+		msg = m
+		return out
+	})
+	switch {
+	case missing:
+		fmt.Fprintf(os.Stderr, "error: no such task %q (see: hive todo list)\n", ref)
+		return 1
+	case err != nil:
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	case msg == "":
 		return 1
 	}
 	fmt.Println(msg)
 	return 0
+}
+
+// todoRef pulls the task reference from a verb's arguments.
+func todoRef(args []string) (string, bool) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "error: need a task id or number (see: hive todo list)")
+		return "", false
+	}
+	return args[0], true
 }
 
 // runTodoStatusline prints the current task + progress for use as a Claude Code

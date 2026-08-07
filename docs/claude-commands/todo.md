@@ -20,11 +20,11 @@ Interpret the request and run the matching command(s):
 |---|---|
 | show the list / no args | `hive todo list` |
 | add a task | `hive todo add <subject> — <optional description>` |
-| mark done | `hive todo done <n>` |
-| reopen | `hive todo reopen <n>` |
-| claim / release a task | `hive todo claim <n>` (toggle; `claim clear` drops yours) |
-| defer / un-defer (park) | `hive todo defer <n>` (toggle) |
-| delete | `hive todo rm <n>` |
+| mark done | `hive todo done <ref>` |
+| reopen | `hive todo reopen <ref>` |
+| claim / release a task | `hive todo claim <ref>` (toggle; `claim clear` drops yours) |
+| defer / un-defer (park) | `hive todo defer <ref>` (toggle) |
+| delete | `hive todo rm <ref>` |
 
 Deferred tasks render `[-]`, sink to the bottom, and are kept out of "next"
 (the statusline never suggests one). Claiming a deferred task un-parks it.
@@ -35,13 +35,22 @@ parallel worktrees see it as taken (`🔒@branch`) and don't all grab the same
 "next" item. The statusline shows your own claimed task, else the first
 unclaimed one. `current` is an alias for `claim`.
 
-`<n>` is the number shown by `hive todo list`. Tasks are grouped under `###`
+`<ref>` is the id shown in the left column of `hive todo list` (three letters,
+e.g. `kdx`); a positional number also works. Tasks are grouped under `###`
 sections and rendered `- [box] **subject** — description` in the `docs/TODO.md`
 (or `TODO.md`) `TASKS:BEGIN/END` block on the main worktree; content outside
 that block is left untouched.
 
 Rules:
-- To act on an existing task, run `hive todo list` **first** to get current numbers — they are positional and shift after `rm`.
+- Address tasks by the **id** shown in the left column of `hive todo list` (three
+  letters, e.g. `kdx`). Ids are stable — a peer session adding or removing tasks
+  never changes them. A positional number still works but is unsafe when other
+  worktrees are active, because positions shift.
+- Run `hive todo list` to discover ids; you do not need to re-run it before each
+  command the way positional numbers required.
 - Keep headlines to a short title, not a paragraph.
 - If the request is empty, just run `hive todo list`.
 - After any change, run `hive todo list` once and show the user the result.
+
+Note: `~/.claude/commands/todo.md` is a live mirror of this file, outside this
+repo. It is not updated automatically — update it by hand if this file changes.

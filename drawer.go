@@ -151,7 +151,7 @@ func (m model) drawerCursorSection() string {
 }
 
 func (m *model) persistDrawer() {
-	if err := saveTodos(m.drawerRepo, m.drawerTodos); err != nil {
+	if _, err := withTodos(m.drawerRepo, func([]Todo) []Todo { return m.drawerTodos }); err != nil {
 		m.err = err
 	}
 }

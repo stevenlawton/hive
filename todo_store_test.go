@@ -132,3 +132,64 @@ func TestTodoLockPathIsOutsideTheRepo(t *testing.T) {
 		t.Errorf("lock path %q should end in .lock", got)
 	}
 }
+
+// chdir points todoCwd() at dir for the duration of the test.
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(prev) })
+}
+
+// The bug this whole plan exists to fix: a peer removes a task between the
+// caller reading the list and acting on it. Addressing by id must still hit the
+// task the caller meant.
+func TestCLIDoneByIDSurvivesAPeerShiftingPositions(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	for _, s := range []string{"first", "second", "third"} {
+		if rc := runTodoAdd([]string{s}); rc != 0 {
+			t.Fatalf("add %q returned %d", s, rc)
+		}
+	}
+	todos := loadTodos(dir)
+	target := todos[2].ID // "third", currently position 3
+
+	// A peer removes position 1; "third" is now at position 2.
+	if _, err := withTodos(dir, func(ts []Todo) []Todo { return deleteTodo(ts, 0) }); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := runTodoSetDone([]string{target}, true); rc != 0 {
+		t.Fatalf("done %s returned %d", target, rc)
+	}
+
+	for _, td := range loadTodos(dir) {
+		if td.ID == target && !td.Done {
+			t.Error("the targeted task was not marked done")
+		}
+		if td.ID != target && td.Done {
+			t.Errorf("the wrong task %q was marked done", td.Subject)
+		}
+	}
+}
+
+func TestCLIRejectsUnknownRef(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if rc := runTodoAdd([]string{"only"}); rc != 0 {
+		t.Fatalf("add returned %d", rc)
+	}
+	if rc := runTodoSetDone([]string{"zzz"}, true); rc == 0 {
+		t.Error("done with an unknown id should have failed")
+	}
+	if rc := runTodoSetDone([]string{"99"}, true); rc == 0 {
+		t.Error("done with an out-of-range position should have failed")
+	}
+}

@@ -97,21 +97,6 @@ func loadTodos(repoPath string) []Todo {
 	return parseTodos(extractBlock(string(data)))
 }
 
-// saveTodos regenerates the TASKS block in the backlog file, preserving all
-// content outside the markers.
-func saveTodos(repoPath string, todos []Todo) error {
-	path := todoFilePath(repoPath)
-	existing := ""
-	if data, err := os.ReadFile(path); err == nil {
-		existing = string(data)
-	}
-	updated := replaceBlock(existing, formatTodos(todos))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(updated), 0o644)
-}
-
 // extractBlock returns the lines between the TASKS:BEGIN and TASKS:END markers
 // (exclusive), or "" if there is no block.
 func extractBlock(content string) string {
