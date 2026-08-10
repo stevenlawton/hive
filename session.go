@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/stevenlawton/hive/ui"
 )
 
 // claudeCodeEnvVars are variables the parent claude CLI injects into the
@@ -564,15 +563,19 @@ func (m *model) reconnectSessions() {
 		m.workspace.TabBar.FocusByID(item.repo.Parent)
 		m.workspace.AddSplitToActive("wt:"+item.repo.WorktreeBranch, item.tmuxSes)
 
-		// Restore persisted orientation from parent tmux session.
-		if tab, ok := m.workspace.Tabs[item.repo.Parent]; ok {
+		// Restore persisted orientation. Looked up by parent DirName rather
+		// than session, so it still resolves from layout.json when the
+		// parent has no live tmux session of its own.
+		if tab, tabOK := m.workspace.Tabs[item.repo.Parent]; tabOK {
+			parentSes := ""
 			for _, p := range m.items {
-				if p.repo.DirName == item.repo.Parent && p.tmuxSes != "" {
-					if orient := TmuxGetEnv(p.tmuxSes, "HIVE_ORIENTATION"); orient == "h" {
-						tab.SplitPane.Orientation = ui.SplitHorizontal
-					}
+				if p.repo.DirName == item.repo.Parent {
+					parentSes = p.tmuxSes
 					break
 				}
+			}
+			if orient, found := m.orientationFor(item.repo.Parent, parentSes); found {
+				tab.SplitPane.Orientation = orient
 			}
 		}
 	}

@@ -141,6 +141,9 @@ type model struct {
 	editFocus   int    // which field is focused (0-2 = text, 3-5 = toggles)
 	editDirName string // which repo we're editing
 
+	// Workspace layout persisted across restarts
+	layout *LayoutStore
+
 	// Bus state
 	bus          *bus.Bus
 	busCompose   textinput.Model
@@ -190,6 +193,11 @@ func newModel(cfg *Config, cfgPath string) model {
 	}
 	busRt := newBusRuntime(busClient)
 
+	layout, layoutErr := OpenLayoutStore()
+	if layoutErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: layout store unavailable: %v\n", layoutErr)
+	}
+
 	m := model{
 		cfg:             cfg,
 		cfgPath:         cfgPath,
@@ -204,6 +212,7 @@ func newModel(cfg *Config, cfgPath string) model {
 		chord:           NewChordHandler(500 * time.Millisecond),
 		mode:            viewManager,
 		draggingDivider: -1,
+		layout:          layout,
 		bus:             busClient,
 		busCompose:      busInput,
 		busRt:           busRt,
@@ -1258,6 +1267,30 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 		if tab := m.workspace.ActiveTab(); tab != nil && len(tab.SplitPane.Splits) > 1 {
 			m.resizeMode = true
 		}
+	case ChordReorient:
+		if tab := m.workspace.ActiveTab(); tab != nil && len(tab.SplitPane.Splits) > 1 {
+			sp := tab.SplitPane
+			if sp.Orientation == ui.SplitHorizontal {
+				sp.Orientation = ui.SplitVertical
+			} else {
+				sp.Orientation = ui.SplitHorizontal
+			}
+			// Pane sizes are computed along the split axis, so they have to
+			// be recalculated for the new one. The capture tick then resizes
+			// the underlying tmux panes to match.
+			sp.SetSize(sp.Width, sp.Height)
+			for i := range sp.Splits {
+				sp.Splits[i].Terminal.InvalidateResize()
+			}
+			parentSes := ""
+			for _, p := range m.items {
+				if p.repo.DirName == tab.ID {
+					parentSes = p.tmuxSes
+					break
+				}
+			}
+			m.persistOrientation(tab.ID, parentSes, sp.Orientation)
+		}
 	case ChordToggleDrawer:
 		return m, m.toggleDrawer()
 	case ChordReturnManager:
@@ -1712,6 +1745,9 @@ func (m model) renderWorkspaceStatusBar() string {
 			keys = append(keys, "x:merge+close")
 		} else if splitCount > 1 {
 			keys = append(keys, "x:close")
+		}
+		if splitCount > 1 {
+			keys = append(keys, "o:orient")
 		}
 		keys = append(keys, "f:fullscreen", "r:refresh")
 		status = strings.Join(keys, "  ")

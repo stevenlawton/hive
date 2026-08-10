@@ -29,6 +29,19 @@ func TestChordHandler(t *testing.T) {
 	}
 }
 
+func TestChordReorient(t *testing.T) {
+	ch := NewChordHandler(500 * time.Millisecond)
+	ch.Start()
+
+	action, ok := ch.Complete("o")
+	if !ok {
+		t.Fatal("expected valid action for o")
+	}
+	if action != ChordReorient {
+		t.Errorf("expected ChordReorient, got %d", action)
+	}
+}
+
 func TestChordHandlerUnknownKey(t *testing.T) {
 	ch := NewChordHandler(500 * time.Millisecond)
 	ch.Start()
