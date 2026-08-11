@@ -132,6 +132,7 @@ type model struct {
 	// Confirm dialog state
 	confirmMsg    string
 	confirmAction func()
+	confirmCmd    tea.Cmd  // returned after confirmAction, for actions needing one (e.g. quit)
 	confirmReturn viewMode // mode to return to after confirm (0 = manager)
 
 	// Edit panel state
@@ -145,6 +146,9 @@ type model struct {
 
 	// One desktop notification slot per repo
 	notifier *desktopNotifier
+
+	// Session checkpoint written by ctrl+space z, offered back on start
+	state *StateStore
 
 	// Bus state
 	bus          *bus.Bus
@@ -207,6 +211,11 @@ func newModel(cfg *Config, cfgPath string) model {
 		fmt.Fprintf(os.Stderr, "warning: layout store unavailable: %v\n", layoutErr)
 	}
 
+	stateStore, stateErr := OpenStateStore()
+	if stateErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: state store unavailable: %v\n", stateErr)
+	}
+
 	m := model{
 		cfg:             cfg,
 		cfgPath:         cfgPath,
@@ -222,6 +231,7 @@ func newModel(cfg *Config, cfgPath string) model {
 		mode:            viewManager,
 		draggingDivider: -1,
 		layout:          layout,
+		state:           stateStore,
 		notifier:        newDesktopNotifier(nil),
 		bus:             busClient,
 		busCompose:      busInput,
@@ -258,6 +268,19 @@ func newModel(cfg *Config, cfgPath string) model {
 		return peers
 	})
 	busRt.Start()
+
+	// A checkpoint whose sessions are all running again (hive restarted
+	// without a reboot) is not worth interrupting for — only offer when
+	// something is actually missing.
+	if st, ok := m.state.Load(); ok && pendingRestore(st) {
+		m.confirmMsg = st.Summary()
+		m.confirmReturn = viewManager
+		m.confirmAction = func() {
+			mp.restoreState(st)
+			mp.state.Clear()
+		}
+		m.mode = viewConfirm
+	}
 
 	return m
 }
@@ -743,13 +766,17 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.confirmAction != nil {
 				m.confirmAction()
 			}
+			cmd := m.confirmCmd
+			m.confirmCmd = nil
 			if m.confirmReturn != 0 {
 				m.mode = m.confirmReturn
 				m.confirmReturn = 0
 			} else {
 				m.mode = viewManager
 			}
+			return m, cmd
 		case "n", "N", "esc", "escape":
+			m.confirmCmd = nil
 			if m.confirmReturn != 0 {
 				m.mode = m.confirmReturn
 				m.confirmReturn = 0
@@ -1336,6 +1363,23 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 			tab.SplitPane.FocusRight()
 		}
 		m.reloadDrawerForContext()
+	case ChordSaveState:
+		st := m.captureState()
+		if len(st.Sessions) == 0 {
+			m.err = fmt.Errorf("no sessions to save")
+			break
+		}
+		if err := m.state.Save(st); err != nil {
+			m.err = fmt.Errorf("save state: %w", err)
+			break
+		}
+		m.confirmMsg = fmt.Sprintf("Saved %d sessions.\n\n  Quit hive now?",
+			len(st.Sessions))
+		m.confirmAction = nil
+		m.confirmCmd = tea.Quit
+		m.confirmReturn = m.mode // cancelling leaves you where you were
+		m.mode = viewConfirm
+		return m, nil
 	case ChordNextWorker:
 		// One keypress: new worktree split on this repo, running /next.
 		// No form — the branch is auto-numbered and the prompt is fixed,
@@ -1840,7 +1884,7 @@ func (m model) renderWorkspaceStatusBar() string {
 		if splitCount > 1 {
 			keys = append(keys, "o:orient")
 		}
-		keys = append(keys, "f:fullscreen", "r:refresh")
+		keys = append(keys, "f:fullscreen", "r:refresh", "z:save")
 		status = strings.Join(keys, "  ")
 	} else {
 		// Stage 1: normal — show hint to start chord

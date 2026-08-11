@@ -70,11 +70,45 @@ func TestChordNextWorkerDoesNotShadowSplits(t *testing.T) {
 	}
 }
 
+func TestChordSaveState(t *testing.T) {
+	ch := NewChordHandler(500 * time.Millisecond)
+	ch.Start()
+
+	action, ok := ch.Complete("z")
+	if !ok {
+		t.Fatal("expected valid action for z")
+	}
+	if action != ChordSaveState {
+		t.Errorf("expected ChordSaveState, got %d", action)
+	}
+}
+
+func TestChordActionsAreDistinct(t *testing.T) {
+	// Every bound key must map to its own action — a duplicated constant
+	// would silently make one binding shadow another.
+	ch := NewChordHandler(500 * time.Millisecond)
+	seen := map[ChordAction]string{}
+	for _, key := range []string{"q", "n", "p", "v", "h", "x", "f", "w", "d", "s", "r", "t", "o", "g", "z"} {
+		ch.Start()
+		action, ok := ch.Complete(key)
+		if !ok {
+			t.Errorf("key %q is unbound", key)
+			continue
+		}
+		if prev, dup := seen[action]; dup {
+			t.Errorf("keys %q and %q both map to action %d", prev, key, action)
+		}
+		seen[action] = key
+	}
+}
+
 func TestChordHandlerUnknownKey(t *testing.T) {
 	ch := NewChordHandler(500 * time.Millisecond)
 	ch.Start()
 
-	_, ok := ch.Complete("z")
+	// Punctuation rather than a letter: letters keep getting bound, and this
+	// test previously used "z" until the save-state chord claimed it.
+	_, ok := ch.Complete("!")
 	if ok {
 		t.Error("expected no action for unknown key")
 	}
