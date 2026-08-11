@@ -36,6 +36,23 @@ var AttentionThresholdsHidden = []time.Duration{
 	5 * time.Minute, // level 3: telegram/external
 }
 
+// ApplyDesktopDelay overrides the level-2 (desktop notification) threshold
+// from config. Level 3 is pushed out to stay above it, so a long desktop
+// delay can't leave external notifications firing first.
+func ApplyDesktopDelay(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	AttentionThresholdsHidden[1] = d
+	AttentionThresholdsVisible[1] = d
+	if AttentionThresholdsHidden[2] < d {
+		AttentionThresholdsHidden[2] = d
+	}
+	if AttentionThresholdsVisible[2] < d {
+		AttentionThresholdsVisible[2] = d
+	}
+}
+
 // CheckAttention updates attention state for a session and returns the
 // escalation action needed. `waiting` says whether claude is currently
 // waiting for user input (derived from the session JSONL — assistant

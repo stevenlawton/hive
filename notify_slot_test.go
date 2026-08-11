@@ -2,27 +2,40 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
+	"time"
 )
 
 // fakeSender records notify-send invocations and hands back canned ids.
 type fakeSender struct {
-	calls [][]string
-	ids   []string
-	err   error
+	calls   [][]string
+	ids     []string
+	actions [][]string // one action key set per send, nil for no actions
+	err     error
 }
 
-func (f *fakeSender) send(args []string) (string, error) {
+func (f *fakeSender) send(args []string) (string, <-chan string, error) {
 	f.calls = append(f.calls, args)
 	if f.err != nil {
-		return "", f.err
+		return "", nil, f.err
 	}
 	if len(f.ids) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 	id := f.ids[0]
 	f.ids = f.ids[1:]
-	return id, nil
+	if len(f.actions) == 0 {
+		return id, nil, nil
+	}
+	keys := f.actions[0]
+	f.actions = f.actions[1:]
+	ch := make(chan string, len(keys))
+	for _, k := range keys {
+		ch <- k
+	}
+	close(ch)
+	return id, ch, nil
 }
 
 func hasArg(args []string, want string) bool {
@@ -92,6 +105,50 @@ func TestNotifierForgetsIDOnSendFailure(t *testing.T) {
 	if hasArg(f.calls[1], "--replace-id=") {
 		t.Errorf("must not replace after a failed send: %v", f.calls[1])
 	}
+}
+
+func TestNotifierCarriesAClickAction(t *testing.T) {
+	f := &fakeSender{ids: []string{"7"}}
+	n := newDesktopNotifier(f.send)
+
+	n.Notify("he-events", "t", "m")
+
+	if !hasArg(f.calls[0], "--action=default=Open") {
+		t.Errorf("notification must offer a default action: %v", f.calls[0])
+	}
+	// The desktop-entry hint made GNOME try to launch a new terminal rather
+	// than raise the running one, so it is deliberately absent.
+	for _, a := range f.calls[0] {
+		if strings.HasPrefix(a, "--hint=string:desktop-entry:") {
+			t.Errorf("desktop-entry hint should not be sent: %v", f.calls[0])
+		}
+	}
+}
+
+func TestNotifierReportsClickWithRepoKey(t *testing.T) {
+	f := &fakeSender{ids: []string{"7"}, actions: [][]string{{"default"}}}
+	n := newDesktopNotifier(f.send)
+
+	clicked := make(chan string, 1)
+	n.onClick = func(repoKey string) { clicked <- repoKey }
+
+	n.Notify("he-events", "t", "m")
+
+	select {
+	case got := <-clicked:
+		if got != "he-events" {
+			t.Errorf("clicked repo: got %q, want \"he-events\"", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("click was never reported")
+	}
+}
+
+func TestNotifierSurvivesClickWithNoHandler(t *testing.T) {
+	f := &fakeSender{ids: []string{"7"}, actions: [][]string{{"default"}}}
+	n := newDesktopNotifier(f.send)
+	// onClick deliberately unset — must not panic.
+	n.Notify("he-events", "t", "m")
 }
 
 func TestRepoGroupKey(t *testing.T) {

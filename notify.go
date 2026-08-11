@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -77,13 +78,29 @@ func playSound(soundPath string) {
 //
 // Worktrees fold into their parent's slot (see repoGroupKey), so a repo never
 // occupies more than one entry no matter how many splits it is running.
+// hiveWindowTitle is what hive names its terminal window, so a window
+// manager can be asked to raise that exact window on notification click.
+const hiveWindowTitle = "hive"
+
+// hiveWindowClass is the WM_CLASS of the terminal hive runs in. Matching on
+// it is the fallback for when the OSC title has been overwritten — tmux and
+// the shell both rewrite the title, so it cannot be relied on alone.
+const hiveWindowClass = "gnome-terminal-server.Gnome-terminal"
+
+// notifySender starts a notification and returns its id plus a channel that
+// yields action keys as the user invokes them. The channel closes when the
+// notification is dismissed or replaced.
+type notifySender func(args []string) (id string, actions <-chan string, err error)
+
 type desktopNotifier struct {
 	mu   sync.Mutex
 	ids  map[string]string
-	send func(args []string) (string, error)
+	send notifySender
+	// onClick fires with the repo key when the user clicks a notification.
+	onClick func(repoKey string)
 }
 
-func newDesktopNotifier(send func([]string) (string, error)) *desktopNotifier {
+func newDesktopNotifier(send notifySender) *desktopNotifier {
 	if send == nil {
 		send = notifySend
 	}
@@ -99,7 +116,12 @@ func (n *desktopNotifier) Notify(repoKey, title, message string) {
 	prev := n.ids[repoKey]
 	n.mu.Unlock()
 
-	args := []string{"--urgency=normal", "--print-id"}
+	args := []string{
+		"--urgency=normal",
+		"--print-id",
+		"--app-name=hive",
+		"--action=default=Open",
+	}
 	if prev != "" {
 		// A stale id (daemon restarted, user dismissed it) is harmless —
 		// the spec says replace an unknown id by creating a new one.
@@ -107,21 +129,122 @@ func (n *desktopNotifier) Notify(repoKey, title, message string) {
 	}
 	args = append(args, title, message)
 
-	id, err := n.send(args)
+	id, actions, err := n.send(args)
 	if err != nil || id == "" {
 		return
 	}
 	n.mu.Lock()
 	n.ids[repoKey] = id
 	n.mu.Unlock()
+
+	if actions == nil {
+		return
+	}
+	go func() {
+		// Any action on this notification means the user clicked it; the
+		// only one offered is "default".
+		for range actions {
+			if n.onClick != nil {
+				n.onClick(repoKey)
+			}
+		}
+	}()
 }
 
-func notifySend(args []string) (string, error) {
-	out, err := exec.Command("notify-send", args...).Output()
-	if err != nil {
-		return "", err
+// notifySend runs notify-send and streams back any action the user invokes.
+//
+// --action implies --wait, so the process lives until the notification is
+// clicked, dismissed or replaced. That makes stdbuf necessary: without it
+// libnotify's stdout is fully buffered when piped and the id would not
+// surface until exit, long after it is needed for --replace-id.
+func notifySend(args []string) (string, <-chan string, error) {
+	if _, err := exec.LookPath("stdbuf"); err != nil {
+		return notifySendNoActions(args)
 	}
-	return strings.TrimSpace(string(out)), nil
+	cmd := exec.Command("stdbuf", append([]string{"-oL", "notify-send"}, args...)...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", nil, err
+	}
+
+	reader := bufio.NewReader(stdout)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		cmd.Process.Kill()
+		cmd.Wait()
+		return "", nil, err
+	}
+
+	actions := make(chan string, 1)
+	go func() {
+		defer close(actions)
+		defer cmd.Wait()
+		for {
+			l, err := reader.ReadString('\n')
+			if key := strings.TrimSpace(l); key != "" {
+				actions <- key
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return strings.TrimSpace(line), actions, nil
+}
+
+// notifySendNoActions is the degraded path for systems without stdbuf: the
+// notification still shows and still collapses per repo, but clicking it
+// cannot reach hive.
+func notifySendNoActions(args []string) (string, <-chan string, error) {
+	filtered := args[:0:0]
+	for _, a := range args {
+		if strings.HasPrefix(a, "--action=") {
+			continue
+		}
+		filtered = append(filtered, a)
+	}
+	out, err := exec.Command("notify-send", filtered...).Output()
+	if err != nil {
+		return "", nil, err
+	}
+	return strings.TrimSpace(string(out)), nil, nil
+}
+
+// setHiveWindowTitle names the hosting terminal window via OSC 0, giving
+// raiseHiveWindow something to match on. Written straight to the tty because
+// bubbletea owns stdout — the same route playSound uses for the bell.
+func setHiveWindowTitle() {
+	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		return
+	}
+	defer tty.Close()
+	tty.WriteString("\033]0;" + hiveWindowTitle + "\007")
+}
+
+// raiseHiveWindow asks the window manager to focus hive's terminal window,
+// by title first and window class second. Best-effort and silent: with
+// neither helper installed the click still switches the hive tab, it just
+// cannot bring the window forward.
+func raiseHiveWindow() {
+	if path, err := exec.LookPath("wmctrl"); err == nil {
+		if exec.Command(path, "-a", hiveWindowTitle).Run() == nil {
+			return
+		}
+		exec.Command(path, "-x", "-a", hiveWindowClass).Run()
+		return
+	}
+	if path, err := exec.LookPath("xdotool"); err == nil {
+		if exec.Command(path, "search", "--name", "^"+hiveWindowTitle+"$",
+			"windowactivate").Run() == nil {
+			return
+		}
+		exec.Command(path, "search", "--class", "gnome-terminal",
+			"windowactivate").Run()
+	}
 }
 
 // repoGroupKey is the notification slot a repo or worktree belongs to.

@@ -14,8 +14,12 @@ type NotificationConfig struct {
 	Desktop      bool   `yaml:"desktop"`
 	TabFlash     bool   `yaml:"tab_flash"`
 	Sound        bool   `yaml:"sound"`
-	SoundPath    string `yaml:"sound_path,omitempty"`    // custom sound file, empty = system bell
+	SoundPath    string `yaml:"sound_path,omitempty"` // custom sound file, empty = system bell
 	PollInterval int    `yaml:"poll_interval"`
+	// DesktopDelay is how long a hidden session must sit waiting before it
+	// earns a desktop notification (Go duration, e.g. "3m"). Empty keeps the
+	// built-in default. Short values are useful for testing the click path.
+	DesktopDelay string `yaml:"desktop_delay,omitempty"`
 	WebhookURL   string `yaml:"webhook_url,omitempty"`   // POST JSON on events
 	NtfyTopic    string `yaml:"ntfy_topic,omitempty"`    // ntfy.sh topic
 	SlackWebhook string `yaml:"slack_webhook,omitempty"` // Slack incoming webhook URL

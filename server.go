@@ -43,6 +43,40 @@ func initEventChan() chan SessionEvent {
 	return eventChan
 }
 
+// notifyClickMsg carries the repo key of a clicked desktop notification.
+type notifyClickMsg string
+
+var (
+	notifyClickChan chan string
+	notifyClickOnce sync.Once
+)
+
+func initNotifyClickChan() chan string {
+	notifyClickOnce.Do(func() {
+		notifyClickChan = make(chan string, 8)
+	})
+	return notifyClickChan
+}
+
+// pushNotifyClick hands a click to the update loop. Non-blocking: a click
+// arriving while the buffer is full is dropped rather than wedging the
+// notifier goroutine that raised it.
+func pushNotifyClick(repoKey string) {
+	select {
+	case initNotifyClickChan() <- repoKey:
+	default:
+	}
+}
+
+// waitForNotifyClick returns a tea.Cmd that blocks until a notification is
+// clicked.
+func waitForNotifyClick() tea.Cmd {
+	ch := initNotifyClickChan()
+	return func() tea.Msg {
+		return notifyClickMsg(<-ch)
+	}
+}
+
 // waitForEvent returns a tea.Cmd that blocks until the next SessionEvent is
 // pushed onto the channel by the session watcher.
 func waitForEvent() tea.Cmd {

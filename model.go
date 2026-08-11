@@ -196,6 +196,13 @@ func newModel(cfg *Config, cfgPath string) model {
 	}
 	busRt := newBusRuntime(busClient)
 
+	if d, err := time.ParseDuration(cfg.Notifications.DesktopDelay); err == nil {
+		ApplyDesktopDelay(d)
+	} else if cfg.Notifications.DesktopDelay != "" {
+		fmt.Fprintf(os.Stderr, "warning: bad notifications.desktop_delay %q: %v\n",
+			cfg.Notifications.DesktopDelay, err)
+	}
+
 	layout, layoutErr := OpenLayoutStore()
 	if layoutErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: layout store unavailable: %v\n", layoutErr)
@@ -222,6 +229,7 @@ func newModel(cfg *Config, cfgPath string) model {
 		busRt:           busRt,
 		busViewTop:      -1, // start in tail mode
 	}
+	m.notifier.onClick = pushNotifyClick
 	m.rebuildDisplayOrder()
 
 	// Reconnect to existing tmux sessions synchronously so that workspace
@@ -480,7 +488,11 @@ func (m model) Init() tea.Cmd {
 	// reconnectMsg used to be fired here, but reconnectSessions now runs
 	// synchronously in newModel so tabs are ready on the first frame. The
 	// reconnectMsg handler in Update still exists for the detach flow.
-	return tea.Batch(healthTick(), waitForEvent(), captureTick())
+	// The window title is what raiseHiveWindow hands to wmctrl/xdotool to
+	// pick this window out of every other terminal.
+	setHiveWindowTitle()
+	return tea.Batch(healthTick(), waitForEvent(), captureTick(),
+		waitForNotifyClick())
 }
 
 // claudeScrollNotches is how many SGR wheel notches to forward per hive scroll
@@ -496,6 +508,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.manager.SetSize(msg.Width, msg.Height)
 		m.workspace.SetSize(msg.Width, msg.Height)
 		return m, nil
+	case notifyClickMsg:
+		m.focusRepoFromNotification(string(msg))
+		return m, waitForNotifyClick()
 	case captureTickMsg:
 		m.updateCaptures()
 		return m, captureTick()
@@ -1540,6 +1555,48 @@ func (m *model) updateDiffStats() {
 			item.diffStats = ""
 		}
 	}
+}
+
+// focusRepoFromNotification brings hive forward and lands the user on the
+// session the notification was about. Tabs are keyed by the same group key the
+// notifier uses, so the repo key is the tab id.
+func (m *model) focusRepoFromNotification(repoKey string) {
+	go raiseHiveWindow()
+
+	tab, ok := m.workspace.Tabs[repoKey]
+	if !ok {
+		// No tab open for it — put the cursor on the repo in the manager so
+		// the user still lands somewhere useful.
+		for i, idx := range m.displayOrder {
+			if repoGroupKey(m.items[idx].repo) == repoKey {
+				m.cursor = i
+				m.mode = viewManager
+				return
+			}
+		}
+		return
+	}
+
+	m.workspace.TabBar.FocusByID(repoKey)
+	m.mode = viewWorkspace
+
+	// Prefer the split that is actually waiting, so a repo running several
+	// sessions doesn't land the user on an idle one.
+	for i := range m.items {
+		item := &m.items[i]
+		if repoGroupKey(item.repo) != repoKey || !itemWaiting(item) {
+			continue
+		}
+		for j, split := range tab.SplitPane.Splits {
+			if split.SessionName == item.tmuxSes {
+				tab.SplitPane.FocusIdx = j
+				break
+			}
+		}
+		break
+	}
+
+	m.acknowledgeTab(repoKey)
 }
 
 // waitingSummary describes every session currently waiting under one repo, so
