@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -179,6 +182,17 @@ func StartTmuxControl() error {
 		return fmt.Errorf("create control session: %w", err)
 	}
 
+	// Control mode is an optimisation, not a requirement, and it can be
+	// broken while ordinary tmux commands still work — a tmux server
+	// outliving an ncurses upgrade will hang the attach handshake. Left
+	// unchecked that silently swallows every keystroke, so probe once and
+	// stay on plain commands if the probe doesn't come back.
+	if !controlModeWorks() {
+		fmt.Fprintln(os.Stderr,
+			"hive: tmux control mode unavailable, using direct commands")
+		return nil
+	}
+
 	cmd := exec.Command("tmux", "-C", "attach-session", "-t", tmuxTarget(tmuxControlSessionName))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -195,6 +209,40 @@ func StartTmuxControl() error {
 	tmuxControl.stdin = stdin
 	tmuxControl.started = true
 	return nil
+}
+
+// tmuxControlActive reports whether the persistent control connection is up.
+func tmuxControlActive() bool {
+	tmuxControl.Lock()
+	defer tmuxControl.Unlock()
+	return tmuxControl.started && tmuxControl.stdin != nil
+}
+
+// controlModeProbeTimeout bounds the startup probe. Control mode either
+// answers immediately or is wedged; there is no slow-but-working case.
+const controlModeProbeTimeout = 2 * time.Second
+
+// controlModeWorks reports whether a control client can attach and run a
+// command. A wedged handshake shows up as the probe timing out.
+func controlModeWorks() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), controlModeProbeTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "tmux", "-C", "attach-session",
+		"-t", tmuxTarget(tmuxControlSessionName))
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return false
+	}
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		return false
+	}
+	fmt.Fprint(stdin, "display-message -p probe\ndetach\n")
+	stdin.Close()
+
+	return cmd.Wait() == nil && ctx.Err() == nil
 }
 
 // TmuxControlSend sends a command through the persistent control connection.
@@ -382,8 +430,14 @@ func TmuxSendRawKeys(sessionName string, keys ...string) error {
 	for i, k := range keys {
 		translated[i] = bubbleteaToTmuxKey(k)
 	}
-	cmd := "send-keys -t " + tmuxPaneTarget(sessionName) + " " + strings.Join(translated, " ")
-	return TmuxControlSend(cmd)
+	if tmuxControlActive() {
+		return TmuxControlSend("send-keys -t " + tmuxPaneTarget(sessionName) + " " +
+			strings.Join(translated, " "))
+	}
+	// Direct form: the generic fallback re-splits on whitespace, which is
+	// wrong for anything quoted.
+	return tmuxRun(append([]string{"send-keys", "-t", tmuxPaneTarget(sessionName)},
+		translated...)...)
 }
 
 // TmuxSendWheel forwards SGR mouse wheel events to a pane, `count` notches at a
@@ -412,9 +466,14 @@ func TmuxSendWheel(sessionName string, up bool, count int) error {
 }
 
 func TmuxSendLiteral(sessionName, text string) error {
-	// Use control mode for literal text — quote it for the tmux command parser
-	cmd := fmt.Sprintf("send-keys -t %s -l %q", tmuxPaneTarget(sessionName), text)
-	return TmuxControlSend(cmd)
+	if tmuxControlActive() {
+		// Quote it for the tmux command parser.
+		return TmuxControlSend(fmt.Sprintf("send-keys -t %s -l %q",
+			tmuxPaneTarget(sessionName), text))
+	}
+	// Direct form passes the text as one argv entry, so no quoting is
+	// needed and none can be mis-parsed.
+	return tmuxRun("send-keys", "-t", tmuxPaneTarget(sessionName), "-l", text)
 }
 
 // TmuxCopyModeScroll enters copy-mode (if needed) and scrolls up or down.
