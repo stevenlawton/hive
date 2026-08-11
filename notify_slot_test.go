@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -13,20 +14,27 @@ type fakeSender struct {
 	ids     []string
 	actions [][]string // one action key set per send, nil for no actions
 	err     error
+
+	mu      sync.Mutex
+	stopped []string // ids whose process was terminated
 }
 
-func (f *fakeSender) send(args []string) (string, <-chan string, error) {
+func (f *fakeSender) send(args []string) (*notifyHandle, error) {
 	f.calls = append(f.calls, args)
 	if f.err != nil {
-		return "", nil, f.err
+		return nil, f.err
 	}
 	if len(f.ids) == 0 {
-		return "", nil, nil
+		return nil, nil
 	}
 	id := f.ids[0]
 	f.ids = f.ids[1:]
+
+	h := &notifyHandle{id: id}
+	h.stop = func() { f.mu.Lock(); f.stopped = append(f.stopped, id); f.mu.Unlock() }
+
 	if len(f.actions) == 0 {
-		return id, nil, nil
+		return h, nil
 	}
 	keys := f.actions[0]
 	f.actions = f.actions[1:]
@@ -35,7 +43,14 @@ func (f *fakeSender) send(args []string) (string, <-chan string, error) {
 		ch <- k
 	}
 	close(ch)
-	return id, ch, nil
+	h.actions = ch
+	return h, nil
+}
+
+func (f *fakeSender) stoppedIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.stopped...)
 }
 
 func hasArg(args []string, want string) bool {
@@ -104,6 +119,44 @@ func TestNotifierForgetsIDOnSendFailure(t *testing.T) {
 	// replace a notification that was never created.
 	if hasArg(f.calls[1], "--replace-id=") {
 		t.Errorf("must not replace after a failed send: %v", f.calls[1])
+	}
+}
+
+// Regression: --replace-id swaps the drawer entry but leaves the previous
+// notify-send alive (--action implies --wait). Unstopped, each alert leaked a
+// process and two fds until hive could no longer fork tmux and every session
+// stopped accepting keystrokes.
+func TestNotifierStopsTheReplacedProcess(t *testing.T) {
+	f := &fakeSender{ids: []string{"7", "8", "9"}}
+	n := newDesktopNotifier(f.send)
+
+	n.Notify("he-events", "t", "one")
+	if got := f.stoppedIDs(); len(got) != 0 {
+		t.Fatalf("nothing to stop on first send, got %v", got)
+	}
+
+	n.Notify("he-events", "t", "two")
+	if got := f.stoppedIDs(); len(got) != 1 || got[0] != "7" {
+		t.Errorf("replacing should stop id 7, stopped=%v", got)
+	}
+
+	n.Notify("he-events", "t", "three")
+	if got := f.stoppedIDs(); len(got) != 2 || got[1] != "8" {
+		t.Errorf("replacing again should stop id 8, stopped=%v", got)
+	}
+}
+
+func TestNotifierDoesNotStopAnotherReposProcess(t *testing.T) {
+	f := &fakeSender{ids: []string{"7", "9", "10"}}
+	n := newDesktopNotifier(f.send)
+
+	n.Notify("he-events", "t", "m")
+	n.Notify("stevenlawton.com", "t", "m")
+	n.Notify("he-events", "t", "m") // replaces 7 only
+
+	got := f.stoppedIDs()
+	if len(got) != 1 || got[0] != "7" {
+		t.Errorf("only he-events' own process should stop, stopped=%v", got)
 	}
 }
 
