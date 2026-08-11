@@ -25,10 +25,15 @@ var AttentionThresholdsVisible = []time.Duration{
 // user is on a different workspace tab, or the manager/bus tab. Level 1
 // fires immediately because the whole point is to pull the user's
 // attention back to a pane they can't currently see.
+// Level 2 sits well back from level 1 on purpose. "Waiting" here means the
+// assistant finished a turn, which for an autonomous session is routine rather
+// than a request for help — at 10s every completed turn raised a banner. The
+// tab flash still fires immediately; the desktop only hears about a session
+// that has been sitting untouched for minutes.
 var AttentionThresholdsHidden = []time.Duration{
-	0,                // level 1: flash immediately
-	10 * time.Second, // level 2: desktop notification
-	5 * time.Minute,  // level 3: telegram/external
+	0,               // level 1: flash immediately
+	3 * time.Minute, // level 2: desktop notification
+	5 * time.Minute, // level 3: telegram/external
 }
 
 // CheckAttention updates attention state for a session and returns the

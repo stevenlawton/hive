@@ -144,6 +144,9 @@ type model struct {
 	// Workspace layout persisted across restarts
 	layout *LayoutStore
 
+	// One desktop notification slot per repo
+	notifier *desktopNotifier
+
 	// Bus state
 	bus          *bus.Bus
 	busCompose   textinput.Model
@@ -213,6 +216,7 @@ func newModel(cfg *Config, cfgPath string) model {
 		mode:            viewManager,
 		draggingDivider: -1,
 		layout:          layout,
+		notifier:        newDesktopNotifier(nil),
 		bus:             busClient,
 		busCompose:      busInput,
 		busRt:           busRt,
@@ -1029,9 +1033,13 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 	}
 
 	hasNewHighSeverity := false
+	// Captured here because m.alerts is overwritten below, which left the
+	// downstream notification check comparing newAlerts against itself.
+	freshAlerts := map[string]string{}
 	for k, v := range newAlerts {
 		if _, existed := m.alerts[k]; !existed {
 			hasNewHighSeverity = true
+			freshAlerts[k] = v
 			m.manager.NotifyLog.Add(k, "crashed", time.Now())
 			m.workspace.TabBar.SetFlashing(k, true)
 			for i := range m.items {
@@ -1154,10 +1162,8 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 			cmds = append(cmds, flashRestore())
 		}
 		if m.cfg.Notifications.Desktop {
-			for k, v := range newAlerts {
-				if _, existed := m.alerts[k]; !existed {
-					sendDesktopNotification(k, v)
-				}
+			for k, v := range freshAlerts {
+				m.notifier.Notify(k, "Hive: "+k, v)
 			}
 		}
 	}
@@ -1536,6 +1542,37 @@ func (m *model) updateDiffStats() {
 	}
 }
 
+// waitingSummary describes every session currently waiting under one repo, so
+// a repo running several splits produces a single notification naming them all
+// rather than one popup per split.
+func (m *model) waitingSummary(key string) (title, message string) {
+	var labels []string
+	short := key
+	for i := range m.items {
+		item := &m.items[i]
+		if item.repo.DirName == key {
+			short = item.repo.Short
+		}
+		if repoGroupKey(item.repo) != key || !itemWaiting(item) {
+			continue
+		}
+		if item.repo.IsWorktree {
+			labels = append(labels, "wt:"+item.repo.WorktreeBranch)
+		} else {
+			labels = append(labels, item.repo.Short)
+		}
+	}
+
+	title = "Hive: " + short
+	switch len(labels) {
+	case 0, 1:
+		return title, "Claude is waiting for input"
+	default:
+		return title, fmt.Sprintf("%d sessions waiting — %s",
+			len(labels), strings.Join(labels, ", "))
+	}
+}
+
 // handleAttention fires the appropriate notification for the escalation level.
 func (m *model) handleAttention(item *repoItem, level int) {
 	label := item.repo.Short
@@ -1555,7 +1592,11 @@ func (m *model) handleAttention(item *repoItem, level int) {
 		m.workspace.TabBar.SetFlashing(item.repo.DirName, true)
 		m.manager.NotifyLog.Add(label, "waiting", time.Now())
 	case 2: // Desktop notification
-		go sendDesktopNotification("Hive: "+label, "Claude is waiting for input")
+		if m.cfg.Notifications.Desktop {
+			key := repoGroupKey(item.repo)
+			title, message := m.waitingSummary(key)
+			go m.notifier.Notify(key, title, message)
+		}
 		if m.cfg.Notifications.Sound {
 			go playSound(m.cfg.Notifications.SoundPath)
 		}

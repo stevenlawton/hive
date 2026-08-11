@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -67,8 +69,67 @@ func playSound(soundPath string) {
 	}
 }
 
-func sendDesktopNotification(title, message string) {
-	exec.Command("notify-send", "--urgency=normal", title, message).Run()
+// desktopNotifier keeps one notification slot per repo. Each repo's first
+// alert records the id notify-send prints; later alerts for that repo pass it
+// back as --replace-id so the existing drawer entry is rewritten in place
+// rather than stacking a new one. Without this, five sessions completing a
+// turn apiece buried the notification drawer.
+//
+// Worktrees fold into their parent's slot (see repoGroupKey), so a repo never
+// occupies more than one entry no matter how many splits it is running.
+type desktopNotifier struct {
+	mu   sync.Mutex
+	ids  map[string]string
+	send func(args []string) (string, error)
+}
+
+func newDesktopNotifier(send func([]string) (string, error)) *desktopNotifier {
+	if send == nil {
+		send = notifySend
+	}
+	return &desktopNotifier{ids: map[string]string{}, send: send}
+}
+
+// Notify raises or updates the notification for one repo.
+func (n *desktopNotifier) Notify(repoKey, title, message string) {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	prev := n.ids[repoKey]
+	n.mu.Unlock()
+
+	args := []string{"--urgency=normal", "--print-id"}
+	if prev != "" {
+		// A stale id (daemon restarted, user dismissed it) is harmless —
+		// the spec says replace an unknown id by creating a new one.
+		args = append(args, "--replace-id="+prev)
+	}
+	args = append(args, title, message)
+
+	id, err := n.send(args)
+	if err != nil || id == "" {
+		return
+	}
+	n.mu.Lock()
+	n.ids[repoKey] = id
+	n.mu.Unlock()
+}
+
+func notifySend(args []string) (string, error) {
+	out, err := exec.Command("notify-send", args...).Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// repoGroupKey is the notification slot a repo or worktree belongs to.
+func repoGroupKey(r Repo) string {
+	if r.IsWorktree && r.Parent != "" {
+		return r.Parent
+	}
+	return r.DirName
 }
 
 func sendWebhook(url string, ev SessionEvent) {
