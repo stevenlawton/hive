@@ -42,6 +42,34 @@ func TestChordReorient(t *testing.T) {
 	}
 }
 
+func TestChordNextWorker(t *testing.T) {
+	ch := NewChordHandler(500 * time.Millisecond)
+	ch.Start()
+
+	action, ok := ch.Complete("g")
+	if !ok {
+		t.Fatal("expected valid action for g")
+	}
+	if action != ChordNextWorker {
+		t.Errorf("expected ChordNextWorker, got %d", action)
+	}
+}
+
+func TestChordNextWorkerDoesNotShadowSplits(t *testing.T) {
+	// g must not disturb the existing worktree-split keys.
+	for key, want := range map[string]ChordAction{
+		"v": ChordVSplit,
+		"h": ChordHSplit,
+	} {
+		ch := NewChordHandler(500 * time.Millisecond)
+		ch.Start()
+		got, ok := ch.Complete(key)
+		if !ok || got != want {
+			t.Errorf("key %q: got %d ok=%v, want %d", key, got, ok, want)
+		}
+	}
+}
+
 func TestChordHandlerUnknownKey(t *testing.T) {
 	ch := NewChordHandler(500 * time.Millisecond)
 	ch.Start()

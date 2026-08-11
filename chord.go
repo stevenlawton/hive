@@ -24,6 +24,7 @@ const (
 	ChordRefresh
 	ChordToggleDrawer
 	ChordReorient
+	ChordNextWorker
 )
 
 // ChordHandler manages the Ctrl+Space chord prefix state.
@@ -99,6 +100,8 @@ func (c *ChordHandler) Complete(key string) (ChordAction, bool) {
 		return ChordToggleDrawer, true
 	case "o":
 		return ChordReorient, true
+	case "g":
+		return ChordNextWorker, true
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		c.TabIndex = int(key[0] - '0')
 		return ChordJumpTab, true

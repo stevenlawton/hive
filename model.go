@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -1337,29 +1336,33 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 			tab.SplitPane.FocusRight()
 		}
 		m.reloadDrawerForContext()
+	case ChordNextWorker:
+		// One keypress: new worktree split on this repo, running /next.
+		// No form — the branch is auto-numbered and the prompt is fixed,
+		// so there is nothing left to ask.
+		tab := m.workspace.ActiveTab()
+		item := m.activeTabRepo()
+		if tab == nil || item == nil {
+			m.err = fmt.Errorf("no repo for active tab")
+			break
+		}
+		m.wtSplitMode = true
+		m.wtParent = item.repo.DirName
+		m.wtOrientation = tab.SplitPane.Orientation // inherit the tab's layout
+		m.wtYolo = item.repo.Yolo
+		m.wtFocus = 0
+		m.wtFields = make([]textinput.Model, wtFieldCount)
+		m.wtFields[wtFieldBranch] = newWorktreeField("Branch: ", "",
+			nextSplitBranch(item.repo.Path))
+		m.wtFields[wtFieldPrompt] = newWorktreeField("Prompt: ", "", nextWorkerPrompt)
+		return m, m.createWorktree()
 	case ChordVSplit, ChordHSplit:
 		tab := m.workspace.ActiveTab()
 		if tab == nil {
 			m.err = fmt.Errorf("no active tab")
 			break
 		}
-		// Find the repo for this tab — look for the tab ID or its parent
-		var item *repoItem
-		for i := range m.items {
-			if m.items[i].repo.DirName == tab.ID {
-				item = &m.items[i]
-				break
-			}
-		}
-		// If tab is for a worktree, use its parent for creating new worktrees
-		if item != nil && item.repo.IsWorktree && item.repo.Parent != "" {
-			for i := range m.items {
-				if m.items[i].repo.DirName == item.repo.Parent {
-					item = &m.items[i]
-					break
-				}
-			}
-		}
+		item := m.activeTabRepo()
 		if item == nil {
 			m.err = fmt.Errorf("repo not found for tab %q", tab.ID)
 			break
@@ -1373,17 +1376,7 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 			m.wtOrientation = ui.SplitVertical
 		}
 
-		// Find next available split number by checking disk
-		wtCount := 1
-		wtBase := filepath.Join(item.repo.Path, ".worktrees")
-		for {
-			candidate := filepath.Join(wtBase, fmt.Sprintf("split-%d", wtCount))
-			if _, err := os.Stat(candidate); err != nil {
-				break
-			}
-			wtCount++
-		}
-		defaultBranch := fmt.Sprintf("split-%d", wtCount)
+		defaultBranch := nextSplitBranch(item.repo.Path)
 
 		fields := make([]textinput.Model, wtFieldCount)
 		fields[wtFieldBranch] = newWorktreeField("Branch: ", defaultBranch, defaultBranch)
@@ -1838,7 +1831,7 @@ func (m model) renderWorkspaceStatusBar() string {
 		if splitCount > 1 {
 			keys = append(keys, "←→:focus")
 		}
-		keys = append(keys, "v:vsplit", "h:hsplit")
+		keys = append(keys, "v:vsplit", "h:hsplit", "g:/next")
 		if focusedItem != nil && focusedItem.repo.IsWorktree {
 			keys = append(keys, "x:merge+close")
 		} else if splitCount > 1 {

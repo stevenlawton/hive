@@ -134,10 +134,49 @@ func (m *model) handleWorktreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// nextWorkerPrompt is what a spawned worker session starts with: claim this
+// worktree's next unclaimed task and work it.
+const nextWorkerPrompt = "/next"
+
+// activeTabRepo returns the repo owning the active tab, resolving a worktree
+// tab to its parent — new worktrees always hang off the parent repo.
+func (m *model) activeTabRepo() *repoItem {
+	tab := m.workspace.ActiveTab()
+	if tab == nil {
+		return nil
+	}
+	var item *repoItem
+	for i := range m.items {
+		if m.items[i].repo.DirName == tab.ID {
+			item = &m.items[i]
+			break
+		}
+	}
+	if item != nil && item.repo.IsWorktree && item.repo.Parent != "" {
+		for i := range m.items {
+			if m.items[i].repo.DirName == item.repo.Parent {
+				return &m.items[i]
+			}
+		}
+	}
+	return item
+}
+
+// nextSplitBranch returns the first split-N name with no worktree on disk.
+func nextSplitBranch(repoPath string) string {
+	base := filepath.Join(repoPath, ".worktrees")
+	for n := 1; ; n++ {
+		candidate := filepath.Join(base, fmt.Sprintf("split-%d", n))
+		if _, err := os.Stat(candidate); err != nil {
+			return fmt.Sprintf("split-%d", n)
+		}
+	}
+}
+
 // createWorktree creates a git worktree and tmux session.
 func (m *model) createWorktree() tea.Cmd {
 	branch := strings.TrimSpace(m.wtFields[wtFieldBranch].Value())
-if branch == "" {
+	if branch == "" {
 		m.err = fmt.Errorf("branch name required")
 		return nil
 	}
@@ -190,7 +229,10 @@ if branch == "" {
 		if args != "" {
 			args += " "
 		}
-		args += "-p " + shellQuote(prompt)
+		// Positional, not -p: -p is print mode, which runs the prompt
+		// headless and exits. A split you are watching wants an
+		// interactive session seeded with the prompt.
+		args += shellQuote(prompt)
 	}
 	TmuxSendKeys(sessionName, claudeCommand(args))
 
