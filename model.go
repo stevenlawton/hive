@@ -1831,6 +1831,39 @@ func (m *model) isShellSession(sesName string) bool {
 	return false
 }
 
+// wrapKeyHints lays hints out across as many lines as the width allows, so a
+// narrow window hides none of them. Hints are measured by display width: they
+// carry ANSI styling, and byte length overstates them badly enough to wrap
+// lines that would have fit. A width of zero means the size isn't known yet,
+// which is not a reason to put every hint on its own line.
+func wrapKeyHints(keys []string, width int) string {
+	const sep = "  "
+	if len(keys) == 0 {
+		return ""
+	}
+	if width <= 0 {
+		return strings.Join(keys, sep)
+	}
+
+	var b strings.Builder
+	line := 0
+	for i, k := range keys {
+		kw := lipgloss.Width(k)
+		switch {
+		case i == 0:
+			line = kw
+		case line+len(sep)+kw <= width:
+			b.WriteString(sep)
+			line += len(sep) + kw
+		default:
+			b.WriteString("\n")
+			line = kw
+		}
+		b.WriteString(k)
+	}
+	return b.String()
+}
+
 // renderWorkspaceStatusBar renders the status bar for workspace view.
 func (m model) renderWorkspaceStatusBar() string {
 	tab := m.workspace.ActiveTab()
@@ -1886,7 +1919,7 @@ func (m model) renderWorkspaceStatusBar() string {
 			keys = append(keys, "o:orient")
 		}
 		keys = append(keys, "f:fullscreen", "r:refresh", "z:save")
-		status = strings.Join(keys, "  ")
+		status = wrapKeyHints(keys, m.width)
 	} else {
 		// Stage 1: normal — show hint to start chord
 		var parts []string
@@ -1902,7 +1935,7 @@ func (m model) renderWorkspaceStatusBar() string {
 			}
 			parts = append(parts, ui.ValStyle.Render(label))
 		}
-		status = strings.Join(parts, "  ")
+		status = wrapKeyHints(parts, m.width)
 	}
 
 	if m.err != nil {

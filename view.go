@@ -50,8 +50,13 @@ func (m model) View() tea.View {
 		content = m.viewConfirmModal()
 	case viewWorkspace:
 		m.workspace.SetSize(m.width, m.height)
+		// The status bar wraps to as many lines as the hints need, but the
+		// layout reserves exactly one. Overlay the bar rather than appending
+		// it, so a wrapped bar covers the bottom of the content instead of
+		// pushing the frame past the terminal height — and so tapping a chord
+		// never resizes the tmux panes underneath.
 		statusBar := m.renderWorkspaceStatusBar()
-		content = m.workspace.View(statusBar)
+		content = overlayBottom(m.workspace.View(""), statusBar, m.height)
 		paneCursor = m.workspaceCursorLocal()
 		if m.drawerOpen {
 			panel := m.renderTodoDrawer(m.width, m.drawerPanelHeight())
