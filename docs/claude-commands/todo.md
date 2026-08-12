@@ -20,6 +20,7 @@ Interpret the request and run the matching command(s):
 |---|---|
 | show the list / no args | `hive todo list` |
 | add a task | `hive todo add <subject> — <optional description>` |
+| add with a long body | `hive todo add --description "<text>" <subject>` |
 | mark done | `hive todo done <ref>` |
 | reopen | `hive todo reopen <ref>` |
 | claim / release a task | `hive todo claim <ref>` (toggle; `claim clear` drops yours) |
@@ -55,6 +56,11 @@ Rules:
   them. Give both when they may want to act on it: *staff pivot for per-event
   scoping* (`ffy`).
 - Keep headlines to a short title, not a paragraph.
+- `add` takes the description **after a ` - ` separator** (an em-dash reads too),
+  or via `--description`/`-d`. Those are the only two forms — any other flag is
+  refused rather than folded into the subject, which is how `--description` used
+  to end up as literal text inside a task. `--` ends flag parsing if the subject
+  itself starts with a dash.
 - If the request is empty, just run `hive todo list`.
 - After any change, run `hive todo list` once and show the user the result.
 

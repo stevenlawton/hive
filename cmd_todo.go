@@ -85,13 +85,68 @@ func runTodoList() int {
 	return 0
 }
 
-func runTodoAdd(args []string) int {
-	text := strings.TrimSpace(strings.Join(args, " "))
+const todoAddUsage = `usage: hive todo add <subject - description>
+       hive todo add --description <text> <subject>
+
+The description is optional. Separate it from the subject with " - " (an
+em-dash is accepted too), or pass it with --description/-d. Use "--" before a
+subject that starts with a dash.`
+
+// parseTodoAddArgs turns argv into a subject and description.
+//
+// Unrecognised flags are refused rather than folded into the subject: add used
+// to join every argument with spaces, so a plausible-looking --description or
+// --body-file ended up as literal text inside the task, with nothing to show
+// anything had gone wrong.
+func parseTodoAddArgs(args []string) (subject, desc string, err error) {
+	rest := args
+	flagged := false
+
+	for len(rest) > 0 {
+		a := rest[0]
+		switch {
+		case a == "--":
+			rest = rest[1:]
+			return finishTodoAdd(rest, desc, flagged)
+		case a == "-d" || a == "--description":
+			if len(rest) < 2 {
+				return "", "", fmt.Errorf("%s needs a value", a)
+			}
+			desc, flagged, rest = rest[1], true, rest[2:]
+		case strings.HasPrefix(a, "--description="):
+			desc, flagged = strings.TrimPrefix(a, "--description="), true
+			rest = rest[1:]
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			return "", "", fmt.Errorf("unknown flag %s", a)
+		default:
+			return finishTodoAdd(rest, desc, flagged)
+		}
+	}
+	return finishTodoAdd(rest, desc, flagged)
+}
+
+func finishTodoAdd(rest []string, desc string, flagged bool) (string, string, error) {
+	text := strings.TrimSpace(strings.Join(rest, " "))
 	if text == "" {
-		fmt.Fprintln(os.Stderr, "usage: hive todo add <subject — optional description>")
+		return "", "", fmt.Errorf("a subject is required")
+	}
+	subject, inline := splitSubjectDesc(text)
+	if inline != "" {
+		if flagged {
+			return "", "", fmt.Errorf(
+				"description given twice: once with --description and once after the separator")
+		}
+		desc = inline
+	}
+	return subject, desc, nil
+}
+
+func runTodoAdd(args []string) int {
+	subj, desc, err := parseTodoAddArgs(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n\n%s\n", err, todoAddUsage)
 		return 1
 	}
-	subj, desc := splitSubjectDesc(text)
 	cwd := todoCwd()
 	todos, err := withTodos(cwd, func(ts []Todo) []Todo {
 		return addTodo(ts, defaultSection, subj, desc)
