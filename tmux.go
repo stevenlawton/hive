@@ -163,6 +163,7 @@ var tmuxControl struct {
 	stdin   io.Writer
 	cmd     *exec.Cmd
 	started bool
+	done    chan struct{}
 }
 
 // StartTmuxControl opens a persistent tmux control-mode connection
@@ -205,10 +206,31 @@ func StartTmuxControl() error {
 		return err
 	}
 
+	done := make(chan struct{})
 	tmuxControl.cmd = cmd
 	tmuxControl.stdin = stdin
 	tmuxControl.started = true
+	tmuxControl.done = done
+
+	// The client can exit while its session lives on, and then it is only a
+	// zombie holding a pipe nobody reads. Reap it and retire the connection
+	// so later commands take the direct path instead of vanishing.
+	go func() {
+		cmd.Wait()
+		retireTmuxControl()
+		close(done)
+	}()
 	return nil
+}
+
+// retireTmuxControl marks the control connection unusable. Callers fall back
+// to spawning tmux commands, which is how hive runs when control mode was
+// never available in the first place.
+func retireTmuxControl() {
+	tmuxControl.Lock()
+	defer tmuxControl.Unlock()
+	tmuxControl.started = false
+	tmuxControl.stdin = nil
 }
 
 // tmuxControlActive reports whether the persistent control connection is up.
@@ -245,16 +267,34 @@ func controlModeWorks() bool {
 	return cmd.Wait() == nil && ctx.Err() == nil
 }
 
+// controlWrite posts a command to the control connection. It reports false
+// when the command was NOT delivered — the connection is down, or the write
+// failed — and the caller must run the command directly instead. A failed
+// write retires the connection: a pipe whose reader has gone will never come
+// back, and silently swallowing keystrokes is worse than spawning processes.
+func controlWrite(command string) bool {
+	tmuxControl.Lock()
+	w := tmuxControl.stdin
+	if !tmuxControl.started || w == nil {
+		tmuxControl.Unlock()
+		return false
+	}
+	_, err := fmt.Fprintf(w, "%s\n", command)
+	tmuxControl.Unlock()
+
+	if err != nil {
+		retireTmuxControl()
+		return false
+	}
+	return true
+}
+
 // TmuxControlSend sends a command through the persistent control connection.
 // Falls back to spawning a process if control mode isn't available.
 func TmuxControlSend(command string) error {
-	tmuxControl.Lock()
-	if tmuxControl.started && tmuxControl.stdin != nil {
-		_, err := fmt.Fprintf(tmuxControl.stdin, "%s\n", command)
-		tmuxControl.Unlock()
-		return err
+	if controlWrite(command) {
+		return nil
 	}
-	tmuxControl.Unlock()
 	// Fallback: parse and run as regular command
 	args := strings.Fields(command)
 	return tmuxRun(args...)
@@ -264,13 +304,19 @@ func TmuxControlSend(command string) error {
 // dedicated control session, so nothing is left behind on clean exit.
 func StopTmuxControl() {
 	tmuxControl.Lock()
-	defer tmuxControl.Unlock()
-	if tmuxControl.cmd != nil {
-		if tmuxControl.stdin != nil {
-			fmt.Fprintf(tmuxControl.stdin, "detach\n")
+	if tmuxControl.stdin != nil {
+		fmt.Fprintf(tmuxControl.stdin, "detach\n")
+	}
+	done := tmuxControl.done
+	tmuxControl.Unlock()
+
+	// The reaper goroutine owns Wait; block on it rather than calling Wait
+	// again here, and give up rather than hang if the client ignores detach.
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(controlModeProbeTimeout):
 		}
-		tmuxControl.cmd.Wait()
-		tmuxControl.started = false
 	}
 	_ = tmuxRun("kill-session", "-t", tmuxTarget(tmuxControlSessionName))
 }
@@ -430,9 +476,9 @@ func TmuxSendRawKeys(sessionName string, keys ...string) error {
 	for i, k := range keys {
 		translated[i] = bubbleteaToTmuxKey(k)
 	}
-	if tmuxControlActive() {
-		return TmuxControlSend("send-keys -t " + tmuxPaneTarget(sessionName) + " " +
-			strings.Join(translated, " "))
+	if controlWrite("send-keys -t " + tmuxPaneTarget(sessionName) + " " +
+		strings.Join(translated, " ")) {
+		return nil
 	}
 	// Direct form: the generic fallback re-splits on whitespace, which is
 	// wrong for anything quoted.
@@ -466,10 +512,10 @@ func TmuxSendWheel(sessionName string, up bool, count int) error {
 }
 
 func TmuxSendLiteral(sessionName, text string) error {
-	if tmuxControlActive() {
-		// Quote it for the tmux command parser.
-		return TmuxControlSend(fmt.Sprintf("send-keys -t %s -l %q",
-			tmuxPaneTarget(sessionName), text))
+	// Quote it for the tmux command parser.
+	if controlWrite(fmt.Sprintf("send-keys -t %s -l %q",
+		tmuxPaneTarget(sessionName), text)) {
+		return nil
 	}
 	// Direct form passes the text as one argv entry, so no quoting is
 	// needed and none can be mis-parsed.
