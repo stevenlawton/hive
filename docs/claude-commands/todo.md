@@ -48,6 +48,12 @@ Rules:
   worktrees are active, because positions shift.
 - Run `hive todo list` to discover ids; you do not need to re-run it before each
   command the way positional numbers required.
+- **Ids address, subjects describe.** The id rule above is about *commands*. When
+  you name a task to a human — a plan, a bus announcement, a commit message, a
+  handover — lead with the subject: `hive todo show` prints it. "claiming ffy"
+  tells the reader nothing, and nobody reading the bus has the list in front of
+  them. Give both when they may want to act on it: *staff pivot for per-event
+  scoping* (`ffy`).
 - Keep headlines to a short title, not a paragraph.
 - If the request is empty, just run `hive todo list`.
 - After any change, run `hive todo list` once and show the user the result.

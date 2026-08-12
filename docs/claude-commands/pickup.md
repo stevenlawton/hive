@@ -17,6 +17,10 @@ Then read your claimed task: `hive todo show` (prints `section` / `subject` /
 `description`). If it says nothing is claimed, run `hive todo` and STOP — ask the
 user which task to claim by its id (`hive todo claim <ref>`).
 
+Keep that subject. Every time you name this task to a human from here on — the
+write-up below, a bus announcement, a commit message — say the subject, not the
+three-letter id. The id is for commands; on its own it tells a reader nothing.
+
 ## 2. Load the full context
 
 Mine the subject + description for concrete anchors and chase them down:
