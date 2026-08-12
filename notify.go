@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -87,31 +89,29 @@ const hiveWindowTitle = "hive"
 // the shell both rewrite the title, so it cannot be relied on alone.
 const hiveWindowClass = "gnome-terminal-server.Gnome-terminal"
 
-// notifyHandle is one live notification: its id, the action keys the user
-// invokes on it, and a way to terminate the process holding it open.
-type notifyHandle struct {
-	id      string
-	actions <-chan string
-	stop    func()
-}
-
-// notifySender starts a notification. The actions channel closes when the
-// notification is dismissed or its process is stopped.
-type notifySender func(args []string) (*notifyHandle, error)
+// notifySender posts a notification and returns the id the server assigned.
+// replaceID is the id of the repo's previous notification, or "" if it has
+// none, in which case a new entry is created.
+type notifySender func(replaceID, title, body string) (id string, err error)
 
 type desktopNotifier struct {
-	mu    sync.Mutex
-	slots map[string]*notifyHandle
-	send  notifySender
+	mu     sync.Mutex
+	slots  map[string]string // repo key -> notification id
+	owners map[string]string // notification id -> repo key
+	send   notifySender
 	// onClick fires with the repo key when the user clicks a notification.
 	onClick func(repoKey string)
 }
 
 func newDesktopNotifier(send notifySender) *desktopNotifier {
 	if send == nil {
-		send = notifySend
+		send = dbusNotify
 	}
-	return &desktopNotifier{slots: map[string]*notifyHandle{}, send: send}
+	return &desktopNotifier{
+		slots:  map[string]string{},
+		owners: map[string]string{},
+		send:   send,
+	}
 }
 
 // Notify raises or updates the notification for one repo.
@@ -123,133 +123,179 @@ func (n *desktopNotifier) Notify(repoKey, title, message string) {
 	prev := n.slots[repoKey]
 	n.mu.Unlock()
 
-	args := []string{
-		"--urgency=normal",
-		"--print-id",
-		"--app-name=hive",
-		"--action=default=Open",
-	}
-	if prev != nil {
-		// A stale id (daemon restarted, user dismissed it) is harmless —
-		// the spec says replace an unknown id by creating a new one.
-		args = append(args, "--replace-id="+prev.id)
-	}
-	args = append(args, title, message)
-
-	h, err := n.send(args)
-	if err != nil || h == nil || h.id == "" {
+	// A stale id (server restarted, user dismissed it) is harmless — the
+	// spec says replace an unknown id by creating a new one. That is why the
+	// slot is never dropped on close: forgetting it is what turns one entry
+	// per repo back into one entry per alert.
+	id, err := n.send(prev, title, message)
+	if err != nil || id == "" {
+		n.mu.Lock()
+		delete(n.owners, prev)
+		delete(n.slots, repoKey)
+		n.mu.Unlock()
 		return
-	}
-
-	// --replace-id swaps the drawer entry but leaves the previous process
-	// running: --action implies --wait, so it would sit on the pipe for
-	// ever. Left alone that leaks one process and two fds per alert until
-	// hive can no longer fork tmux and every session stops accepting keys.
-	// Stopped after the replacement is up so the entry never blinks out.
-	if prev != nil && prev.stop != nil {
-		prev.stop()
 	}
 
 	n.mu.Lock()
-	n.slots[repoKey] = h
+	if prev != "" && prev != id {
+		delete(n.owners, prev)
+	}
+	n.slots[repoKey] = id
+	n.owners[id] = repoKey
 	n.mu.Unlock()
+}
 
-	if h.actions == nil {
+// handleAction routes an invoked action to the repo that owns the
+// notification. "default" is the only action offered, and GNOME fires it when
+// the notification body is clicked.
+func (n *desktopNotifier) handleAction(id, action string) {
+	if n == nil || action == "" {
+		return
+	}
+	n.mu.Lock()
+	repoKey, known := n.owners[id]
+	n.mu.Unlock()
+	if !known {
+		return
+	}
+	if n.onClick != nil {
+		n.onClick(repoKey)
+	}
+}
+
+// handleClosed records that a notification is gone. The slot deliberately
+// survives: see Notify.
+func (n *desktopNotifier) handleClosed(string) {}
+
+// dbusNotify posts a notification straight to the notification server and
+// returns the id it assigned.
+//
+// hive talks to the bus rather than going through notify-send because
+// libnotify 0.8.8 decides GNOME Shell 50 has no action support — it prints
+// "Displaying non-interactively" and exits at once, even though the server
+// advertises "actions" and does deliver ActionInvoked. That instant exit took
+// the click reporting with it, and made hive drop the per-repo slot on every
+// alert, which is what buried the drawer.
+func dbusNotify(replaceID, title, body string) (string, error) {
+	if replaceID == "" {
+		replaceID = "0"
+	}
+	out, err := exec.Command("gdbus", "call", "--session",
+		"--dest", "org.freedesktop.Notifications",
+		"--object-path", "/org/freedesktop/Notifications",
+		"--method", "org.freedesktop.Notifications.Notify",
+		// "--" or gdbus reads the -1 expire timeout as one of its own flags.
+		"--", "hive", replaceID, "", title, body,
+		"['default', 'Open']", "{}", "-1").Output()
+	if err != nil {
+		return notifySendFallback(replaceID, title, body)
+	}
+	return parseNotifyID(string(out))
+}
+
+// notifyIDPattern matches the id in a gdbus reply such as "(uint32 31,)".
+var notifyIDPattern = regexp.MustCompile(`uint32 (\d+)`)
+
+func parseNotifyID(reply string) (string, error) {
+	m := notifyIDPattern.FindStringSubmatch(reply)
+	if m == nil {
+		return "", fmt.Errorf("unrecognised notify reply: %q", strings.TrimSpace(reply))
+	}
+	return m[1], nil
+}
+
+// notifySendFallback is the display-only path for a box without gdbus. The
+// notification still shows and still collapses per repo; it just cannot report
+// a click, because that is the part notify-send no longer does.
+func notifySendFallback(replaceID, title, body string) (string, error) {
+	args := []string{"--app-name=hive", "--print-id"}
+	if replaceID != "" && replaceID != "0" {
+		args = append(args, "--replace-id="+replaceID)
+	}
+	out, err := exec.Command("notify-send", append(args, title, body)...).Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// watchNotificationActions streams signals from the notification server for as
+// long as hive runs, routing clicks back to the repo that owns each
+// notification. Best-effort: without dbus-monitor the notifications still
+// appear and still collapse, they just are not clickable.
+func (n *desktopNotifier) watchNotificationActions() {
+	if n == nil {
+		return
+	}
+	path, err := exec.LookPath("dbus-monitor")
+	if err != nil {
 		return
 	}
 	go func() {
-		// Any action on this notification means the user clicked it; the
-		// only one offered is "default".
-		for range h.actions {
-			if n.onClick != nil {
-				n.onClick(repoKey)
-			}
+		cmd := exec.Command(path, "--session",
+			"type='signal',interface='org.freedesktop.Notifications'")
+		stdout, err := cmd.StdoutPipe()
+		if err != nil || cmd.Start() != nil {
+			return
 		}
-		// Process gone (dismissed, or replaced by a later alert). Drop the
-		// slot if it is still ours so nothing holds a dead handle.
-		n.mu.Lock()
-		if n.slots[repoKey] == h {
-			delete(n.slots, repoKey)
-		}
-		n.mu.Unlock()
-	}()
-}
-
-// notifySend runs notify-send and streams back any action the user invokes.
-//
-// --action implies --wait, so the process lives until the notification is
-// clicked, dismissed or replaced. That makes stdbuf necessary: without it
-// libnotify's stdout is fully buffered when piped and the id would not
-// surface until exit, long after it is needed for --replace-id.
-func notifySend(args []string) (*notifyHandle, error) {
-	if _, err := exec.LookPath("stdbuf"); err != nil {
-		return notifySendNoActions(args)
-	}
-	cmd := exec.Command("stdbuf", append([]string{"-oL", "notify-send"}, args...)...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-
-	reader := bufio.NewReader(stdout)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
-		return nil, err
-	}
-
-	actions := make(chan string, 1)
-	go func() {
-		defer close(actions)
 		defer cmd.Wait()
-		for {
-			l, err := reader.ReadString('\n')
-			if key := strings.TrimSpace(l); key != "" {
-				actions <- key
-			}
-			if err != nil {
-				return
-			}
-		}
+		scanNotificationSignals(stdout, n.handleAction, n.handleClosed)
 	}()
-
-	var once sync.Once
-	return &notifyHandle{
-		id:      strings.TrimSpace(line),
-		actions: actions,
-		stop: func() {
-			// Killing closes the pipe, which ends the reader goroutine and
-			// closes the actions channel. Once-guarded: stop may race with
-			// the user dismissing the notification.
-			once.Do(func() {
-				if cmd.Process != nil {
-					cmd.Process.Kill()
-				}
-			})
-		},
-	}, nil
 }
 
-// notifySendNoActions is the degraded path for systems without stdbuf: the
-// notification still shows and still collapses per repo, but clicking it
-// cannot reach hive.
-func notifySendNoActions(args []string) (*notifyHandle, error) {
-	filtered := args[:0:0]
-	for _, a := range args {
-		if strings.HasPrefix(a, "--action=") {
+// scanNotificationSignals parses dbus-monitor output, which prints a header
+// line naming the member and then one line per argument:
+//
+//	... member=ActionInvoked
+//	   uint32 31
+//	   string "default"
+//
+// The member has to gate the argument lines: ActivationToken carries the same
+// id-then-string shape for the same click, so parsing on shape alone would
+// report every click twice.
+func scanNotificationSignals(r io.Reader, onAction func(id, action string), onClosed func(id string)) {
+	const (
+		idle = iota
+		wantActionID
+		wantActionName
+		wantClosedID
+	)
+	state := idle
+	id := ""
+
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if strings.HasPrefix(line, "signal ") {
+			switch {
+			case strings.HasSuffix(line, "member=ActionInvoked"):
+				state = wantActionID
+			case strings.HasSuffix(line, "member=NotificationClosed"):
+				state = wantClosedID
+			default:
+				state = idle
+			}
 			continue
 		}
-		filtered = append(filtered, a)
+
+		switch state {
+		case wantActionID:
+			if v, ok := strings.CutPrefix(line, "uint32 "); ok {
+				id, state = v, wantActionName
+			}
+		case wantActionName:
+			if v, ok := strings.CutPrefix(line, "string "); ok {
+				onAction(id, strings.Trim(v, `"`))
+				state = idle
+			}
+		case wantClosedID:
+			if v, ok := strings.CutPrefix(line, "uint32 "); ok {
+				onClosed(v)
+				state = idle
+			}
+		}
 	}
-	out, err := exec.Command("notify-send", filtered...).Output()
-	if err != nil {
-		return nil, err
-	}
-	return &notifyHandle{id: strings.TrimSpace(string(out))}, nil
 }
 
 // setHiveWindowTitle names the hosting terminal window via OSC 0, giving

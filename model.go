@@ -239,6 +239,7 @@ func newModel(cfg *Config, cfgPath string) model {
 		busViewTop:      -1, // start in tail mode
 	}
 	m.notifier.onClick = pushNotifyClick
+	m.notifier.watchNotificationActions()
 	m.rebuildDisplayOrder()
 
 	// Reconnect to existing tmux sessions synchronously so that workspace
