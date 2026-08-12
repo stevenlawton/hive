@@ -5,3 +5,6 @@
 
 # Claude eval session logs (any depth) — never commit
 **/.claude/evals/sessions/
+
+# Claude code-review scratch — machine-local
+.claude/review/
