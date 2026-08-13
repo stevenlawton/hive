@@ -37,7 +37,7 @@ type RespondOptions struct {
 // messages or on messages whose From matches the peer.
 func Respond(ctx context.Context, opts RespondOptions) error {
 	if opts.Timeout == 0 {
-		opts.Timeout = 120 * time.Second
+		opts.Timeout = defaultResponderTimeout
 	}
 	if opts.ClaudeBin == "" {
 		opts.ClaudeBin = "claude"
@@ -68,9 +68,26 @@ func Respond(ctx context.Context, opts RespondOptions) error {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("claude -p failed: %w (stderr: %s)", err, stderr.String())
+		return respondError(ctx, err, stderr.String(), opts.Timeout)
 	}
 	return nil
+}
+
+// defaultResponderTimeout bounds one auto-response. The responder is not just
+// generating text — it reads files, greps and runs git before deciding whether
+// the message concerns its worktree — so the budget has to cover real
+// investigation. Too tight and the work is killed mid-flight and thrown away.
+const defaultResponderTimeout = 5 * time.Minute
+
+// respondError explains why the responder stopped. exec.CommandContext kills on
+// deadline with SIGKILL, which Run reports as a bare "signal: killed" — the
+// same thing an OOM kill or a crash produces, so it has to be told apart here
+// or there is nothing to act on.
+func respondError(ctx context.Context, err error, stderr string, timeout time.Duration) error {
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("claude -p timed out after %s and was killed mid-response", timeout)
+	}
+	return fmt.Errorf("claude -p failed: %w (stderr: %s)", err, stderr)
 }
 
 func buildResponderPrompt(opts RespondOptions) string {
