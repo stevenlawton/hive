@@ -87,17 +87,44 @@ func TestNotifierKeepsASlotPerRepo(t *testing.T) {
 	}
 }
 
-func TestNotifierForgetsIDOnSendFailure(t *testing.T) {
+func TestNotifierHasNothingToReplaceIfItNeverSent(t *testing.T) {
 	f := &fakeSender{err: errors.New("no bus")}
 	n := newDesktopNotifier(f.send)
 
 	n.Notify("he-events", "t", "m")
 	n.Notify("he-events", "t", "m")
 
-	// A failed send yields no id, so the follow-up must not claim to
-	// replace a notification that was never created.
+	// Never got an id, so there is nothing to claim to replace.
 	if got := f.sends(); got[1] != "" {
 		t.Errorf("must not replace after a failed send, got %q", got[1])
+	}
+}
+
+// A transient failure must not cost the repo its slot. Discarding a good id
+// because one send errored means the next alert opens a second entry for the
+// repo instead of replacing the first — the drawer flood, reintroduced.
+func TestNotifierKeepsSlotThroughATransientFailure(t *testing.T) {
+	f := &fakeSender{ids: []string{"7"}}
+	n := newDesktopNotifier(f.send)
+
+	n.Notify("he-events", "t", "first")
+
+	f.mu.Lock()
+	f.err = errors.New("bus hiccup")
+	f.mu.Unlock()
+	n.Notify("he-events", "t", "fails")
+
+	f.mu.Lock()
+	f.err, f.ids = nil, []string{"7"}
+	f.mu.Unlock()
+	n.Notify("he-events", "t", "recovered")
+
+	got := f.sends()
+	if got[1] != "7" {
+		t.Errorf("the failing send should still have offered id 7, got %q", got[1])
+	}
+	if got[2] != "7" {
+		t.Errorf("slot lost to a transient failure: send 3 used %q, want 7", got[2])
 	}
 }
 

@@ -129,10 +129,9 @@ func (n *desktopNotifier) Notify(repoKey, title, message string) {
 	// per repo back into one entry per alert.
 	id, err := n.send(prev, title, message)
 	if err != nil || id == "" {
-		n.mu.Lock()
-		delete(n.owners, prev)
-		delete(n.slots, repoKey)
-		n.mu.Unlock()
+		// Keep the slot. A send can fail transiently, and discarding a good
+		// id means the next alert opens a second entry for this repo instead
+		// of replacing the first — which is the flood the slot prevents.
 		return
 	}
 
