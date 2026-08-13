@@ -99,6 +99,8 @@ type desktopNotifier struct {
 	slots  map[string]string // repo key -> notification id
 	owners map[string]string // notification id -> repo key
 	send   notifySender
+	// close withdraws a notification the user no longer needs to see.
+	close func(id string)
 	// onClick fires with the repo key when the user clicks a notification.
 	onClick func(repoKey string)
 }
@@ -111,6 +113,27 @@ func newDesktopNotifier(send notifySender) *desktopNotifier {
 		slots:  map[string]string{},
 		owners: map[string]string{},
 		send:   send,
+		close:  dbusCloseNotification,
+	}
+}
+
+// Clear withdraws a repo's notification. Visiting the repo's tab answers the
+// "waiting for input" it was reporting, so leaving it in the drawer would ask
+// the user to dismiss something they have already dealt with.
+func (n *desktopNotifier) Clear(repoKey string) {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	id, ok := n.slots[repoKey]
+	if ok {
+		delete(n.slots, repoKey)
+		delete(n.owners, id)
+	}
+	n.mu.Unlock()
+
+	if ok && id != "" && n.close != nil {
+		n.close(id)
 	}
 }
 
@@ -190,6 +213,16 @@ func dbusNotify(replaceID, title, body string) (string, error) {
 		return notifySendFallback(replaceID, title, body)
 	}
 	return parseNotifyID(string(out))
+}
+
+// dbusCloseNotification withdraws a notification from the drawer. Best-effort:
+// an id the server has already forgotten is not an error worth surfacing.
+func dbusCloseNotification(id string) {
+	exec.Command("gdbus", "call", "--session",
+		"--dest", "org.freedesktop.Notifications",
+		"--object-path", "/org/freedesktop/Notifications",
+		"--method", "org.freedesktop.Notifications.CloseNotification",
+		"--", id).Run()
 }
 
 // notifyIDPattern matches the id in a gdbus reply such as "(uint32 31,)".

@@ -1262,6 +1262,25 @@ func (m *model) syncModeFromActiveTab() {
 	m.resizeMode = false // resize state doesn't survive a tab switch
 	m.draggingDivider = -1
 	m.reloadDrawerForContext()
+	m.clearNotificationForActiveTab()
+}
+
+// clearNotificationForActiveTab withdraws the desktop notification for the tab
+// the user has just landed on. The notification says a session is waiting; once
+// its pane is on screen that is answered, and leaving the entry in the drawer
+// only asks the user to dismiss something twice.
+func (m *model) clearNotificationForActiveTab() {
+	tab := m.workspace.ActiveTab()
+	if tab == nil || m.mode != viewWorkspace {
+		return
+	}
+	for i := range m.items {
+		if m.items[i].repo.DirName == tab.ID {
+			m.workspace.TabBar.SetFlashing(tab.ID, false)
+			go m.notifier.Clear(repoGroupKey(m.items[i].repo))
+			return
+		}
+	}
 }
 
 // handleResizeKey drives split-divider resize mode (ctrl+space s). Arrows move

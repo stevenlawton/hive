@@ -146,6 +146,54 @@ func TestNotifierKeepsSlotAfterNotificationCloses(t *testing.T) {
 	}
 }
 
+// Visiting a repo's tab answers the notification, so the banner should go.
+func TestNotifierClearRetiresTheNotification(t *testing.T) {
+	f := &fakeSender{ids: []string{"7", "9"}}
+	var closed []string
+	n := newDesktopNotifier(f.send)
+	n.close = func(id string) { closed = append(closed, id) }
+
+	n.Notify("he-events", "t", "m")
+	n.Clear("he-events")
+
+	if len(closed) != 1 || closed[0] != "7" {
+		t.Errorf("Clear should close notification 7, closed=%v", closed)
+	}
+
+	// The slot is gone, so the next alert opens a fresh entry rather than
+	// replacing one the user has already dealt with.
+	n.Notify("he-events", "t", "m")
+	if got := f.sends(); got[1] != "" {
+		t.Errorf("after Clear the next send should not replace, got %q", got[1])
+	}
+}
+
+func TestNotifierClearIsSafeWithNothingToClear(t *testing.T) {
+	f := &fakeSender{ids: []string{"7"}}
+	var closed []string
+	n := newDesktopNotifier(f.send)
+	n.close = func(id string) { closed = append(closed, id) }
+
+	n.Clear("he-events") // never notified
+	n.Notify("he-events", "t", "m")
+	n.Clear("stevenlawton.com") // a different repo's tab
+	if len(closed) != 0 {
+		t.Errorf("nothing should have been closed, closed=%v", closed)
+	}
+}
+
+// A cleared notification must not still route clicks to the repo.
+func TestNotifierClearForgetsTheOwner(t *testing.T) {
+	f := &fakeSender{ids: []string{"7"}}
+	n := newDesktopNotifier(f.send)
+	n.close = func(string) {}
+	n.onClick = func(string) { t.Error("a cleared notification should not report clicks") }
+
+	n.Notify("he-events", "t", "m")
+	n.Clear("he-events")
+	n.handleAction("7", "default")
+}
+
 func TestNotifierReportsClickWithRepoKey(t *testing.T) {
 	f := &fakeSender{ids: []string{"7"}}
 	n := newDesktopNotifier(f.send)
