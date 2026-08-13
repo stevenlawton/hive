@@ -1636,6 +1636,9 @@ func (m *model) focusRepoFromNotification(repoKey string) {
 
 	m.workspace.TabBar.FocusByID(repoKey)
 	m.mode = viewWorkspace
+	// Arriving by click is still arriving: stop the tab flashing and retire
+	// the notification, the same as walking to the tab by hand would.
+	m.clearNotificationForActiveTab()
 
 	// Prefer the split that is actually waiting, so a repo running several
 	// sessions doesn't land the user on an idle one.
