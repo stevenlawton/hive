@@ -30,7 +30,7 @@ func runTodoCmd(args []string) int {
 	case "current", "cur", "claim":
 		return runTodoCurrent(args[1:])
 	case "show", "mine":
-		return runTodoShow()
+		return runTodoShow(args[1:])
 	case "defer", "park":
 		return runTodoDefer(args[1:])
 	case "normalize", "resave":
@@ -155,7 +155,12 @@ func runTodoAdd(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	fmt.Printf("added %s: %s\n", todos[len(todos)-1].ID, subj)
+	// Name the file. The list lives on the main worktree so every worktree
+	// shares one, which means adding from a branch leaves an uncommitted
+	// change in a checkout the caller may not be looking at — enough to abort
+	// a deploy pre-flight that insists on a clean tree.
+	fmt.Printf("added %s: %s\n  %s (uncommitted)\n",
+		todos[len(todos)-1].ID, subj, todoFilePath(cwd))
 	return 0
 }
 
@@ -260,16 +265,44 @@ func runTodoNormalize() int {
 
 // runTodoShow prints this worktree's claimed task in a structured form for the
 // /pickup skill to load context from. Nothing claimed → a hint.
-func runTodoShow() int {
-	cwd := todoCwd()
-	owner := worktreeClaim(cwd)
-	for _, t := range loadTodos(cwd) {
+// resolveTodoForShow picks the task to display: the one named by ref, or this
+// worktree's claim when no ref is given. An unknown ref resolves to nothing
+// rather than falling back to the claim — show used to ignore its argument
+// entirely and print the claimed task, which reads as an answer to the question
+// that was actually asked.
+func resolveTodoForShow(ts []Todo, owner, ref string) (Todo, bool) {
+	if ref != "" {
+		if i, ok := resolveTodoRef(ts, ref); ok {
+			return ts[i], true
+		}
+		return Todo{}, false
+	}
+	for _, t := range ts {
 		if !t.Done && owner != "" && t.Claim == owner {
-			fmt.Printf("section: %s\nsubject: %s\ndescription: %s\n", t.sectionOrDefault(), t.Subject, t.Description)
-			return 0
+			return t, true
 		}
 	}
-	fmt.Println("(no task claimed in this worktree — run: hive todo claim <ref>)")
+	return Todo{}, false
+}
+
+func runTodoShow(args []string) int {
+	cwd := todoCwd()
+	ref := ""
+	if len(args) > 0 {
+		ref = args[0]
+	}
+
+	t, ok := resolveTodoForShow(loadTodos(cwd), worktreeClaim(cwd), ref)
+	if !ok {
+		if ref != "" {
+			fmt.Fprintf(os.Stderr, "no task %q — run: hive todo list\n", ref)
+			return 1
+		}
+		fmt.Println("(no task claimed in this worktree — run: hive todo claim <ref>)")
+		return 0
+	}
+	fmt.Printf("id: %s\nsection: %s\nsubject: %s\ndescription: %s\n",
+		t.ID, t.sectionOrDefault(), t.Subject, t.Description)
 	return 0
 }
 
