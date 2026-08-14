@@ -57,6 +57,49 @@ func TestParseTodoAddRejectsUnknownFlag(t *testing.T) {
 	}
 }
 
+// The reported repro: flags after the subject were never parsed, because
+// parsing stopped at the first positional. The -d and the first chunk of its
+// value were concatenated into the subject, then the whole thing was split on
+// the " - " separator — so the title carried the flag and half the body.
+func TestParseTodoAddParsesFlagsAfterTheSubject(t *testing.T) {
+	subj, desc, err := parseTodoAddArgs([]string{
+		"Wire the browser harness into the gate",
+		"-d", "PARKED ON PURPOSE - do not pick this up",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subj != "Wire the browser harness into the gate" {
+		t.Errorf("flag leaked into the subject: %q", subj)
+	}
+	if desc != "PARKED ON PURPOSE - do not pick this up" {
+		t.Errorf("description not taken whole: %q", desc)
+	}
+}
+
+// The guard was unreachable once a positional had been seen, so a typo'd
+// trailing flag landed silently in the task text.
+func TestParseTodoAddRejectsUnknownFlagAfterTheSubject(t *testing.T) {
+	_, _, err := parseTodoAddArgs([]string{"the subject", "--body-file", "notes.txt"})
+	if err == nil {
+		t.Fatal("a trailing unknown flag must be refused, not folded into the subject")
+	}
+	if !strings.Contains(err.Error(), "--body-file") {
+		t.Errorf("error should name the flag, got %q", err)
+	}
+}
+
+func TestParseTodoAddFlagsEitherSideOfTheSubject(t *testing.T) {
+	subj, desc, err := parseTodoAddArgs([]string{"--description=body", "a", "subject"})
+	if err != nil || subj != "a subject" || desc != "body" {
+		t.Errorf("leading flag: subj=%q desc=%q err=%v", subj, desc, err)
+	}
+	subj, desc, err = parseTodoAddArgs([]string{"a", "subject", "--description=body"})
+	if err != nil || subj != "a subject" || desc != "body" {
+		t.Errorf("trailing flag: subj=%q desc=%q err=%v", subj, desc, err)
+	}
+}
+
 func TestParseTodoAddRejectsBothDescriptionForms(t *testing.T) {
 	_, _, err := parseTodoAddArgs([]string{"--description", "one", "subj — two"})
 	if err == nil {

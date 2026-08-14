@@ -31,6 +31,8 @@ func runTodoCmd(args []string) int {
 		return runTodoCurrent(args[1:])
 	case "show", "mine":
 		return runTodoShow(args[1:])
+	case "edit", "rename":
+		return runTodoEdit(args[1:])
 	case "defer", "park":
 		return runTodoDefer(args[1:])
 	case "normalize", "resave":
@@ -39,7 +41,7 @@ func runTodoCmd(args []string) int {
 		return runTodoRm(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown todo subcommand: %s\n", args[0])
-		fmt.Fprintln(os.Stderr, "usage: hive todo [list|add|done|reopen|current|rm|statusline]")
+		fmt.Fprintln(os.Stderr, "usage: hive todo [list|add|edit|show|done|reopen|current|defer|rm|statusline]")
 		return 1
 	}
 }
@@ -99,30 +101,33 @@ subject that starts with a dash.`
 // --body-file ended up as literal text inside the task, with nothing to show
 // anything had gone wrong.
 func parseTodoAddArgs(args []string) (subject, desc string, err error) {
-	rest := args
+	var positional []string
 	flagged := false
 
-	for len(rest) > 0 {
-		a := rest[0]
+	// Flags are read wherever they appear, not only before the subject.
+	// Stopping at the first positional put a trailing -d and its value into
+	// the task title, and made the unknown-flag check below unreachable.
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch {
 		case a == "--":
-			rest = rest[1:]
-			return finishTodoAdd(rest, desc, flagged)
+			positional = append(positional, args[i+1:]...)
+			return finishTodoAdd(positional, desc, flagged)
 		case a == "-d" || a == "--description":
-			if len(rest) < 2 {
+			if i+1 >= len(args) {
 				return "", "", fmt.Errorf("%s needs a value", a)
 			}
-			desc, flagged, rest = rest[1], true, rest[2:]
+			desc, flagged = args[i+1], true
+			i++
 		case strings.HasPrefix(a, "--description="):
 			desc, flagged = strings.TrimPrefix(a, "--description="), true
-			rest = rest[1:]
 		case strings.HasPrefix(a, "-") && len(a) > 1:
 			return "", "", fmt.Errorf("unknown flag %s", a)
 		default:
-			return finishTodoAdd(rest, desc, flagged)
+			positional = append(positional, a)
 		}
 	}
-	return finishTodoAdd(rest, desc, flagged)
+	return finishTodoAdd(positional, desc, flagged)
 }
 
 func finishTodoAdd(rest []string, desc string, flagged bool) (string, string, error) {
@@ -162,6 +167,26 @@ func runTodoAdd(args []string) int {
 	fmt.Printf("added %s: %s\n  %s (uncommitted)\n",
 		todos[len(todos)-1].ID, subj, todoFilePath(cwd))
 	return 0
+}
+
+// runTodoEdit rewrites a task's text in place. rm+add would do the same job
+// but mints a new id and drops the claim, and peers address tasks by id — so
+// hand-editing the markdown was the only safe rewrite before this existed.
+func runTodoEdit(args []string) int {
+	if len(args) < 2 {
+		fmt.Fprintf(os.Stderr, "usage: hive todo edit <ref> <subject - description>\n\n%s\n", todoAddUsage)
+		return 1
+	}
+	subj, desc, err := parseTodoAddArgs(args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n\n%s\n", err, todoAddUsage)
+		return 1
+	}
+	return mutateOne(todoCwd(), args[0], func(ts []Todo, i int) ([]Todo, string) {
+		ts[i].Subject = subj
+		ts[i].Description = desc
+		return ts, fmt.Sprintf("edited %s: %s", ts[i].ID, subj)
+	})
 }
 
 func runTodoSetDone(args []string, done bool) int {
