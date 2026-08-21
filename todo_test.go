@@ -2,6 +2,7 @@ package main
 
 import "strings"
 import "testing"
+import "time"
 
 func TestParseTodoLine(t *testing.T) {
 	cases := []struct {
@@ -505,5 +506,38 @@ func TestCurrentKeepsClaimedTaskInTriage(t *testing.T) {
 	}
 	if got.ID != "zzz" {
 		t.Errorf("picked %q, want zzz (the claimed task in triage)", got.ID)
+	}
+}
+
+func TestClaimStampsAndReleaseClears(t *testing.T) {
+	fixed := time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC)
+	old := nowFunc
+	nowFunc = func() time.Time { return fixed }
+	defer func() { nowFunc = old }()
+
+	todos := []Todo{{Subject: "x", ID: "aaa"}}
+	todos, ok := claimTodo(todos, 0, "split-1")
+	if !ok {
+		t.Fatal("claim refused")
+	}
+	if todos[0].Since != "2026-08-21T09:00:00Z" {
+		t.Errorf("since: got %q", todos[0].Since)
+	}
+
+	out := formatTodos(todos)
+	if !strings.Contains(out, "since:2026-08-21T09:00:00Z") {
+		t.Errorf("since not written:\n%s", out)
+	}
+	round := parseTodos(out)
+	if len(round) != 1 {
+		t.Fatalf("parsed %d tasks, want 1", len(round))
+	}
+	if round[0].Since != todos[0].Since {
+		t.Errorf("since did not round-trip: %q", round[0].Since)
+	}
+
+	todos = releaseClaim(todos, "split-1")
+	if todos[0].Since != "" {
+		t.Errorf("since survived release: %q", todos[0].Since)
 	}
 }

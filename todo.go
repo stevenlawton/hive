@@ -27,6 +27,7 @@ type Todo struct {
 	Claim       string // branch/worktree that claimed it; "" = unclaimed
 	ID          string // stable short id — addresses the task across peers
 	State       string // pipeline stage: "" unrefined | plan-review | ready | triage
+	Since       string // RFC3339 UTC time the current claim was taken; "" if unclaimed
 }
 
 const (
@@ -47,6 +48,9 @@ const (
 	StateReady      = "ready"
 	StateTriage     = "triage"
 )
+
+// nowFunc is the clock, swapped out in tests.
+var nowFunc = time.Now
 
 func validTodoState(s string) bool {
 	switch s {
@@ -216,7 +220,7 @@ func parseTodos(block string) []Todo {
 // marker written by a newer hive still parses here. ok is false when no token was
 // recognised, in which case the caller leaves the comment in the text — a plain
 // HTML comment in a description is not ours to eat.
-func parseTodoMarker(inner string) (claim, id, state string, ok bool) {
+func parseTodoMarker(inner string) (claim, id, state, since string, ok bool) {
 	for _, tok := range strings.Fields(inner) {
 		switch {
 		case strings.HasPrefix(tok, "@"):
@@ -225,9 +229,11 @@ func parseTodoMarker(inner string) (claim, id, state string, ok bool) {
 			id, ok = tok[3:], true
 		case strings.HasPrefix(tok, "state:"):
 			state, ok = tok[6:], true
+		case strings.HasPrefix(tok, "since:"):
+			since, ok = tok[6:], true
 		}
 	}
-	return claim, id, state, ok
+	return claim, id, state, since, ok
 }
 
 func parseTodoLine(s string) (Todo, bool) {
@@ -252,8 +258,8 @@ func parseTodoLine(s string) (Todo, bool) {
 	// Trailing marker comment: <!-- @owner id:xyz -->
 	if i := strings.LastIndex(rest, "<!--"); i >= 0 {
 		if j := strings.Index(rest[i:], "-->"); j >= 0 {
-			if claim, id, state, ok := parseTodoMarker(rest[i+4 : i+j]); ok {
-				t.Claim, t.ID, t.State = claim, id, state
+			if claim, id, state, since, ok := parseTodoMarker(rest[i+4 : i+j]); ok {
+				t.Claim, t.ID, t.State, t.Since = claim, id, state, since
 				rest = strings.TrimSpace(rest[:i])
 			}
 		}
@@ -345,6 +351,9 @@ func (t Todo) marker() string {
 	var toks []string
 	if t.Claim != "" && !t.Done && !t.Deferred {
 		toks = append(toks, "@"+t.Claim)
+		if t.Since != "" {
+			toks = append(toks, "since:"+t.Since)
+		}
 	}
 	if t.ID != "" {
 		toks = append(toks, "id:"+t.ID)
@@ -379,7 +388,7 @@ func toggleTodoDone(todos []Todo, i int) []Todo {
 	}
 	todos[i].Done = !todos[i].Done
 	if todos[i].Done {
-		todos[i].Claim = "" // completing releases any claim
+		todos[i].Claim, todos[i].Since = "", "" // completing releases any claim
 	}
 	return todos
 }
@@ -394,13 +403,15 @@ func claimTodo(todos []Todo, i int, owner string) ([]Todo, bool) {
 	if todos[i].Deferred {
 		todos[i].Deferred = false
 		todos[i].Claim = owner
+		todos[i].Since = nowFunc().UTC().Format(time.RFC3339)
 		return todos, true
 	}
 	switch todos[i].Claim {
 	case owner:
-		todos[i].Claim = ""
+		todos[i].Claim, todos[i].Since = "", ""
 	case "":
 		todos[i].Claim = owner
+		todos[i].Since = nowFunc().UTC().Format(time.RFC3339)
 	default:
 		return todos, false // held by another worktree
 	}
@@ -415,7 +426,7 @@ func deferTodo(todos []Todo, i int) []Todo {
 	}
 	todos[i].Deferred = !todos[i].Deferred
 	if todos[i].Deferred {
-		todos[i].Claim = ""
+		todos[i].Claim, todos[i].Since = "", ""
 		todos[i].Done = false
 	}
 	return todos
@@ -447,7 +458,7 @@ func releaseClaim(todos []Todo, owner string) []Todo {
 	}
 	for i := range todos {
 		if todos[i].Claim == owner {
-			todos[i].Claim = ""
+			todos[i].Claim, todos[i].Since = "", ""
 		}
 	}
 	return todos
