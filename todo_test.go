@@ -456,3 +456,54 @@ func TestUnknownMarkerTokensAreIgnored(t *testing.T) {
 		t.Errorf("got id=%q state=%q", got.ID, got.State)
 	}
 }
+
+func TestCurrentSkipsTasksAwaitingAHuman(t *testing.T) {
+	todos := []Todo{
+		{Subject: "awaiting plan review", ID: "aaa", State: StatePlanReview},
+		{Subject: "awaiting triage", ID: "bbb", State: StateTriage},
+		{Subject: "ready to build", ID: "ccc", State: StateReady},
+	}
+	got := currentForClaim(todos, "")
+	if got == nil {
+		t.Fatal("expected the ready task, got nil")
+	}
+	if got.ID != "ccc" {
+		t.Errorf("picked %q (%s), want ccc", got.ID, got.State)
+	}
+}
+
+func TestCurrentStillPicksUnrefinedWork(t *testing.T) {
+	todos := []Todo{{Subject: "fresh", ID: "ddd"}}
+	got := currentForClaim(todos, "")
+	if got == nil || got.ID != "ddd" {
+		t.Fatalf("got %#v, want ddd", got)
+	}
+}
+
+func TestCurrentKeepsClaimedTaskInReview(t *testing.T) {
+	todos := []Todo{
+		{Subject: "other task", ID: "xxx", State: StateReady},
+		{Subject: "my review task", ID: "yyy", State: StatePlanReview, Claim: "my-worktree"},
+	}
+	got := currentForClaim(todos, "my-worktree")
+	if got == nil {
+		t.Fatal("expected claimed review task, got nil")
+	}
+	if got.ID != "yyy" {
+		t.Errorf("picked %q, want yyy (the claimed task in review)", got.ID)
+	}
+}
+
+func TestCurrentKeepsClaimedTaskInTriage(t *testing.T) {
+	todos := []Todo{
+		{Subject: "other task", ID: "xxx", State: StateUnrefined},
+		{Subject: "my triage task", ID: "zzz", State: StateTriage, Claim: "my-worktree"},
+	}
+	got := currentForClaim(todos, "my-worktree")
+	if got == nil {
+		t.Fatal("expected claimed triage task, got nil")
+	}
+	if got.ID != "zzz" {
+		t.Errorf("picked %q, want zzz (the claimed task in triage)", got.ID)
+	}
+}

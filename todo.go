@@ -460,6 +460,14 @@ func deleteTodo(todos []Todo, i int) []Todo {
 	return append(todos[:i], todos[i+1:]...)
 }
 
+// pickable reports whether a task is available as the next piece of work. A
+// task parked in a human queue (@plan-review, @triage) is waiting on a person,
+// so offering it to a worker would jump the gate.
+func (t Todo) pickable() bool {
+	return !t.Done && !t.Deferred &&
+		(t.State == StateUnrefined || t.State == StateReady)
+}
+
 // currentForClaim is what a worktree's statusline shows: the task this worktree
 // has claimed, else the first unclaimed open task (the next thing to pick up),
 // else nil.
@@ -472,7 +480,7 @@ func currentForClaim(todos []Todo, owner string) *Todo {
 		}
 	}
 	for i := range todos {
-		if !todos[i].Done && !todos[i].Deferred && todos[i].Claim == "" {
+		if todos[i].pickable() && todos[i].Claim == "" {
 			return &todos[i]
 		}
 	}
