@@ -421,6 +421,25 @@ func deferTodo(todos []Todo, i int) []Todo {
 	return todos
 }
 
+// setTodoState moves task i to state. A note is appended to the description so
+// a ticket sent backwards carries the reason with it — without one it is simply
+// planned again the same way. Returns false for an out-of-range index or an
+// unknown state.
+func setTodoState(todos []Todo, i int, state, note string) ([]Todo, bool) {
+	if i < 0 || i >= len(todos) || !validTodoState(state) {
+		return todos, false
+	}
+	todos[i].State = state
+	if note = strings.TrimSpace(note); note != "" {
+		if todos[i].Description == "" {
+			todos[i].Description = note
+		} else {
+			todos[i].Description += " ↩ " + note
+		}
+	}
+	return todos, true
+}
+
 // releaseClaim drops every claim held by owner.
 func releaseClaim(todos []Todo, owner string) []Todo {
 	if owner == "" {

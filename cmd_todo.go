@@ -35,13 +35,15 @@ func runTodoCmd(args []string) int {
 		return runTodoEdit(args[1:])
 	case "defer", "park":
 		return runTodoDefer(args[1:])
+	case "state":
+		return runTodoState(args[1:])
 	case "normalize", "resave":
 		return runTodoNormalize()
 	case "rm", "del", "delete":
 		return runTodoRm(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown todo subcommand: %s\n", args[0])
-		fmt.Fprintln(os.Stderr, "usage: hive todo [list|add|edit|show|done|reopen|current|defer|rm|statusline]")
+		fmt.Fprintln(os.Stderr, "usage: hive todo [list|add|edit|show|done|reopen|current|defer|state|rm|statusline]")
 		return 1
 	}
 }
@@ -263,6 +265,68 @@ func runTodoDefer(args []string) int {
 		}
 		return ts, fmt.Sprintf("%s %s: %s", state, ts[i].ID, ts[i].Subject)
 	})
+}
+
+const todoStateUsage = `usage: hive todo state <ref> <state> [--note <text>]
+
+States: plan-review | ready | triage | clear (back to unrefined).
+Moving a task backwards requires --note explaining why.`
+
+// runTodoState moves a task through the pipeline. Machine transitions are
+// written by the worker that finished a stage; human ones come from the drawer
+// or from here.
+func runTodoState(args []string) int {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, todoStateUsage)
+		return 1
+	}
+	ref, want := args[0], args[1]
+	if want == "clear" {
+		want = StateUnrefined
+	}
+	if !validTodoState(want) {
+		fmt.Fprintf(os.Stderr, "error: unknown state %q\n\n%s\n", args[1], todoStateUsage)
+		return 1
+	}
+
+	note := ""
+	for i := 2; i < len(args); i++ {
+		switch args[i] {
+		case "-n", "--note":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: %s needs a value\n", args[i])
+				return 1
+			}
+			note = args[i+1]
+			i++
+		default:
+			fmt.Fprintf(os.Stderr, "error: unexpected argument %q\n\n%s\n", args[i], todoStateUsage)
+			return 1
+		}
+	}
+
+	var refused string
+	rc := mutateOne(todoCwd(), ref, func(ts []Todo, i int) ([]Todo, string) {
+		if stateRank(want) < stateRank(ts[i].State) && strings.TrimSpace(note) == "" {
+			refused = fmt.Sprintf("moving %s back to %q needs --note explaining why", ts[i].ID, want)
+			return ts, ""
+		}
+		out, ok := setTodoState(ts, i, want, note)
+		if !ok {
+			refused = "could not set state"
+			return ts, ""
+		}
+		label := want
+		if label == StateUnrefined {
+			label = "unrefined"
+		}
+		return out, fmt.Sprintf("%s → %s", out[i].ID, label)
+	})
+	if refused != "" {
+		fmt.Fprintf(os.Stderr, "error: %s\n", refused)
+		return 1
+	}
+	return rc
 }
 
 func runTodoRm(args []string) int {
