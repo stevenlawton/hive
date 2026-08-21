@@ -26,6 +26,7 @@ type Todo struct {
 	Description string // free text after " — " (may be empty)
 	Claim       string // branch/worktree that claimed it; "" = unclaimed
 	ID          string // stable short id — addresses the task across peers
+	State       string // pipeline stage: "" unrefined | plan-review | ready | triage
 }
 
 const (
@@ -37,6 +38,37 @@ const (
 	// parser (indexSeparator/trimSeparator) still accepts an em-dash on read.
 	descSep = " - "
 )
+
+// Pipeline states. A task's state is where the work has got to; it is
+// orthogonal to Claim (who holds it) and to the box (open/done/deferred).
+const (
+	StateUnrefined  = ""
+	StatePlanReview = "plan-review"
+	StateReady      = "ready"
+	StateTriage     = "triage"
+)
+
+func validTodoState(s string) bool {
+	switch s {
+	case StateUnrefined, StatePlanReview, StateReady, StateTriage:
+		return true
+	}
+	return false
+}
+
+// stateRank orders the pipeline so a backwards move can be detected.
+func stateRank(s string) int {
+	switch s {
+	case StatePlanReview:
+		return 1
+	case StateReady:
+		return 2
+	case StateTriage:
+		return 3
+	default:
+		return 0
+	}
+}
 
 // mainWorktree resolves a repo's primary worktree — the first entry of
 // `git worktree list`. The todo list lives there so all worktrees share one.
@@ -184,16 +216,18 @@ func parseTodos(block string) []Todo {
 // marker written by a newer hive still parses here. ok is false when no token was
 // recognised, in which case the caller leaves the comment in the text — a plain
 // HTML comment in a description is not ours to eat.
-func parseTodoMarker(inner string) (claim, id string, ok bool) {
+func parseTodoMarker(inner string) (claim, id, state string, ok bool) {
 	for _, tok := range strings.Fields(inner) {
 		switch {
 		case strings.HasPrefix(tok, "@"):
 			claim, ok = tok[1:], true
 		case strings.HasPrefix(tok, "id:"):
 			id, ok = tok[3:], true
+		case strings.HasPrefix(tok, "state:"):
+			state, ok = tok[6:], true
 		}
 	}
-	return claim, id, ok
+	return claim, id, state, ok
 }
 
 func parseTodoLine(s string) (Todo, bool) {
@@ -218,8 +252,8 @@ func parseTodoLine(s string) (Todo, bool) {
 	// Trailing marker comment: <!-- @owner id:xyz -->
 	if i := strings.LastIndex(rest, "<!--"); i >= 0 {
 		if j := strings.Index(rest[i:], "-->"); j >= 0 {
-			if claim, id, ok := parseTodoMarker(rest[i+4 : i+j]); ok {
-				t.Claim, t.ID = claim, id
+			if claim, id, state, ok := parseTodoMarker(rest[i+4 : i+j]); ok {
+				t.Claim, t.ID, t.State = claim, id, state
 				rest = strings.TrimSpace(rest[:i])
 			}
 		}
@@ -314,6 +348,9 @@ func (t Todo) marker() string {
 	}
 	if t.ID != "" {
 		toks = append(toks, "id:"+t.ID)
+	}
+	if t.State != "" && !t.Done {
+		toks = append(toks, "state:"+t.State)
 	}
 	if len(toks) == 0 {
 		return ""

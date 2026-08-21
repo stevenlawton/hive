@@ -415,3 +415,44 @@ func TestIndexByID(t *testing.T) {
 		t.Error("indexByID(\"\") should not match the id-less task")
 	}
 }
+
+func TestTodoStateRoundTrips(t *testing.T) {
+	line := "- [~] **fix the parser** - it eats flags <!-- @split-1 id:lxg state:plan-review -->"
+	got, ok := parseTodoLine(line)
+	if !ok {
+		t.Fatal("line did not parse")
+	}
+	if got.State != StatePlanReview {
+		t.Errorf("state: got %q, want %q", got.State, StatePlanReview)
+	}
+	if got.Claim != "split-1" || got.ID != "lxg" {
+		t.Errorf("claim/id lost: %q %q", got.Claim, got.ID)
+	}
+
+	out := formatTodos([]Todo{got})
+	if !strings.Contains(out, "state:plan-review") {
+		t.Errorf("state not written back:\n%s", out)
+	}
+	if !strings.Contains(out, "id:lxg") || !strings.Contains(out, "@split-1") {
+		t.Errorf("claim/id not written back:\n%s", out)
+	}
+}
+
+// A stateless task must not grow an empty token — every worktree diffs this file.
+func TestTodoWithoutStateWritesNoStateToken(t *testing.T) {
+	out := formatTodos([]Todo{{Subject: "plain", ID: "abc"}})
+	if strings.Contains(out, "state:") {
+		t.Errorf("unexpected state token:\n%s", out)
+	}
+}
+
+// Forwards tolerance: a marker from a newer hive must still yield what we know.
+func TestUnknownMarkerTokensAreIgnored(t *testing.T) {
+	got, ok := parseTodoLine("- [ ] **x** <!-- id:abc state:ready future:42 -->")
+	if !ok {
+		t.Fatal("line did not parse")
+	}
+	if got.ID != "abc" || got.State != StateReady {
+		t.Errorf("got id=%q state=%q", got.ID, got.State)
+	}
+}
