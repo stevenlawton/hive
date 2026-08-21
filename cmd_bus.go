@@ -178,21 +178,35 @@ func busInboxCmd(args []string) int {
 
 	key := bus.SeenKey()
 	cursor := seen.Get(key)
+	all, resolved := b.Unseen(cursor)
 	// Filter out messages we sent ourselves — no point echoing.
 	self := b.Self
 	var unseen []bus.Announcement
-	for _, msg := range b.Unseen(cursor) {
+	for _, msg := range all {
 		if msg.From == self {
 			continue
 		}
 		unseen = append(unseen, msg)
 	}
 
+	// Advance the cursor even when there is nothing to show, so a listener
+	// whose only unseen messages are its own doesn't re-scan from scratch
+	// forever — and so first contact is a one-off, not every hook fire.
+	advance := func() {
+		if *peek {
+			return
+		}
+		if err := seen.Set(key, b.LatestID()); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save seen cursor: %v\n", err)
+		}
+	}
+
 	if len(unseen) == 0 {
+		advance()
 		return 0
 	}
 
-	digest := buildInboxDigest(unseen)
+	digest := buildInboxDigest(unseen, !resolved)
 	if *postToolUse {
 		env, err := postToolUseEnvelope(digest)
 		if err != nil {
@@ -204,11 +218,7 @@ func busInboxCmd(args []string) int {
 		fmt.Print(digest)
 	}
 
-	if !*peek {
-		if err := seen.Set(key, b.LatestID()); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save seen cursor: %v\n", err)
-		}
-	}
+	advance()
 	return 0
 }
 
@@ -253,13 +263,21 @@ func busReadCmd(args []string) int {
 	return 0
 }
 
+// Digest sizing. A digest is injected into a session's context on every hook
+// fire, so it is bounded by how many messages it lists and how few a listener
+// with no cursor gets. Per-headline length is bounded by bus.MaxHeadline.
+const (
+	maxDigestMessages = 30 // ceiling for a session that has fallen behind
+	firstContactTail  = 10 // a listener we have never seen gets orientation, not history
+)
+
 func digestLine(msg bus.Announcement) string {
 	icon := msg.Icon()
 	if msg.ReplyTo != "" {
 		icon += "→" + msg.ReplyTo
 	}
 	age := humanAge(time.Since(msg.At))
-	return fmt.Sprintf("  [%s] %s · %s%s · %s %s", msg.ID, age, msg.From, msg.AutoMarker(), icon, msg.Headline)
+	return fmt.Sprintf("  [%s] %s · %s%s · %s %s", msg.ID, age, msg.From, msg.AutoMarker(), icon, msg.ShortHeadline())
 }
 
 func printDigestLine(msg bus.Announcement) {
@@ -269,12 +287,36 @@ func printDigestLine(msg bus.Announcement) {
 // buildInboxDigest renders the unread-message digest shown to a session — the
 // same text whether it's emitted as plain stdout (UserPromptSubmit/SessionStart)
 // or wrapped as PostToolUse additionalContext.
-func buildInboxDigest(unseen []bus.Announcement) string {
+// Only the tail is printed. firstContact says this listener has no usable
+// cursor, so "unseen" means the entire log rather than a real backlog; it gets
+// enough to orient and nothing more. Either way the count reported is the true
+// one, and what was withheld is stated rather than silently dropped.
+func buildInboxDigest(unseen []bus.Announcement, firstContact bool) string {
+	limit := maxDigestMessages
+	if firstContact {
+		limit = firstContactTail
+	}
+	total := len(unseen)
+	if total > limit {
+		unseen = unseen[total-limit:]
+	}
+	elided := total - len(unseen)
+
 	var b strings.Builder
-	fmt.Fprintf(&b, "📬 %d new bus announcement(s) since your last check:\n\n", len(unseen))
+	switch {
+	case firstContact:
+		fmt.Fprintf(&b, "📬 First check in from this worktree — here are the %d most recent of %d bus announcement(s):\n\n", len(unseen), total)
+	case elided > 0:
+		fmt.Fprintf(&b, "📬 %d new bus announcement(s) since your last check, most recent %d:\n\n", total, len(unseen))
+	default:
+		fmt.Fprintf(&b, "📬 %d new bus announcement(s) since your last check:\n\n", total)
+	}
 	for _, msg := range unseen {
 		b.WriteString(digestLine(msg))
 		b.WriteByte('\n')
+	}
+	if elided > 0 {
+		fmt.Fprintf(&b, "\n%d older message(s) not shown — `hive bus list -n %d` if you need them.\n", elided, total)
 	}
 	b.WriteString("\nUse `hive bus read <id>` for full body.\n")
 	b.WriteString("Use `hive bus announce <headline>` to broadcast, `hive bus reply <id> <text>` to thread.\n")

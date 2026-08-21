@@ -185,8 +185,19 @@ func (m model) View() tea.View {
 					p := pos
 					return func() tea.Msg { return dividerDragMsg{pos: p} }
 				}
-				// Auto-focus split pane on hover
 				if tab := m.workspace.ActiveTab(); tab != nil && len(tab.SplitPane.Splits) > 1 {
+					// Light the divider under the pointer (and unlight it on
+					// the way out) so it reads as draggable before the press.
+					di := m.dividerHitTest(tab, mouse.X, mouse.Y)
+					if di != tab.SplitPane.HoverDivider {
+						d := di
+						return func() tea.Msg { return dividerHoverMsg{index: d} }
+					}
+					// Over a divider, not a pane: don't pull focus through it.
+					if di >= 0 {
+						return nil
+					}
+					// Auto-focus split pane on hover
 					idx := m.splitHitTest(tab, mouse.X, mouse.Y)
 					if idx >= 0 && idx != tab.SplitPane.FocusIdx {
 						i := idx

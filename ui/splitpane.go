@@ -22,6 +22,13 @@ const (
 	minSplitRows = 3  // horizontal (stacked) splits
 )
 
+// Glyphs the two borders facing a hovered divider switch to, so the divider
+// reads as a grab handle before the press.
+const (
+	heavyVertical   = "\u2503"
+	heavyHorizontal = "\u2501"
+)
+
 // SplitOrientation controls the split layout direction.
 type SplitOrientation int
 
@@ -37,11 +44,15 @@ type SplitPane struct {
 	Orientation SplitOrientation
 	Width       int
 	Height      int
+	// HoverDivider is the divider (between pane i and i+1) the pointer is
+	// over, or -1 when it is elsewhere. The two borders facing it are drawn
+	// heavy and lit so it is visible that the divider can be dragged.
+	HoverDivider int
 }
 
 // NewSplitPane creates an empty split pane layout.
 func NewSplitPane() *SplitPane {
-	return &SplitPane{}
+	return &SplitPane{HoverDivider: -1}
 }
 
 // SetSize updates the total available area and recalculates split widths.
@@ -273,6 +284,7 @@ func (sp *SplitPane) View() string {
 		if i == sp.FocusIdx {
 			borderStyle = FocusedBorderStyle
 		}
+		borderStyle = sp.hoverEdge(borderStyle, i)
 
 		content := split.Terminal.View()
 
@@ -288,6 +300,36 @@ func (sp *SplitPane) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, panes...)
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, panes...)
+}
+
+// hoverEdge highlights the one border of pane i that faces the hovered
+// divider, leaving the pane's other three edges alone.
+func (sp *SplitPane) hoverEdge(style lipgloss.Style, i int) lipgloss.Style {
+	d := sp.HoverDivider
+	if d < 0 || d >= len(sp.Splits)-1 {
+		return style
+	}
+	border := style.GetBorderStyle()
+	if sp.Orientation == SplitHorizontal {
+		switch i {
+		case d:
+			border.Bottom = heavyHorizontal
+			return style.Border(border).BorderBottomForeground(ColorBlue)
+		case d + 1:
+			border.Top = heavyHorizontal
+			return style.Border(border).BorderTopForeground(ColorBlue)
+		}
+		return style
+	}
+	switch i {
+	case d:
+		border.Right = heavyVertical
+		return style.Border(border).BorderRightForeground(ColorBlue)
+	case d + 1:
+		border.Left = heavyVertical
+		return style.Border(border).BorderLeftForeground(ColorBlue)
+	}
+	return style
 }
 
 // SessionNames returns all session names in the split pane.

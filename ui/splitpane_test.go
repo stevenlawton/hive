@@ -1,6 +1,11 @@
 package ui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/charmbracelet/x/ansi"
+)
 
 func TestSplitPaneAddRemove(t *testing.T) {
 	sp := NewSplitPane()
@@ -177,5 +182,66 @@ func TestSplitPaneSessionNames(t *testing.T) {
 	names := sp.SessionNames()
 	if len(names) != 2 || names[0] != "ses-a" || names[1] != "ses-b" {
 		t.Errorf("unexpected session names: %v", names)
+	}
+}
+
+func TestSplitPaneHoverDividerDefaultsToNone(t *testing.T) {
+	if sp := NewSplitPane(); sp.HoverDivider != -1 {
+		t.Errorf("got %d, want -1", sp.HoverDivider)
+	}
+}
+
+func TestSplitPaneHoverDividerHighlightsBothFacingEdges(t *testing.T) {
+	sp := NewSplitPane()
+	sp.SetSize(40, 10)
+	sp.AddSplit("a", "ses-a")
+	sp.AddSplit("b", "ses-b")
+
+	if strings.Contains(sp.View(), heavyVertical) {
+		t.Fatal("nothing hovered: no border should be heavy")
+	}
+
+	sp.HoverDivider = 0
+	view := ansi.Strip(sp.View())
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, heavyVertical+heavyVertical) {
+			return
+		}
+	}
+	t.Errorf("hovered divider should draw both facing borders heavy:\n%s", view)
+}
+
+func TestSplitPaneHoverDividerHighlightsHorizontalSplit(t *testing.T) {
+	sp := NewSplitPane()
+	sp.Orientation = SplitHorizontal
+	sp.SetSize(40, 16)
+	sp.AddSplit("a", "ses-a")
+	sp.AddSplit("b", "ses-b")
+
+	if strings.Contains(sp.View(), heavyHorizontal) {
+		t.Fatal("nothing hovered: no border should be heavy")
+	}
+
+	sp.HoverDivider = 0
+	heavyRows := 0
+	for _, line := range strings.Split(ansi.Strip(sp.View()), "\n") {
+		if strings.Contains(line, heavyHorizontal) {
+			heavyRows++
+		}
+	}
+	if heavyRows != 2 {
+		t.Errorf("got %d heavy rows, want 2 (the two facing borders)", heavyRows)
+	}
+}
+
+func TestSplitPaneHoverDividerOutOfRangeIsIgnored(t *testing.T) {
+	sp := NewSplitPane()
+	sp.SetSize(40, 10)
+	sp.AddSplit("a", "ses-a")
+	sp.AddSplit("b", "ses-b")
+
+	sp.HoverDivider = 7
+	if strings.Contains(sp.View(), heavyVertical) {
+		t.Error("out-of-range hover index should highlight nothing")
 	}
 }

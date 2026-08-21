@@ -456,6 +456,7 @@ type keyBarClickMsg struct{ action string }
 type scrollMsg struct{ dir int }
 type splitClickMsg struct{ index int }
 type tabClickMsg struct{ index int }
+type dividerHoverMsg struct{ index int } // pointer over divider `index`, -1 for none
 type dividerPressMsg struct{ index int } // start dragging divider `index`
 type dividerDragMsg struct{ pos int }    // pointer axis position during a drag
 type dividerReleaseMsg struct{}          // end the drag
@@ -590,8 +591,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.reloadDrawerForContext() // drawer follows the focused split's worktree
 		return m, nil
+	case dividerHoverMsg:
+		if tab := m.workspace.ActiveTab(); tab != nil {
+			tab.SplitPane.HoverDivider = msg.index
+		}
+		return m, nil
 	case dividerPressMsg:
 		m.draggingDivider = msg.index
+		if tab := m.workspace.ActiveTab(); tab != nil {
+			tab.SplitPane.HoverDivider = msg.index
+		}
 		return m, nil
 	case dividerDragMsg:
 		if m.draggingDivider >= 0 {
@@ -1261,8 +1270,17 @@ func (m *model) syncModeFromActiveTab() {
 	}
 	m.resizeMode = false // resize state doesn't survive a tab switch
 	m.draggingDivider = -1
+	m.clearDividerHover()
 	m.reloadDrawerForContext()
 	m.clearNotificationForActiveTab()
+}
+
+// clearDividerHover unlights every divider. The pointer is only tracked while
+// a workspace tab is on screen, so a hover left lit elsewhere would be stale.
+func (m *model) clearDividerHover() {
+	for _, tab := range m.workspace.Tabs {
+		tab.SplitPane.HoverDivider = -1
+	}
 }
 
 // clearNotificationForActiveTab withdraws the desktop notification for the tab
@@ -1740,6 +1758,7 @@ func (m *model) handleAttention(item *repoItem, level int) {
 func (m model) closeSplit(tab *ui.WorkspaceTab, split *ui.Split) (tea.Model, tea.Cmd) {
 	m.resizeMode = false // dropping a split exits resize mode cleanly
 	m.draggingDivider = -1
+	m.clearDividerHover()
 	// Find the item for this split
 	var item *repoItem
 	for i := range m.items {

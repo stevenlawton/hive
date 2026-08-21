@@ -73,20 +73,25 @@ func (b *Bus) Find(id string) *Announcement {
 	return b.store.Find(id)
 }
 
-// Unseen returns every announcement that arrived after `cursor`. If cursor
-// is empty or not found in the log, returns all announcements.
-func (b *Bus) Unseen(cursor string) []Announcement {
+// Unseen returns every announcement that arrived after `cursor`, and whether
+// the cursor could be resolved.
+//
+// A cursor that is empty (a listener that has never checked in — every fresh
+// worktree) or no longer in the log (rotated away) cannot bound the result.
+// Those cases return the whole log with resolved=false, so the caller can tell
+// "fell behind by three" from "has no idea where it stands" and decide how
+// much history a newcomer is actually shown.
+func (b *Bus) Unseen(cursor string) (msgs []Announcement, resolved bool) {
 	all := b.store.All()
 	if cursor == "" {
-		return all
+		return all, false
 	}
 	for i, msg := range all {
 		if msg.ID == cursor {
-			return all[i+1:]
+			return all[i+1:], true
 		}
 	}
-	// Cursor not found — treat as "no history", return everything.
-	return all
+	return all, false
 }
 
 // LatestID returns the id of the most recent message, or "" if empty.

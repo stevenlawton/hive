@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,7 +45,7 @@ func TestBuildInboxDigestContainsHeadlines(t *testing.T) {
 		{ID: "m1", From: "wt:a", Headline: "started auth refactor", At: time.Now()},
 		{ID: "m2", From: "wt:b", Headline: "released test slot", At: time.Now()},
 	}
-	d := buildInboxDigest(unseen)
+	d := buildInboxDigest(unseen, false)
 	if !strings.Contains(d, "2 new bus announcement") {
 		t.Errorf("digest missing count header: %q", d)
 	}
@@ -95,5 +96,111 @@ func TestResponderOutputDoesNotTriggerResponders(t *testing.T) {
 		if got := shouldTriggerResponders(tc.msg); got != tc.want {
 			t.Errorf("%s: shouldTriggerResponders = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func manyAnnouncements(n int) []bus.Announcement {
+	msgs := make([]bus.Announcement, n)
+	for i := range msgs {
+		msgs[i] = bus.Announcement{
+			ID:       fmt.Sprintf("m%d", i),
+			From:     "wt:a",
+			Headline: fmt.Sprintf("headline %d", i),
+			At:       time.Now(),
+		}
+	}
+	return msgs
+}
+
+func digestLineCount(d string) int {
+	n := 0
+	for _, line := range strings.Split(d, "\n") {
+		if strings.HasPrefix(line, "  [m") {
+			n++
+		}
+	}
+	return n
+}
+
+// The whole point of the ticket: a worktree checking in for the first time
+// must get a short tail, not the entire log.
+func TestBuildInboxDigestGivesFirstContactAShortTail(t *testing.T) {
+	d := buildInboxDigest(manyAnnouncements(400), true)
+
+	if got := digestLineCount(d); got != firstContactTail {
+		t.Errorf("got %d message lines, want %d", got, firstContactTail)
+	}
+	if !strings.Contains(d, "headline 399") {
+		t.Error("first-contact tail should keep the most recent messages")
+	}
+	if strings.Contains(d, "headline 0\n") {
+		t.Error("first-contact tail should not include the oldest messages")
+	}
+	if !strings.Contains(d, "390 older") {
+		t.Errorf("digest should say how many messages it withheld: %q", d)
+	}
+}
+
+// An established session that has been away a long time is capped too — the
+// cursor bounds it, but "since last check" can still be hundreds of messages.
+func TestBuildInboxDigestCapsALongBacklog(t *testing.T) {
+	d := buildInboxDigest(manyAnnouncements(200), false)
+
+	if got := digestLineCount(d); got != maxDigestMessages {
+		t.Errorf("got %d message lines, want %d", got, maxDigestMessages)
+	}
+	if !strings.Contains(d, "200 new bus announcement") {
+		t.Errorf("digest should still report the true total: %q", d)
+	}
+}
+
+func TestBuildInboxDigestUncappedWhenSmall(t *testing.T) {
+	d := buildInboxDigest(manyAnnouncements(3), false)
+
+	if got := digestLineCount(d); got != 3 {
+		t.Errorf("got %d message lines, want 3", got)
+	}
+	if strings.Contains(d, "older") {
+		t.Errorf("nothing was withheld, digest should not say otherwise: %q", d)
+	}
+}
+
+// Headlines are meant to be one line. Senders paste whole reports into them —
+// one such message cost more context than the rest of a digest together.
+func TestDigestLineTruncatesAMultilineHeadline(t *testing.T) {
+	line := digestLine(bus.Announcement{
+		ID: "m1", From: "wt:a", At: time.Now(),
+		Headline: "STOP THE REBASE\n\nHere is why, at length:\nreason one\nreason two",
+	})
+
+	if strings.Contains(line, "\n") {
+		t.Errorf("digest line must stay on one line: %q", line)
+	}
+	if !strings.Contains(line, "STOP THE REBASE…") {
+		t.Errorf("expected a truncation marker after the first line: %q", line)
+	}
+}
+
+func TestDigestLineTruncatesAnOverlongHeadline(t *testing.T) {
+	line := digestLine(bus.Announcement{
+		ID: "m1", From: "wt:a", At: time.Now(),
+		Headline: strings.Repeat("x", 2656),
+	})
+
+	if len([]rune(line)) > bus.MaxHeadline+80 {
+		t.Errorf("digest line not truncated: %d runes", len([]rune(line)))
+	}
+	if !strings.HasSuffix(line, "…") {
+		t.Errorf("expected a truncation marker: %q", line)
+	}
+}
+
+func TestDigestLineLeavesAShortHeadlineAlone(t *testing.T) {
+	line := digestLine(bus.Announcement{
+		ID: "m1", From: "wt:a", At: time.Now(), Headline: "released test slot",
+	})
+
+	if !strings.HasSuffix(line, "released test slot") {
+		t.Errorf("short headline should pass through untouched: %q", line)
 	}
 }

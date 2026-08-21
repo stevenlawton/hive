@@ -351,7 +351,7 @@ func callList(b *Bus, id json.RawMessage, raw json.RawMessage) *jsonRPCResponse 
 	var sb strings.Builder
 	for _, m := range msgs {
 		age := m.At.Format("15:04")
-		fmt.Fprintf(&sb, "[%s] %s · %s%s · %s %s\n", m.ID, age, m.From, m.AutoMarker(), m.Icon(), m.Headline)
+		fmt.Fprintf(&sb, "[%s] %s · %s%s · %s %s\n", m.ID, age, m.From, m.AutoMarker(), m.Icon(), m.ShortHeadline())
 		if m.ReplyTo != "" {
 			fmt.Fprintf(&sb, "      ↳ reply to %s\n", m.ReplyTo)
 		}
