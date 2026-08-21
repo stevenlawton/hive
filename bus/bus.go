@@ -48,6 +48,7 @@ func (b *Bus) Announce(msg Announcement) (Announcement, error) {
 	if err := CheckAutoVerb(msg); err != nil {
 		return Announcement{}, err
 	}
+	msg = foldHeadline(msg)
 	msg.ID = newID()
 	msg.From = b.Self
 	msg.At = time.Now()

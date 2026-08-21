@@ -1,9 +1,6 @@
 package bus
 
-import (
-	"strings"
-	"time"
-)
+import "time"
 
 // Kind identifies the lifecycle/purpose of an announcement.
 type Kind string
@@ -43,29 +40,6 @@ func (a Announcement) AutoMarker() string {
 		return " 🤖auto"
 	}
 	return ""
-}
-
-// MaxHeadline caps how much of a headline reaches a digest or listing.
-const MaxHeadline = 160
-
-// ShortHeadline reduces a headline to the single short line that listings
-// promise. Headlines are meant to be one line; senders do paste whole
-// multi-paragraph reports into the field, and one of those costs a reader more
-// context than every other message in the digest combined. The full text is
-// always a `hive bus read <id>` away.
-func (a Announcement) ShortHeadline() string {
-	headline, cut := a.Headline, false
-	if i := strings.IndexAny(headline, "\r\n"); i >= 0 {
-		headline, cut = headline[:i], true
-	}
-	if r := []rune(headline); len(r) > MaxHeadline {
-		headline, cut = string(r[:MaxHeadline]), true
-	}
-	headline = strings.TrimRight(headline, " \t")
-	if cut {
-		headline += "…"
-	}
-	return headline
 }
 
 // KindOrDefault returns the announcement's Kind, defaulting to KindFYI if empty.
