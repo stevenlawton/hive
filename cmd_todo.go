@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // runTodoCmd handles `hive todo <sub>` CLI invocations (kept fast — it never
@@ -37,13 +38,15 @@ func runTodoCmd(args []string) int {
 		return runTodoDefer(args[1:])
 	case "state":
 		return runTodoState(args[1:])
+	case "reap":
+		return runTodoReap(args[1:])
 	case "normalize", "resave":
 		return runTodoNormalize()
 	case "rm", "del", "delete":
 		return runTodoRm(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown todo subcommand: %s\n", args[0])
-		fmt.Fprintln(os.Stderr, "usage: hive todo [list|add|edit|show|done|reopen|current|defer|state|rm|statusline]")
+		fmt.Fprintln(os.Stderr, "usage: hive todo [list|add|edit|show|done|reopen|current|defer|state|reap|rm|statusline]")
 		return 1
 	}
 }
@@ -327,6 +330,60 @@ func runTodoState(args []string) int {
 		return 1
 	}
 	return rc
+}
+
+const todoReapUsage = `usage: hive todo reap [--older-than <duration>]
+
+Releases claims held by a branch with no live worktree, and claims older than
+the cutoff (default 4h). States are left untouched.`
+
+// runTodoReap releases claims nothing is working on anymore: an orchestrating
+// session that died mid-batch leaves its tickets locked, and no other worktree
+// can touch them until something clears the claim. The state marker is left
+// alone — only the lock is stale.
+func runTodoReap(args []string) int {
+	older := 4 * time.Hour
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--older-than":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --older-than needs a value")
+				return 1
+			}
+			d, err := time.ParseDuration(args[i+1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: bad duration %q\n", args[i+1])
+				return 1
+			}
+			older = d
+			i++
+		default:
+			fmt.Fprintf(os.Stderr, "error: unexpected argument %q\n\n%s\n", args[i], todoReapUsage)
+			return 1
+		}
+	}
+
+	cwd := todoCwd()
+	live := liveWorktreeBranches(mainWorktree(cwd))
+	cutoff := nowFunc().UTC().Add(-older)
+
+	var released []string
+	if _, err := withTodos(cwd, func(ts []Todo) []Todo {
+		out, rel := reapClaims(ts, live, cutoff)
+		released = rel
+		return out
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if len(released) == 0 {
+		fmt.Println("nothing to reap")
+		return 0
+	}
+	for _, r := range released {
+		fmt.Println("released " + r)
+	}
+	return 0
 }
 
 func runTodoRm(args []string) int {

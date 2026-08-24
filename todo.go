@@ -464,6 +464,50 @@ func releaseClaim(todos []Todo, owner string) []Todo {
 	return todos
 }
 
+// reapClaims releases claims that nothing is working on: those held by a branch
+// with no live worktree, and those taken before cutoff. The state marker is left
+// alone — the stage the work reached is still true, only the lock is stale.
+//
+// A claim with no parseable timestamp is kept while its branch is live: hive
+// only started stamping claims recently, and treating "no stamp" as "ancient"
+// would reap live work.
+func reapClaims(todos []Todo, live map[string]bool, cutoff time.Time) ([]Todo, []string) {
+	var released []string
+	for i := range todos {
+		if todos[i].Claim == "" {
+			continue
+		}
+		stale := false
+		if !live[todos[i].Claim] {
+			stale = true
+		} else if ts, err := time.Parse(time.RFC3339, todos[i].Since); err == nil && ts.Before(cutoff) {
+			stale = true
+		}
+		if !stale {
+			continue
+		}
+		released = append(released, todos[i].ID+" (was @"+todos[i].Claim+")")
+		todos[i].Claim, todos[i].Since = "", ""
+	}
+	return todos, released
+}
+
+// liveWorktreeBranches lists the branches currently checked out across the
+// repo's worktrees — the set of claim owners that could still be working.
+func liveWorktreeBranches(repoPath string) map[string]bool {
+	live := map[string]bool{}
+	out, err := exec.Command("git", "-C", repoPath, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return live
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if rest, ok := strings.CutPrefix(line, "branch refs/heads/"); ok {
+			live[strings.TrimSpace(rest)] = true
+		}
+	}
+	return live
+}
+
 func deleteTodo(todos []Todo, i int) []Todo {
 	if i < 0 || i >= len(todos) {
 		return todos
