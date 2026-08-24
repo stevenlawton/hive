@@ -1391,12 +1391,14 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 	case ChordJumpTab:
 		m.workspace.TabBar.SetActive(m.chord.TabIndex - 1)
 		m.syncModeFromActiveTab()
-	case ChordFocusLeft:
+	// Splits are a flat list, so the previous one is up in a stacked layout
+	// and left in a side-by-side one — both arrows drive the same step.
+	case ChordFocusLeft, ChordFocusUp:
 		if tab := m.workspace.ActiveTab(); tab != nil {
 			tab.SplitPane.FocusLeft()
 		}
 		m.reloadDrawerForContext() // drawer follows the focused split's worktree
-	case ChordFocusRight:
+	case ChordFocusRight, ChordFocusDown:
 		if tab := m.workspace.ActiveTab(); tab != nil {
 			tab.SplitPane.FocusRight()
 		}
@@ -1948,7 +1950,11 @@ func (m model) renderWorkspaceStatusBar() string {
 			keys = append(keys, "n:next", "p:prev", "1-9:jump")
 		}
 		if splitCount > 1 {
-			keys = append(keys, "←→:focus")
+			if tab.SplitPane.Orientation == ui.SplitHorizontal {
+				keys = append(keys, "↑↓:focus")
+			} else {
+				keys = append(keys, "←→:focus")
+			}
 		}
 		keys = append(keys, "v:vsplit", "h:hsplit", "g:/next")
 		if focusedItem != nil && focusedItem.repo.IsWorktree {
@@ -1959,7 +1965,7 @@ func (m model) renderWorkspaceStatusBar() string {
 		if splitCount > 1 {
 			keys = append(keys, "o:orient", "s:resize")
 		}
-		keys = append(keys, "f:fullscreen", "r:refresh", "z:save")
+		keys = append(keys, "f:fullscreen", "t:drawer", "r:refresh", "z:save")
 		status = wrapKeyHints(keys, m.width)
 	} else {
 		// Stage 1: normal — show hint to start chord
