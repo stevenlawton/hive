@@ -1440,6 +1440,26 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 			nextSplitBranch(item.repo.Path))
 		m.wtFields[wtFieldPrompt] = newWorktreeField("Prompt: ", "", nextWorkerPrompt)
 		return m, m.createWorktree()
+	case ChordWorktree:
+		// v/h attach the new worktree to this tab as a split; w makes a
+		// standalone one, so it keeps wtSplitMode off and the branch is
+		// named rather than auto-numbered.
+		item := m.activeTabRepo()
+		if item == nil {
+			m.err = fmt.Errorf("no repo for active tab")
+			break
+		}
+		m.wtSplitMode = false
+		m.wtParent = item.repo.DirName
+		fields := make([]textinput.Model, wtFieldCount)
+		fields[wtFieldBranch] = newWorktreeField("Branch: ", "feature-name",
+			defaultWorktreeBranch(item.repo.Path))
+		fields[wtFieldPrompt] = newWorktreeField("Prompt: ", "optional task for Claude", "")
+		m.wtFields = fields
+		m.wtYolo = item.repo.Yolo
+		m.wtFocus = 0
+		m.mode = viewWorktree
+		return m, m.wtFields[0].Focus()
 	case ChordVSplit, ChordHSplit:
 		tab := m.workspace.ActiveTab()
 		if tab == nil {
@@ -1956,7 +1976,7 @@ func (m model) renderWorkspaceStatusBar() string {
 				keys = append(keys, "←→:focus")
 			}
 		}
-		keys = append(keys, "v:vsplit", "h:hsplit", "g:/next")
+		keys = append(keys, "v:vsplit", "h:hsplit", "w:worktree", "g:/next")
 		if focusedItem != nil && focusedItem.repo.IsWorktree {
 			keys = append(keys, "x:merge+close")
 		} else if splitCount > 1 {
