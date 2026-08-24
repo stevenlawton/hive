@@ -542,7 +542,6 @@ func TmuxResizePane(sessionName string, width, height int) error {
 	return tmuxRun("resize-window", "-t", tmuxPaneTarget(sessionName), "-x", fmt.Sprintf("%d", width), "-y", fmt.Sprintf("%d", height))
 }
 
-
 func TmuxRenameSession(oldName, newName string) error {
 	return tmuxRun("rename-session", "-t", tmuxTarget(oldName), newName)
 }

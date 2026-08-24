@@ -15,9 +15,9 @@ import (
 // implicit carry-over. This tracker replays the active state at the start of
 // each subsequent line.
 type sgrCarry struct {
-	fg    string          // active foreground params ("31", "38;5;12", "38;2;r;g;b"), "" = default
-	bg    string          // active background params, "" = default
-	attrs map[int]bool    // active attribute codes (1 bold, 2 dim, 3 italic, ...)
+	fg    string       // active foreground params ("31", "38;5;12", "38;2;r;g;b"), "" = default
+	bg    string       // active background params, "" = default
+	attrs map[int]bool // active attribute codes (1 bold, 2 dim, 3 italic, ...)
 }
 
 var sgrSeqRe = regexp.MustCompile("\x1b\\[([0-9;:]*)m")

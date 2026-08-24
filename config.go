@@ -32,8 +32,8 @@ type WorkspaceConfig struct {
 	Description string `yaml:"description,omitempty"`
 	Yolo        bool   `yaml:"yolo,omitempty"`
 	Remote      bool   `yaml:"remote,omitempty"`
-	Favourite  bool   `yaml:"favourite,omitempty"`
-	Collection bool   `yaml:"collection,omitempty"`
+	Favourite   bool   `yaml:"favourite,omitempty"`
+	Collection  bool   `yaml:"collection,omitempty"`
 }
 
 type Config struct {
@@ -283,17 +283,17 @@ func SaveConfig(path string, cfg *Config) error {
 }
 
 type Repo struct {
-	DirName      string
-	Path         string
-	Name         string
-	Short        string
-	Color        string
-	Description  string
-	Yolo         bool
-	Remote       bool
-	Favourite    bool
-	IsScratch    bool
-	IsCollection bool
+	DirName        string
+	Path           string
+	Name           string
+	Short          string
+	Color          string
+	Description    string
+	Yolo           bool
+	Remote         bool
+	Favourite      bool
+	IsScratch      bool
+	IsCollection   bool
 	IsArchived     bool
 	IsWorktree     bool
 	WorktreeBranch string

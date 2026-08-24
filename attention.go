@@ -96,4 +96,3 @@ func CheckAttention(state *AttentionState, waiting, visible bool) int {
 
 	return 0
 }
-

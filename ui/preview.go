@@ -17,7 +17,7 @@ const (
 // PreviewPane shows a read-only preview of a session with tab switching.
 type PreviewPane struct {
 	Terminal  *TerminalPane
-	DiffView *DiffPane
+	DiffView  *DiffPane
 	ActiveTab PreviewTab
 	Width     int
 	Height    int
@@ -27,7 +27,7 @@ type PreviewPane struct {
 func NewPreviewPane() *PreviewPane {
 	return &PreviewPane{
 		Terminal:  NewTerminalPane(""),
-		DiffView: NewDiffPane(),
+		DiffView:  NewDiffPane(),
 		ActiveTab: PreviewTabTerminal,
 	}
 }

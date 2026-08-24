@@ -1,20 +1,20 @@
 package main
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 )
 
 const (
-	editFieldName   = 0
-	editFieldShort  = 1
-	editFieldColor  = 2
-	editFieldDesc   = 3
+	editFieldName        = 0
+	editFieldShort       = 1
+	editFieldColor       = 2
+	editFieldDesc        = 3
 	editToggleYolo       = 4
 	editToggleRemote     = 5
 	editToggleFavourite  = 6
 	editToggleCollection = 7
-	editFieldCount = 8
+	editFieldCount       = 8
 )
 
 func (m *model) openEditPanel() tea.Cmd {

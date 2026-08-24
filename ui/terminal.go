@@ -21,16 +21,16 @@ const CursorSentinel = "​"
 
 // TerminalPane renders tmux pane output and optionally forwards input.
 type TerminalPane struct {
-	SessionName  string
-	Content      string // live capture (visible portion)
-	Width        int
-	Height       int
-	Focused      bool
-	HasBorder    bool // true if rendered inside a lipgloss border
-	ScrollTop    int  // -1 = tail mode (follow newest); >=0 = absolute line index of top visible row
-	fullContent  string
-	lastResizeW  int // last width we resized tmux to
-	lastResizeH  int // last height we resized tmux to
+	SessionName string
+	Content     string // live capture (visible portion)
+	Width       int
+	Height      int
+	Focused     bool
+	HasBorder   bool // true if rendered inside a lipgloss border
+	ScrollTop   int  // -1 = tail mode (follow newest); >=0 = absolute line index of top visible row
+	fullContent string
+	lastResizeW int // last width we resized tmux to
+	lastResizeH int // last height we resized tmux to
 
 	// Real-cursor overlay. tmux capture-pane omits the cursor, so when this
 	// pane is focused we ask tmux where the cursor is (ShowCursor/CursorX/
@@ -251,7 +251,6 @@ func (t *TerminalPane) View() string {
 
 	return strings.Join(lines, "\n")
 }
-
 
 // TruncateToHeight returns the last `height` lines of content.
 func TruncateToHeight(content string, height int) string {

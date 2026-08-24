@@ -258,7 +258,7 @@ func (sp *SplitPane) SetDividerAt(idx, axisPos int) {
 	for i := 0; i < idx; i++ {
 		start += sp.axisCells(i)
 	}
-	pairCells := sp.axisCells(idx) + sp.axisCells(idx + 1)
+	pairCells := sp.axisCells(idx) + sp.axisCells(idx+1)
 	if pairCells <= 0 {
 		return
 	}

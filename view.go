@@ -308,7 +308,7 @@ func (m model) workspaceCursorLocal() *tea.Cursor {
 }
 
 type listLayout struct {
-	itemY      map[int]int    // displayOrder index → screen Y
+	itemY      map[int]int // displayOrder index → screen Y
 	keyBarY    int
 	keyButtons []keyBarButton
 }
@@ -474,7 +474,6 @@ func (m model) viewHelp() string {
 
 	return b.String()
 }
-
 
 var (
 	editLabelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Width(14)

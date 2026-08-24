@@ -51,7 +51,7 @@ func TestClampToWidthShort(t *testing.T) {
 
 func TestTerminalPaneScroll(t *testing.T) {
 	tp := NewTerminalPane("test-session")
-	tp.SetSize(80, 5) // InnerHeight = 5 (no border)
+	tp.SetSize(80, 5)                                 // InnerHeight = 5 (no border)
 	tp.SetFullContent("a\nb\nc\nd\ne\nf\ng\nh\ni\nj") // 10 lines
 
 	// Scroll up from tail mode

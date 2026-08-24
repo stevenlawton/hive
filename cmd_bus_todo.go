@@ -23,8 +23,8 @@ type todoHookInput struct {
 
 type todoItem struct {
 	Content    string `json:"content"`
-	Status     string `json:"status"`      // "pending" | "in_progress" | "completed"
-	ActiveForm string `json:"activeForm"`  // "Doing the thing"
+	Status     string `json:"status"`     // "pending" | "in_progress" | "completed"
+	ActiveForm string `json:"activeForm"` // "Doing the thing"
 }
 
 // busTodoHookCmd reads a TodoWrite hook payload from stdin and emits bus
