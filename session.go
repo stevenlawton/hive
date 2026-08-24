@@ -261,8 +261,14 @@ func (m *model) openSelected(withClaude bool) tea.Cmd {
 func (m *model) openAsTab(repo Repo, sessionName string) {
 	if repo.IsWorktree && repo.Parent != "" {
 		// Check if parent tab already exists (e.g. from reconnect)
-		if _, exists := m.workspace.Tabs[repo.Parent]; exists {
+		if tab, exists := m.workspace.Tabs[repo.Parent]; exists {
 			m.workspace.TabBar.FocusByID(repo.Parent)
+			idx := tab.SplitPane.IndexOfSession(sessionName)
+			if idx < 0 {
+				tab.SplitPane.AddSplit("wt:"+repo.WorktreeBranch, sessionName)
+				idx = len(tab.SplitPane.Splits) - 1
+			}
+			tab.SplitPane.FocusIdx = idx
 			m.mode = viewWorkspace
 			return
 		}
@@ -523,8 +529,18 @@ func (m *model) reconnectSessions() {
 	}
 
 	MapSessionsToItems(m.items, sessions)
+	m.rebuildWorkspaceTabs()
 
-	// Rebuild workspace tabs: parents first, then worktrees as splits.
+	// Auto-start configured remote sessions
+	m.startConfiguredRemotes()
+	m.rebuildDisplayOrder()
+}
+
+// rebuildWorkspaceTabs maps the current items onto workspace tabs: parents
+// first, then worktrees as splits on their parent's tab. It runs on every
+// reconnect, so it must be idempotent — a detach fires reconnectMsg, and
+// re-adding splits that are already on the tab would duplicate every pane.
+func (m *model) rebuildWorkspaceTabs() {
 	// Include remote-only sessions (statusRemote) so TGClaudeBridge
 	// "pickup" sessions get tabs and the user can take them over.
 	for _, item := range m.items {
@@ -561,7 +577,9 @@ func (m *model) reconnectSessions() {
 			}
 		}
 		m.workspace.TabBar.FocusByID(item.repo.Parent)
-		m.workspace.AddSplitToActive("wt:"+item.repo.WorktreeBranch, item.tmuxSes)
+		if tab, ok := m.workspace.Tabs[item.repo.Parent]; ok && tab.SplitPane.IndexOfSession(item.tmuxSes) < 0 {
+			m.workspace.AddSplitToActive("wt:"+item.repo.WorktreeBranch, item.tmuxSes)
+		}
 
 		// Restore persisted orientation. Looked up by parent DirName rather
 		// than session, so it still resolves from layout.json when the
@@ -579,8 +597,4 @@ func (m *model) reconnectSessions() {
 			}
 		}
 	}
-
-	// Auto-start configured remote sessions
-	m.startConfiguredRemotes()
-	m.rebuildDisplayOrder()
 }

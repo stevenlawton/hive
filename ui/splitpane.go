@@ -75,6 +75,17 @@ func (sp *SplitPane) AddSplit(label, sessionName string) {
 	sp.recalcWidths()
 }
 
+// IndexOfSession returns the index of the split showing sessionName, or -1
+// when no split does.
+func (sp *SplitPane) IndexOfSession(sessionName string) int {
+	for i := range sp.Splits {
+		if sp.Splits[i].SessionName == sessionName {
+			return i
+		}
+	}
+	return -1
+}
+
 // RemoveSplit removes a split by label and adjusts focus.
 func (sp *SplitPane) RemoveSplit(label string) {
 	for i, s := range sp.Splits {
