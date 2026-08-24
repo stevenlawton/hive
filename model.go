@@ -1957,7 +1957,7 @@ func (m model) renderWorkspaceStatusBar() string {
 			keys = append(keys, "x:close")
 		}
 		if splitCount > 1 {
-			keys = append(keys, "o:orient")
+			keys = append(keys, "o:orient", "s:resize")
 		}
 		keys = append(keys, "f:fullscreen", "r:refresh", "z:save")
 		status = wrapKeyHints(keys, m.width)
