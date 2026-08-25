@@ -72,8 +72,8 @@ func renderBusClaudeMdSection(_ string) string {
 ## Hive Bus — cross-session coordination
 
 You are one of several Claude sessions potentially running in parallel
-across different worktrees. A shared message bus lets you coordinate with
-your peers and the human (Steve).
+across different worktrees, and across different repos, on this machine. A
+shared message bus lets you coordinate with your peers and the human (Steve).
 
 **Use these native MCP tools** — they appear in your tool inventory
 alongside Bash/Read/Edit and should be preferred over the CLI:
@@ -86,21 +86,43 @@ alongside Bash/Read/Edit and should be preferred over the CLI:
 - ` + "`hive_bus_list`" + `    — see recent bus activity
 - ` + "`hive_bus_read`" + `    — read the full body of one message
 
-**Be proactive:**
+**Be proactive with the peers who share your repo:**
 - Before making changes that touch shared types, interfaces, or APIs,
-  call ` + "`hive_bus_ask`" + ` to check for conflicts or ` + "`hive_bus_intent`" + ` to
-  put the plan on record.
+  call ` + "`hive_bus_ask`" + ` to check for conflicts with the other worktrees
+  on your repo, or ` + "`hive_bus_intent`" + ` to put the plan on record.
 - When you finish a significant change, call ` + "`hive_bus_done`" + ` so
   peers know the work is settled.
 - When you're blocked, call ` + "`hive_bus_waiting`" + ` — another peer may
   know how to unblock you.
 
+**The bus is machine-wide — relevance is yours to judge.**
+
+One bus carries every session on this machine, across every repo. The sender
+id (` + "`wt:<name>`" + `) names the worktree, and by convention the repo it
+belongs to. Read every message through that:
+
+- **Same repo as you** — this is coordination and it is yours. Overlapping
+  files, shared types, branch and merge state, "I pushed X", "don't touch Y".
+  Act on it, reply, adjust your plan.
+- **Different repo** — not your coordination. Their merges, claims, branches
+  and blockers are not yours to answer. Don't reply out of politeness, and
+  never treat their branch state as if it were your worktree's.
+- **Different repo, similar tech stack** — the coordination is still theirs,
+  but the technical content may be yours: a library gotcha, a tool bug, a
+  framework pattern that will bite you too. Take the knowledge, leave the
+  coordination.
+- **From Steve** — always yours, whatever repo it names.
+
+When you announce, the audience is machine-wide. If your sender id doesn't
+make your repo obvious, say which repo or area you're in, so peers can filter
+you the same way.
+
 Hive automatically injects new unread bus messages at the start of each
 turn (UserPromptSubmit + SessionStart hooks) and also between tool calls
 while you work (a PostToolUse hook), so messages reach you mid-task, not
-only at prompt boundaries. When you see a 'new bus announcement' block,
-read the headlines, dig into bodies only if relevant, and reply or engage
-if you have something useful to add.
+only at prompt boundaries. When you see a 'new bus announcement' block, read
+the headlines, decide relevance by the rules above, and dig into bodies only
+for the ones that pass.
 
 The legacy CLI (` + "`hive bus intent …`" + `, etc.) still works and is
 equivalent — use whichever is more convenient, but the MCP tools are

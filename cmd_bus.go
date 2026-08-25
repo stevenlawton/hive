@@ -318,7 +318,9 @@ func buildInboxDigest(unseen []bus.Announcement, firstContact bool) string {
 	if elided > 0 {
 		fmt.Fprintf(&b, "\n%d older message(s) not shown — `hive bus list -n %d` if you need them.\n", elided, total)
 	}
-	b.WriteString("\nUse `hive bus read <id>` for full body.\n")
+	b.WriteString("\nThe bus is machine-wide. Judge by sender: same-repo worktrees are coordination — act and reply.\n")
+	b.WriteString("Other repos are FYI at best — take technical detail that applies to your stack, leave their branches and claims alone.\n")
+	b.WriteString("Use `hive bus read <id>` for full body.\n")
 	b.WriteString("Use `hive bus announce <headline>` to broadcast, `hive bus reply <id> <text>` to thread.\n")
 	return b.String()
 }

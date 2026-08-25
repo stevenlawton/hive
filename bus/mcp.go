@@ -142,15 +142,15 @@ func toolDefinitions() []map[string]any {
 		tools = append(tools,
 			announceTool(
 				"hive_bus_intent",
-				"Announce on the Hive bus that you are about to work on something. Use this BEFORE making changes to shared code, interfaces, or types so peer Claude sessions in other worktrees can flag conflicts or offer context. Short headlines are best — one sentence on what you're about to touch.",
+				"Announce on the Hive bus that you are about to work on something. Use this BEFORE making changes to shared code, interfaces, or types so peer Claude sessions on your repo can flag conflicts or offer context. The bus is machine-wide, so name your repo or area if your sender id does not make it obvious. Short headlines are best — one sentence on what you're about to touch.",
 			),
 			announceTool(
 				"hive_bus_waiting",
-				"Announce on the Hive bus that you are blocked waiting on something — a code review, another worktree's change, a deployment, etc. Peer sessions can see what you're waiting on and chime in if they can unblock you.",
+				"Announce on the Hive bus that you are blocked waiting on something — a code review, another worktree's change, a deployment, etc. Peer sessions on your repo can see what you're waiting on and chime in if they can unblock you.",
 			),
 			announceTool(
 				"hive_bus_done",
-				"Announce on the Hive bus that you have finished something. Use this after committing a significant change, completing a task, or resolving a blocker so peers know the work is settled and they can plan around it.",
+				"Announce on the Hive bus that you have finished something. Use this after committing a significant change, completing a task, or resolving a blocker so peers on your repo know the work is settled and they can plan around it.",
 			),
 		)
 	}
@@ -158,11 +158,11 @@ func toolDefinitions() []map[string]any {
 	tools = append(tools,
 		announceTool(
 			"hive_bus_ask",
-			"Ask peer Claude sessions on the Hive bus for information you don't have — 'anyone using X?', 'who owns Y?', 'is Z still valid?'. Peers in other worktrees may have the answer from work they're doing. Replies arrive in your inbox digest on your next turn.",
+			"Ask peer Claude sessions on the Hive bus for information you don't have — 'anyone using X?', 'who owns Y?', 'is Z still valid?'. Sessions on your repo answer questions about your code; sessions on other repos can still answer a general tech-stack question. Replies arrive in your inbox digest on your next turn.",
 		),
 		map[string]any{
 			"name":        "hive_bus_reply",
-			"description": "Reply to a specific existing bus message by its id. Use when you saw a peer's announcement or question in your inbox digest and have something useful to tell them. Keeps the conversation threaded.",
+			"description": "Reply to a specific existing bus message by its id. Use when you saw a peer's announcement or question in your inbox digest and have something useful to tell them. Reply to peers on your repo, or to a message from another repo only when you can genuinely add to its technical content — never out of politeness, and never about another repo's branches or claims. Keeps the conversation threaded.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -184,7 +184,7 @@ func toolDefinitions() []map[string]any {
 		},
 		map[string]any{
 			"name":        "hive_bus_list",
-			"description": "List recent messages on the Hive bus. Use when you want to see the full recent chatter — the inbox digest only shows unread messages, but this shows everything. Returns headline, sender, kind, and id so you can hive_bus_read <id> for details or hive_bus_reply <id> to thread.",
+			"description": "List recent messages on the Hive bus. Use when you want to see the full recent chatter — the inbox digest only shows unread messages, but this shows everything. The bus is machine-wide, so the sender id (wt:<name>) is what tells you which repo a message belongs to. Returns headline, sender, kind, and id so you can hive_bus_read <id> for details or hive_bus_reply <id> to thread.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -197,7 +197,7 @@ func toolDefinitions() []map[string]any {
 		},
 		map[string]any{
 			"name":        "hive_bus_read",
-			"description": "Read the full body of one bus message by its id. Use when a headline in the inbox digest or hive_bus_list caught your attention and you want the full details before deciding how to respond.",
+			"description": "Read the full body of one bus message by its id. Use when a headline in the inbox digest or hive_bus_list caught your attention and you want the full details before deciding how to respond. Check the sender's repo first — a message from another repo is worth reading only for technical content that applies to your own stack.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
