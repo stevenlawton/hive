@@ -41,7 +41,10 @@ unclaimed one. `current` is an alias for `claim`.
 e.g. `kdx`); a positional number also works. Tasks are grouped under `###`
 sections and rendered `- [box] **subject** — description` in the `docs/TODO.md`
 (or `TODO.md`) `TASKS:BEGIN/END` block on the main worktree; content outside
-that block is left untouched.
+that block is left untouched. A description holding more than one line moves off
+the task line onto continuation lines indented six spaces, with the marker left
+on the task line — so a body can carry paragraphs, its own bullets, even its own
+`###` heading without any of it being read as list structure.
 
 Rules:
 - Address tasks by the **id** shown in the left column of `hive todo list` (three
@@ -63,6 +66,11 @@ Rules:
   folded into the subject, which is how `--description` used to end up as
   literal text inside a task. `--` ends flag parsing if the subject itself
   starts with a dash.
+- **A multi-paragraph body is fine**, and `-d`/`--description` is the way to give
+  one — quote it, or pass `"$(cat notes.md)"`. Keep the *subject* to one line:
+  a newline in a subject is flattened to a space, because a task line is one
+  line by definition. The drawer's `e` key edits one line only and refuses a
+  multi-line task, pointing you at `hive todo edit <id>` instead.
 - To reword a task use `edit`, never `rm` + `add`: it rewrites in place, so the
   id and any claim survive. Peers address tasks by id, so a new one strands
   every reference to it. `edit` takes the same subject/description forms as

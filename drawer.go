@@ -133,10 +133,12 @@ func splitSubjectDesc(s string) (subject, desc string) {
 	return strings.TrimSpace(s), ""
 }
 
-// todoEditText reconstructs the editable "subject — description" line.
+// todoEditText reconstructs the editable "subject — description" line. The
+// drawer's field is one line, so callers must refuse a multi-line body first —
+// see the "e" key — rather than let this flatten one away.
 func todoEditText(t Todo) string {
 	if t.Description != "" {
-		return t.Subject + descSep + t.Description
+		return t.Subject + descSep + flattenLine(t.Description)
 	}
 	return t.Subject
 }
@@ -270,6 +272,14 @@ func (m model) handleDrawerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.drawerInput.Focus()
 	case "e":
 		if m.drawerCursor >= 0 && m.drawerCursor < len(m.drawerTodos) {
+			// The field holds one line; a multi-paragraph body would come back
+			// from it flattened, which is the corruption this format exists to
+			// avoid. Send those edits somewhere that can hold them.
+			if strings.Contains(m.drawerTodos[m.drawerCursor].Description, "\n") {
+				m.err = fmt.Errorf("multi-line task — edit with: hive todo edit %s",
+					m.drawerTodos[m.drawerCursor].ID)
+				return m, nil
+			}
 			m.drawerInput = newDrawerInput("edit: ", "", todoEditText(m.drawerTodos[m.drawerCursor]))
 			m.drawerInputOn = true
 			m.drawerEditID, m.drawerAdding = m.drawerTodos[m.drawerCursor].ID, false
@@ -464,7 +474,7 @@ func drawerRow(t Todo, selected bool, myClaim string, width int) string {
 	rem := avail - len([]rune(subject))
 	desc := ""
 	if t.Description != "" && rem > 3 {
-		desc = truncStr(descSep+t.Description, rem)
+		desc = truncStr(descSep+flattenLine(t.Description), rem)
 	}
 
 	var box, subjStyled string

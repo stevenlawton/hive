@@ -78,7 +78,7 @@ func runTodoList() int {
 		}
 		line := fmt.Sprintf("%-4s [%s] %s", handle, t.boxChar(), t.Subject)
 		if t.Description != "" {
-			line += descSep + t.Description
+			line += descSep + flattenLine(t.Description) // one row per task; `hive todo show` has the full body
 		}
 		if !t.Done && t.Claim != "" {
 			if t.Claim == mine {
@@ -188,8 +188,8 @@ func runTodoEdit(args []string) int {
 		return 1
 	}
 	return mutateOne(todoCwd(), args[0], func(ts []Todo, i int) ([]Todo, string) {
-		ts[i].Subject = subj
-		ts[i].Description = desc
+		ts[i].Subject = flattenLine(subj)
+		ts[i].Description = strings.Trim(desc, " \t\n")
 		return ts, fmt.Sprintf("edited %s: %s", ts[i].ID, subj)
 	})
 }
@@ -448,8 +448,23 @@ func runTodoShow(args []string) int {
 		return 0
 	}
 	fmt.Printf("id: %s\nsection: %s\nsubject: %s\ndescription: %s\n",
-		t.ID, t.sectionOrDefault(), t.Subject, t.Description)
+		t.ID, t.sectionOrDefault(), t.Subject, indentBody(t.Description))
 	return 0
+}
+
+// indentBody lines a multi-line description up under the "description: " label
+// so `hive todo show` reads as one field rather than running into the margin.
+func indentBody(s string) string {
+	if !strings.Contains(s, "\n") {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i, l := range lines[1:] {
+		if l != "" {
+			lines[i+1] = "             " + l
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // mutateOne resolves ref and applies a change under the backlog lock. Resolution

@@ -541,3 +541,83 @@ func TestClaimStampsAndReleaseClears(t *testing.T) {
 		t.Errorf("since survived release: %q", todos[0].Since)
 	}
 }
+
+// A multi-paragraph body used to be written verbatim onto the task line, so the
+// file gained loose lines that the next read either dropped, promoted to phantom
+// tasks, or read as a "### " header that re-sectioned every task below it — and
+// the id, stranded on the last physical line, was reminted on every write.
+func TestMultiLineBodyRoundTrip(t *testing.T) {
+	body := "First paragraph.\n\nA list:\n- [ ] sub one\n- [x] sub two\n\n### Not a section\ntail"
+	todos := backfillIDs([]Todo{
+		{Section: "Now", Subject: "before", Description: "keep me", ID: "aaa"},
+		{Section: "Now", Subject: "multi", Description: body, ID: "bbb"},
+		{Section: "Later", Subject: "after", Description: "keep me too", ID: "ccc"},
+	})
+
+	got := parseTodos(formatTodos(todos))
+	if len(got) != 3 {
+		t.Fatalf("round-trip produced %d tasks, want 3: %+v", len(got), got)
+	}
+	for i, want := range todos {
+		if got[i].ID != want.ID || got[i].Subject != want.Subject ||
+			got[i].Section != want.Section || got[i].Description != want.Description {
+			t.Errorf("task %d = %+v, want %+v", i, got[i], want)
+		}
+	}
+}
+
+// The body survives repeated writes, so ids stay stable for peers addressing
+// tasks by id.
+func TestMultiLineBodyIsStableAcrossWrites(t *testing.T) {
+	todos := backfillIDs([]Todo{{Subject: "multi", Description: "one\n\ntwo\nthree"}})
+	first := formatTodos(todos)
+	second := formatTodos(backfillIDs(parseTodos(first)))
+	if first != second {
+		t.Errorf("second write differs:\n--- first ---\n%s\n--- second ---\n%s", first, second)
+	}
+}
+
+// A one-line description keeps its place on the task line: the new format costs
+// the existing file no churn.
+func TestSingleLineBodyStaysInline(t *testing.T) {
+	out := formatTodos([]Todo{{Subject: "plain", Description: "short desc", ID: "aaa"}})
+	if !strings.Contains(out, "- [ ] **plain** - short desc <!-- id:aaa -->\n") {
+		t.Errorf("single-line task did not stay inline:\n%s", out)
+	}
+	if strings.Contains(out, todoContIndent) {
+		t.Errorf("single-line task wrote continuation lines:\n%s", out)
+	}
+}
+
+func TestMultiLineBodyTrimsOuterBlankLines(t *testing.T) {
+	got := parseTodos(formatTodos([]Todo{{Subject: "s", Description: "\n\nbody\n\nmore\n\n", ID: "aaa"}}))
+	if len(got) != 1 || got[0].Description != "body\n\nmore" {
+		t.Errorf("got %+v, want one task with body %q", got, "body\n\nmore")
+	}
+}
+
+// The marker rides the task line, never a continuation line, so claims and
+// states survive a multi-line body too.
+func TestMultiLineBodyKeepsMarkerOnTaskLine(t *testing.T) {
+	in := Todo{Subject: "s", Description: "a\nb", ID: "aaa", Claim: "wt-x", State: StateReady}
+	out := formatTodos([]Todo{in})
+	if !strings.Contains(out, "- [~] **s** <!-- @wt-x id:aaa state:ready -->\n") {
+		t.Fatalf("marker not on the task line:\n%s", out)
+	}
+	got := parseTodos(out)
+	if len(got) != 1 || got[0].Claim != "wt-x" || got[0].State != StateReady || got[0].Description != "a\nb" {
+		t.Errorf("got %+v, want claim/state/body preserved", got)
+	}
+}
+
+// The subject has nowhere to put a second line, so a stray newline degrades to a
+// space rather than splitting the task in two.
+func TestAddTodoFlattensSubject(t *testing.T) {
+	todos := addTodo(nil, "Now", "line one\nline two", "body")
+	if len(todos) != 1 || todos[0].Subject != "line one line two" {
+		t.Fatalf("got %+v, want a single flattened subject", todos)
+	}
+	if got := parseTodos(formatTodos(backfillIDs(todos))); len(got) != 1 {
+		t.Errorf("round-trip produced %d tasks, want 1: %+v", len(got), got)
+	}
+}

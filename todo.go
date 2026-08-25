@@ -38,6 +38,11 @@ const (
 	// em-dash) so it survives a unicode normalizer unchanged — no git churn. The
 	// parser (indexSeparator/trimSeparator) still accepts an em-dash on read.
 	descSep = " - "
+	// todoContIndent prefixes the continuation lines of a multi-paragraph
+	// description. Six spaces is the width of "- [x] ", so the body lines up
+	// under the subject and markdown reads it as the list item's own text
+	// rather than a nested block.
+	todoContIndent = "      "
 )
 
 // Pipeline states. A task's state is where the work has got to; it is
@@ -196,12 +201,43 @@ func blockBounds(lines []string) (begin, end int) {
 	return begin, end
 }
 
-// parseTodos parses "### section" headers and task lines. Anything else (blank
-// lines, a Last-sync line) is ignored.
+// parseTodos parses "### section" headers and task lines. Lines indented by
+// todoContIndent after a task belong to that task's description, so a body can
+// hold paragraphs, its own bullet list, even its own "### " heading, without any
+// of it being read as list structure. Anything else (blank lines, a Last-sync
+// line) is ignored.
 func parseTodos(block string) []Todo {
 	var todos []Todo
 	section := defaultSection
+	cur := -1 // task the current continuation lines belong to, or -1
+	var body []string
+	blanks := 0 // held back, so trailing blank lines never enter a description
+
+	flush := func() {
+		if cur >= 0 && len(body) > 0 {
+			todos[cur].Description = joinBody(todos[cur].Description, body)
+		}
+		cur, body, blanks = -1, nil, 0
+	}
+
 	for _, line := range strings.Split(block, "\n") {
+		if cur >= 0 {
+			if strings.TrimSpace(line) == "" {
+				blanks++
+				continue
+			}
+			if cont, ok := strings.CutPrefix(line, todoContIndent); ok {
+				if len(body) > 0 { // drop blanks between the task line and its body
+					for ; blanks > 0; blanks-- {
+						body = append(body, "")
+					}
+				}
+				blanks = 0
+				body = append(body, strings.TrimRight(cont, " \t"))
+				continue
+			}
+			flush()
+		}
 		trimmed := strings.TrimSpace(line)
 		if h, ok := strings.CutPrefix(trimmed, "### "); ok {
 			section = strings.TrimSpace(h)
@@ -210,9 +246,28 @@ func parseTodos(block string) []Todo {
 		if t, ok := parseTodoLine(trimmed); ok {
 			t.Section = section
 			todos = append(todos, t)
+			cur = len(todos) - 1
 		}
 	}
+	flush()
 	return todos
+}
+
+// joinBody appends continuation lines to whatever description the task line
+// already carried. hive never writes both, but a hand-edited file can.
+func joinBody(head string, body []string) string {
+	joined := strings.Join(body, "\n")
+	if head == "" {
+		return joined
+	}
+	return head + "\n" + joined
+}
+
+// flattenLine collapses a value into a single line. Used where the format or
+// the display can only hold one — a subject, a list row — so a stray newline
+// degrades to a space instead of corrupting the block.
+func flattenLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // parseTodoMarker reads the trailing "<!-- @owner id:xyz -->" marker. Tokens are
@@ -297,15 +352,31 @@ func formatTodos(todos []Todo) string {
 			order = append(order, sec)
 		}
 	}
+	// A single-line description stays on the task line, which is the common case
+	// and keeps the file's existing shape. A multi-line one moves wholesale to
+	// indented continuation lines, leaving the marker on the task line where the
+	// parser can always find it.
 	writeTodo := func(t Todo) {
-		b.WriteString("- [" + t.boxChar() + "] **" + t.Subject + "**")
-		if t.Description != "" {
-			b.WriteString(descSep + t.Description)
+		body := strings.Trim(t.Description, "\n")
+		multi := strings.Contains(body, "\n")
+		b.WriteString("- [" + t.boxChar() + "] **" + flattenLine(t.Subject) + "**")
+		if body != "" && !multi {
+			b.WriteString(descSep + body)
 		}
 		if mk := t.marker(); mk != "" {
 			b.WriteString(" " + mk)
 		}
 		b.WriteByte('\n')
+		if !multi {
+			return
+		}
+		for _, l := range strings.Split(body, "\n") {
+			if strings.TrimSpace(l) == "" {
+				b.WriteByte('\n')
+				continue
+			}
+			b.WriteString(todoContIndent + strings.TrimRight(l, " \t") + "\n")
+		}
 	}
 	for _, sec := range order {
 		b.WriteString("\n### " + sec + "\n\n")
@@ -368,7 +439,7 @@ func (t Todo) marker() string {
 }
 
 func addTodo(todos []Todo, section, subject, description string) []Todo {
-	subject = strings.TrimSpace(subject)
+	subject = flattenLine(subject)
 	if subject == "" {
 		return todos
 	}
@@ -378,7 +449,7 @@ func addTodo(todos []Todo, section, subject, description string) []Todo {
 	return append(todos, Todo{
 		Section:     section,
 		Subject:     subject,
-		Description: strings.TrimSpace(description),
+		Description: strings.Trim(description, " \t\n"),
 	})
 }
 
