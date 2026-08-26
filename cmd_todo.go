@@ -165,11 +165,10 @@ func runTodoAdd(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	// Name the file. The list lives on the main worktree so every worktree
-	// shares one, which means adding from a branch leaves an uncommitted
-	// change in a checkout the caller may not be looking at — enough to abort
-	// a deploy pre-flight that insists on a clean tree.
-	fmt.Printf("added %s: %s\n  %s (uncommitted)\n",
+	// Name the store. Every worktree of a repo shares one, and it lives under
+	// hive's data directory rather than in the repo, so an add leaves no mark
+	// on the working tree at all.
+	fmt.Printf("added %s: %s\n  %s\n",
 		todos[len(todos)-1].ID, subj, todoFilePath(cwd))
 	return 0
 }

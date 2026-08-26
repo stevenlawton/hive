@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+)
 
 // Rewriting a task must keep its identity. rm+add mints a new id and drops the
 // claim, and peers address tasks by id — so the only safe rewrite is in place.
@@ -98,5 +104,91 @@ func TestEditNeedsText(t *testing.T) {
 	}
 	if got := loadTodos(dir)[0]; got.Subject != "only" {
 		t.Errorf("the task should be untouched, got %q", got.Subject)
+	}
+}
+
+// The store is hive's, not git's. Telling the user their add is "uncommitted"
+// was true of a tracked file and is now simply wrong.
+func TestAddDoesNotReportUncommitted(t *testing.T) {
+	dir := newTestRepo(t)
+	chdir(t, dir)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	rc := runTodoAdd([]string{"a task - a body"})
+	os.Stdout = orig
+	w.Close()
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+
+	if rc != 0 {
+		t.Fatalf("add returned %d", rc)
+	}
+	if strings.Contains(out, "uncommitted") {
+		t.Errorf("add still reports the store as uncommitted:\n%s", out)
+	}
+	if !strings.Contains(out, todoFilePath(dir)) {
+		t.Errorf("add did not name the store path:\n%s", out)
+	}
+}
+
+// The first access to a repo imports its legacy backlog, and statusline is
+// usually what gets there first. Its stdout is rendered into Claude's prompt,
+// so the migration notice must go to stderr and nothing else may follow it.
+func TestStatuslineImportNoticeGoesToStderr(t *testing.T) {
+	dir := newTestRepo(t)
+	writeRepoBacklog(t, dir, "docs/TODO.md", "\n### Now\n\n- [ ] **a task** <!-- id:aaa -->\n")
+
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		fmt.Fprintf(stdinW, `{"cwd":%q}`, dir)
+		stdinW.Close()
+	}()
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origIn, origOut, origErr := os.Stdin, os.Stdout, os.Stderr
+	os.Stdin, os.Stdout, os.Stderr = stdinR, outW, errW
+	rc := runTodoStatusline()
+	os.Stdin, os.Stdout, os.Stderr = origIn, origOut, origErr
+	outW.Close()
+	errW.Close()
+
+	var out, errOut bytes.Buffer
+	if _, err := out.ReadFrom(outR); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := errOut.ReadFrom(errR); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc != 0 {
+		t.Fatalf("statusline returned %d", rc)
+	}
+	if strings.Contains(out.String(), "imported") {
+		t.Errorf("the import notice reached stdout:\n%s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "imported") {
+		t.Errorf("the import notice did not reach stderr:\n%s", errOut.String())
+	}
+	if !strings.Contains(out.String(), "a task") {
+		t.Errorf("stdout did not render the status line:\n%s", out.String())
 	}
 }
