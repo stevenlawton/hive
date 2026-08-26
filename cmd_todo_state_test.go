@@ -6,7 +6,7 @@ import (
 )
 
 func TestStateVerbMovesForward(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	chdir(t, dir)
 
 	if rc := runTodoAdd([]string{"fix the parser - it eats flags"}); rc != 0 {
@@ -25,7 +25,7 @@ func TestStateVerbMovesForward(t *testing.T) {
 // Going backwards without saying why produces a ticket that gets replanned
 // identically, so the note is required rather than encouraged.
 func TestBackwardsMoveRequiresANote(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	chdir(t, dir)
 	runTodoAdd([]string{"fix the parser"})
 	id := loadTodos(dir)[0].ID
@@ -51,7 +51,7 @@ func TestBackwardsMoveRequiresANote(t *testing.T) {
 }
 
 func TestStateVerbRejectsUnknownState(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	chdir(t, dir)
 	runTodoAdd([]string{"fix the parser"})
 	id := loadTodos(dir)[0].ID
@@ -62,7 +62,7 @@ func TestStateVerbRejectsUnknownState(t *testing.T) {
 }
 
 func TestStateVerbClears(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	chdir(t, dir)
 	runTodoAdd([]string{"fix the parser"})
 	id := loadTodos(dir)[0].ID

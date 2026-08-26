@@ -13,7 +13,7 @@ import (
 // the given subjects.
 func newDrawerModel(t *testing.T, subjects ...string) (model, string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	for _, s := range subjects {
 		if _, err := withTodos(dir, func(ts []Todo) []Todo {
 			return addTodo(ts, "Tasks", s, "")
@@ -119,7 +119,7 @@ func TestRefreshDrawerFromDiskKeepsCursorOnItsTaskByID(t *testing.T) {
 // Opening the drawer on a repo that never had a TODO.md must not create one —
 // it should be a pure read, like it was before withTodos existed.
 func TestLoadDrawerTodosDoesNotCreateFileWhenNoneExists(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	var m model
 	m.loadDrawerTodos(dir)
 

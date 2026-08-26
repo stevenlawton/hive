@@ -14,7 +14,7 @@ import (
 // mutations must all survive. Each withTodos call opens the lock file freshly, so
 // flock serialises these goroutines exactly as it would separate processes.
 func TestWithTodosConcurrentWritersAllSurvive(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	const n = 8
 
 	var wg sync.WaitGroup
@@ -50,7 +50,7 @@ func TestWithTodosConcurrentWritersAllSurvive(t *testing.T) {
 }
 
 func TestWithTodosBackfillsBeforeAndAfterMutate(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	path := filepath.Join(dir, "docs", "TODO.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestWithTodosBackfillsBeforeAndAfterMutate(t *testing.T) {
 }
 
 func TestWithTodosPreservesSurroundingProse(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	path := filepath.Join(dir, "docs", "TODO.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestWithTodosPreservesSurroundingProse(t *testing.T) {
 }
 
 func TestWriteTodoFileLeavesNoTempFiles(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	path := filepath.Join(dir, "TODO.md")
 	if err := writeTodoFile(path, "hello\n"); err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestWriteTodoFileLeavesNoTempFiles(t *testing.T) {
 // land within the same mtime tick on coarser filesystems and produce a false
 // pass on the unfixed code; inode identity flags the rewrite unconditionally.
 func TestWithTodosNoopMutateDoesNotRewrite(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	if _, err := withTodos(dir, func(ts []Todo) []Todo {
 		return addTodo(ts, "Tasks", "existing", "")
 	}); err != nil {
@@ -155,7 +155,7 @@ func TestWithTodosNoopMutateDoesNotRewrite(t *testing.T) {
 }
 
 func TestTodoLockPathIsOutsideTheRepo(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	got := todoLockPath(dir)
 	if strings.HasPrefix(got, dir) {
 		t.Errorf("lock path %q is inside the repo; it would show as untracked and ride deploy rsyncs", got)
@@ -163,6 +163,17 @@ func TestTodoLockPathIsOutsideTheRepo(t *testing.T) {
 	if !strings.HasSuffix(got, ".lock") {
 		t.Errorf("lock path %q should end in .lock", got)
 	}
+}
+
+// newTestRepo returns a directory to use as a repo path, with hive's data and
+// runtime roots redirected into the test's own temp space. Every test that
+// reaches the store must use this: the store now lives outside the repo, so a
+// bare t.TempDir() would leave tasks in the developer's real ~/.local/share.
+func newTestRepo(t *testing.T) string {
+	t.Helper()
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	return t.TempDir()
 }
 
 // chdir points todoCwd() at dir for the duration of the test.
@@ -182,7 +193,7 @@ func chdir(t *testing.T, dir string) {
 // caller reading the list and acting on it. Addressing by id must still hit the
 // task the caller meant.
 func TestCLIDoneByIDSurvivesAPeerShiftingPositions(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	chdir(t, dir)
 
 	for _, s := range []string{"first", "second", "third"} {
@@ -213,7 +224,7 @@ func TestCLIDoneByIDSurvivesAPeerShiftingPositions(t *testing.T) {
 }
 
 func TestCLIRejectsUnknownRef(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	chdir(t, dir)
 	if rc := runTodoAdd([]string{"only"}); rc != 0 {
 		t.Fatalf("add returned %d", rc)
@@ -232,7 +243,7 @@ func TestCLIRejectsUnknownRef(t *testing.T) {
 // back-dated to stand in for a file written on an earlier day.
 func backdatedTodoFile(t *testing.T) (dir, path string) {
 	t.Helper()
-	dir = t.TempDir()
+	dir = newTestRepo(t)
 	if _, err := withTodos(dir, func(ts []Todo) []Todo {
 		return addTodo(ts, "Tasks", "already stamped", "")
 	}); err != nil {
@@ -298,5 +309,32 @@ func TestWithTodosUpdatesSyncDateWhenContentChanges(t *testing.T) {
 	}
 	if strings.Contains(string(data), "2020-01-01") {
 		t.Error("the sync date was not refreshed despite a real content change")
+	}
+}
+
+// newTestRepo must sandbox every hive-owned path, or the suite writes into the
+// developer's real data and runtime dirs.
+func TestNewTestRepoSandboxesHivePaths(t *testing.T) {
+	realData := os.Getenv("XDG_DATA_HOME")
+	realRun := os.Getenv("XDG_RUNTIME_DIR")
+
+	dir := newTestRepo(t)
+
+	data := os.Getenv("XDG_DATA_HOME")
+	run := os.Getenv("XDG_RUNTIME_DIR")
+	if data == "" || data == realData {
+		t.Errorf("XDG_DATA_HOME not redirected: %q", data)
+	}
+	if run == "" || run == realRun {
+		t.Errorf("XDG_RUNTIME_DIR not redirected: %q", run)
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if strings.HasPrefix(data, home+"/.local") || strings.HasPrefix(run, home+"/.local") {
+			t.Errorf("redirected into the real home: data=%q run=%q", data, run)
+		}
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("repo dir not usable: %v", err)
 	}
 }

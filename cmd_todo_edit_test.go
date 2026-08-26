@@ -5,7 +5,7 @@ import "testing"
 // Rewriting a task must keep its identity. rm+add mints a new id and drops the
 // claim, and peers address tasks by id — so the only safe rewrite is in place.
 func TestEditPreservesIdentityAndState(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	chdir(t, dir)
 
 	if rc := runTodoAdd([]string{"original subject - original body"}); rc != 0 {
@@ -48,7 +48,7 @@ func TestEditPreservesIdentityAndState(t *testing.T) {
 }
 
 func TestEditAcceptsTheSeparatorForm(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	chdir(t, dir)
 	runTodoAdd([]string{"before"})
 	id := loadTodos(dir)[0].ID
@@ -63,7 +63,7 @@ func TestEditAcceptsTheSeparatorForm(t *testing.T) {
 }
 
 func TestEditKeepsDoneState(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	chdir(t, dir)
 	runTodoAdd([]string{"a task"})
 	id := loadTodos(dir)[0].ID
@@ -78,7 +78,7 @@ func TestEditKeepsDoneState(t *testing.T) {
 }
 
 func TestEditRejectsUnknownRef(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	chdir(t, dir)
 	runTodoAdd([]string{"only"})
 
@@ -88,7 +88,7 @@ func TestEditRejectsUnknownRef(t *testing.T) {
 }
 
 func TestEditNeedsText(t *testing.T) {
-	dir := t.TempDir()
+	dir := newTestRepo(t)
 	chdir(t, dir)
 	runTodoAdd([]string{"only"})
 	id := loadTodos(dir)[0].ID
