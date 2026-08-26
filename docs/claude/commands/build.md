@@ -55,6 +55,16 @@ concurrently. Give each one its ticket id and its worktree path.
 
 A table: ticket, outcome, files, findings.
 
+**Name every ticket by its subject, not its id.** The workers return
+`<id> → ...` because the id is a machine handle they hand back for re-queueing.
+It is not what you show a human. `dmy → plan-review, 3 open questions` tells the
+reader nothing; "Worktree creation never bootstraps the new checkout" tells them
+what you spent the last ten minutes on.
+
+Resolve each one with `hive todo show <id>` — one cheap CLI call per ticket, no
+plan content — and put the subject in the first column, with the id kept only as
+a small handle for the commands the human might run next.
+
 **Do not read the diffs. Do not read the findings.** They are in the artifact and
 on the branch, which is where the human reads them at triage. Pulling them in
 here spends the context this whole design exists to protect.

@@ -44,6 +44,16 @@ and both claims would succeed on the same ticket.
 
 Put the returned lines in a table — ticket, outcome, open questions.
 
+**Name every ticket by its subject, not its id.** The workers return
+`<id> → ...` because the id is a machine handle they hand back for re-queueing.
+It is not what you show a human. `dmy → plan-review, 3 open questions` tells the
+reader nothing; "Worktree creation never bootstraps the new checkout" tells them
+what you spent the last ten minutes on.
+
+Resolve each one with `hive todo show <id>` — one cheap CLI call per ticket, no
+plan content — and put the subject in the first column, with the id kept only as
+a small handle for the commands the human might run next.
+
 Then stop.
 
 **Do not read the plans. Do not summarise them. Do not comment on whether they
