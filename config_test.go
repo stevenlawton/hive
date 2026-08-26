@@ -37,6 +37,7 @@ workspaces:
     color: "#ff0000"
     remote: true
     favourite: true
+    worktree_init: true
 `)
 	os.WriteFile(cfgPath, content, 0644)
 
@@ -56,6 +57,11 @@ workspaces:
 	}
 	if ws.Name != "My Repo" || ws.Short != "MR" || ws.Color != "#ff0000" || !ws.Remote || !ws.Favourite {
 		t.Errorf("workspace fields not parsed correctly: %+v", ws)
+	}
+	// Without a `yaml:"worktree_init"` tag, yaml.v3 looks for the key
+	// "worktreeinit" and this silently decodes to false.
+	if !ws.WorktreeInit {
+		t.Errorf("worktree_init did not round-trip onto ws.WorktreeInit: %+v", ws)
 	}
 }
 
@@ -153,5 +159,46 @@ func TestDiscoverRepos(t *testing.T) {
 	}
 	if bravo.Name != "repo-b" || bravo.Short != "REP" {
 		t.Errorf("bravo defaults not applied: name=%s short=%s", bravo.Name, bravo.Short)
+	}
+}
+
+// worktree_init is ORed across duplicate workspace keys, like the other
+// booleans, so a true survives dedup instead of being silently dropped.
+func TestMergeWorkspace_WorktreeInit(t *testing.T) {
+	cases := []struct {
+		name string
+		a    WorkspaceConfig
+		b    WorkspaceConfig
+		want bool
+	}{
+		{"set on a only", WorkspaceConfig{WorktreeInit: true}, WorkspaceConfig{}, true},
+		// LOAD-BEARING: mergeWorkspace opens with `out := a`, so every other
+		// case here passes even when the OR line is missing entirely. Do not
+		// delete this one as redundant.
+		{"set on b only", WorkspaceConfig{}, WorkspaceConfig{WorktreeInit: true}, true},
+		{"set on both", WorkspaceConfig{WorktreeInit: true}, WorkspaceConfig{WorktreeInit: true}, true},
+		{"set on neither", WorkspaceConfig{}, WorkspaceConfig{}, false},
+	}
+	for _, c := range cases {
+		if got := mergeWorkspace(c.a, c.b).WorktreeInit; got != c.want {
+			t.Errorf("%s: mergeWorkspace(...).WorktreeInit = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// The flag has to reach the runtime Repo or nothing in createWorktree can read
+// it. Its own top-level function on purpose: the build's `go test -run` filter
+// names it, and go test -run exits 0 when nothing matches.
+func TestApplyWorkspaceConfig_WorktreeInit(t *testing.T) {
+	configured := Repo{DirName: "he-events", Name: "he-events"}
+	applyWorkspaceConfig(&configured, WorkspaceConfig{Name: "HE Events", WorktreeInit: true})
+	if !configured.WorktreeInit {
+		t.Errorf("configured workspace: repo.WorktreeInit = false, want true")
+	}
+
+	unconfigured := Repo{DirName: "other", Name: "other"}
+	applyWorkspaceConfig(&unconfigured, WorkspaceConfig{Name: "Other"})
+	if unconfigured.WorktreeInit {
+		t.Errorf("unconfigured workspace: repo.WorktreeInit = true, want false")
 	}
 }

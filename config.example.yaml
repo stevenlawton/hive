@@ -22,6 +22,11 @@ workspaces:
     color: "#ff6b6b"             # Tab color (hex)
     remote: true                 # Auto-start claude remote-control session
     favourite: true              # Pin to favourites section
+    # yolo: true                 # Start claude with bypassPermissions
+    # worktree_init: true        # Run this repo's scripts/wt-init.sh in each new
+                                 # worktree before claude starts. Off by default:
+                                 # it executes a script the repo controls, so it
+                                 # is opt-in per workspace. Toggle it with E.
   another-app:
     name: "Another App"
     short: "AA"
