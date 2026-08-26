@@ -103,7 +103,8 @@ const todoAddUsage = `usage: hive todo add <subject - description>
 The description is optional. Separate it from the subject with " - " (an
 em-dash is accepted too), or pass it with --description/-d, or read it from a
 file with --body-file ("-" means stdin). A body piped in on stdin is picked up
-even without the flag, as long as no other body was given.
+even without the flag, as long as no other body was given — giving two is an
+error, never a silent drop.
 
 Prefer --body-file or a pipe for anything long: passing prose through argv
 means quoting every apostrophe and backtick, and the shell mangling is silent.
@@ -185,10 +186,28 @@ func finishTodoAdd(rest []string, desc string, flagged bool) (string, string, er
 		}
 		desc = inline
 	}
-	if desc == "" && !flagged {
-		desc = pipedBody()
+	// Read stdin whatever else was given. Taking it only as a fallback meant a
+	// piped body was silently discarded when the subject happened to contain a
+	// " - " separator — which ate a 3000-character ticket, reported success, and
+	// is exactly the silent-data-loss this tool should never do.
+	if piped := pipedBody(); piped != "" {
+		if desc != "" || flagged {
+			return "", "", fmt.Errorf(
+				"description given twice: once on stdin and once %s\n"+
+					"pass only one — drop the separator, or use --body-file",
+				givenWhere(flagged))
+		}
+		desc = piped
 	}
 	return subject, desc, nil
+}
+
+// givenWhere names the other place a body came from, for the given-twice error.
+func givenWhere(flagged bool) string {
+	if flagged {
+		return "as a flag"
+	}
+	return "after the subject separator"
 }
 
 // refuseSecondBody rejects a body given more than once. Silently letting the

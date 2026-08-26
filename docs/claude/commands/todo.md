@@ -64,7 +64,11 @@ Rules:
 - `add` takes the description **after a ` - ` separator** (an em-dash reads too),
   via `--description`/`-d`, from a file with `--body-file <path>`, or piped in on
   stdin (`--body-file -`, or just a bare pipe). Flags work on either side of the
-  subject. Giving the body twice is refused, as is any unrecognised flag —
+  subject. Giving the body twice is refused — including a pipe alongside a ` - `
+  separator, which is easy to hit by accident when the *subject* contains " - ".
+  It errors rather than picking one, because silently dropping the other is how
+  a long body gets destroyed with an exit code of 0. Any unrecognised flag is
+  refused too —
   folding it into the subject is how `--description` used to end up as literal
   text inside a task. `--` ends flag parsing if the subject itself starts with a
   dash.

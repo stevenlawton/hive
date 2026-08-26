@@ -95,9 +95,11 @@ func TestEmptyPipedStdinLeavesNoBody(t *testing.T) {
 	}
 }
 
-// An explicit body always wins over an incidental pipe — otherwise a scripted
-// add that happens to run with stdin attached would silently gain a body.
-func TestExplicitBodyBeatsAnIncidentalPipe(t *testing.T) {
+// A body given twice is refused, including when one of them arrived on stdin.
+// Preferring one and dropping the other is how a 3000-character ticket body was
+// silently destroyed: the subject contained " - ", so the piped body lost, and
+// the command still exited 0.
+func TestPipedBodyPlusAnotherBodyIsRefused(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		args []string
@@ -110,11 +112,11 @@ func TestExplicitBodyBeatsAnIncidentalPipe(t *testing.T) {
 			chdir(t, dir)
 			defer pipeStdin(t, "from the pipe\n")()
 
-			if rc := runTodoAdd(c.args); rc != 0 {
-				t.Fatalf("add returned %d", rc)
+			if rc := runTodoAdd(c.args); rc == 0 {
+				t.Error("two bodies were accepted; one of them was silently dropped")
 			}
-			if got := loadTodos(dir); len(got) != 1 || got[0].Description != "explicit" {
-				t.Errorf("got %+v, want the explicit body to win", got)
+			if got := loadTodos(dir); len(got) != 0 {
+				t.Errorf("a refused add still wrote a task: %+v", got)
 			}
 		})
 	}
