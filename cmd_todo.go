@@ -80,6 +80,9 @@ func runTodoList() int {
 		if t.Description != "" {
 			line += descSep + flattenLine(t.Description) // one row per task; `hive todo show` has the full body
 		}
+		if !t.Done && t.State != "" {
+			line += "  ·" + t.State
+		}
 		if !t.Done && t.Claim != "" {
 			if t.Claim == mine {
 				line += "  (yours)"

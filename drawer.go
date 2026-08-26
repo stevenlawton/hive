@@ -465,6 +465,9 @@ func drawerRow(t Todo, selected bool, myClaim string, width int) string {
 	if !t.Done && t.Claim != "" && t.Claim != myClaim {
 		tag = " 🔒@" + t.Claim
 	}
+	if !t.Done && t.State != "" {
+		tag = " ·" + t.State + tag
+	}
 
 	avail := max(1, width-6-len([]rune(tag))) // cursor(2) + "[x] "(4) + tag
 	subject := t.Subject
