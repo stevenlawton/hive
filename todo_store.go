@@ -37,6 +37,7 @@ func withTodos(repoPath string, mutate func([]Todo) []Todo) ([]Todo, error) {
 	if err := writeTodoFile(path, rendered); err != nil {
 		return todos, err
 	}
+	backupStore() // no-op unless the store directory is a git repo
 	return todos, nil
 }
 
