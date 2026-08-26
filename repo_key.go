@@ -3,7 +3,9 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -58,4 +60,43 @@ func repoKey(repoPath string) string {
 	id, _ := repoIdentity(repoPath)
 	sum := sha256.Sum256([]byte(id))
 	return hex.EncodeToString(sum[:4])
+}
+
+// hiveDataDir is hive's data root. Data, not runtime: the backlog has to
+// survive a reboot, which is why it does not live beside the lock.
+func hiveDataDir() string {
+	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
+		return filepath.Join(dir, "hive")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "hive")
+	}
+	return filepath.Join(home, ".local", "share", "hive")
+}
+
+// todoStorePath is where a repo's backlog lives. The slug is the repo's
+// directory name, present only so the store directory can be read at a glance;
+// the key is the identity.
+func todoStorePath(repoPath string) string {
+	slug := slugify(filepath.Base(mainWorktree(repoPath)))
+	return filepath.Join(hiveDataDir(), "todos", slug+"-"+repoKey(repoPath)+".md")
+}
+
+// slugify reduces a directory name to something safe in a filename.
+func slugify(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-.")
+	if out == "" {
+		return "repo"
+	}
+	return out
 }

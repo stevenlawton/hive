@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -109,5 +110,64 @@ func TestRepoKeyIsEightHexChars(t *testing.T) {
 		if !strings.ContainsRune("0123456789abcdef", c) {
 			t.Fatalf("key = %q, want lowercase hex", key)
 		}
+	}
+}
+
+func TestHiveDataDirHonoursXDG(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-test")
+	if got := hiveDataDir(); got != "/tmp/xdg-test/hive" {
+		t.Errorf("hiveDataDir() = %q", got)
+	}
+	t.Setenv("XDG_DATA_HOME", "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	if got, want := hiveDataDir(), filepath.Join(home, ".local", "share", "hive"); got != want {
+		t.Errorf("hiveDataDir() = %q, want %q", got, want)
+	}
+}
+
+// The store is named for the repo so the directory can be read by a human, but
+// keyed by the hash so the name carries no meaning.
+func TestTodoStorePathShape(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-test")
+	dir := t.TempDir() + "/My Repo"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := todoStorePath(dir)
+	wantDir := "/tmp/xdg-test/hive/todos"
+	if filepath.Dir(got) != wantDir {
+		t.Errorf("store dir = %q, want %q", filepath.Dir(got), wantDir)
+	}
+	base := filepath.Base(got)
+	if !strings.HasPrefix(base, "my-repo-") || !strings.HasSuffix(base, ".md") {
+		t.Errorf("store file = %q, want my-repo-<key>.md", base)
+	}
+	if !strings.HasSuffix(base, repoKey(dir)+".md") {
+		t.Errorf("store file %q does not end in the repo key", base)
+	}
+}
+
+// The store must be outside the repo — that is the whole point of the change.
+func TestTodoStorePathIsOutsideTheRepo(t *testing.T) {
+	dir := newTestRepo(t)
+	if strings.HasPrefix(todoStorePath(dir), dir) {
+		t.Errorf("store path %q is inside the repo %q", todoStorePath(dir), dir)
+	}
+}
+
+// Two worktrees of one repo share a backlog, as they do today via mainWorktree.
+func TestTodoStorePathSharedAcrossWorktrees(t *testing.T) {
+	dir := newTestRepo(t)
+	gitInit(t, dir)
+	wt := filepath.Join(t.TempDir(), "wt")
+	cmd := exec.Command("git", "-C", dir, "worktree", "add", "-q", "-b", "side", wt)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("worktree add: %v: %s", err, out)
+	}
+	if todoStorePath(dir) != todoStorePath(wt) {
+		t.Errorf("worktrees disagree: %q vs %q", todoStorePath(dir), todoStorePath(wt))
 	}
 }
