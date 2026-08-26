@@ -65,6 +65,32 @@ the tickets moved.
 If a planner returned `FAILED`, `SKIPPED` or `OBSOLETE`, that line is the whole
 report for that ticket. Do not go and investigate why.
 
+## 3b. Sending a plan back
+
+`$ARGUMENTS` naming a ticket already at `·plan-review` is normally a mistake —
+§1 refuses it, because re-refining throws away the review it is queued for.
+
+The exception is a plan that came back **answered**. When the human has read a
+plan and settled its open questions, the round trip is:
+
+1. Append a `## Decisions` section to `docs/plans/<id>.md`, writing each answer
+   under the question it settles. The artifact is the carrier, not the ticket —
+   ticket bodies are awkward to extend from the CLI, and the next planner reads
+   the artifact anyway.
+2. Send it back to unrefined with the reason:
+
+   ```bash
+   hive todo state <id> clear --note "<what was decided, in one clause>"
+   ```
+
+3. `/refine <id>` — the planner reads the decisions as settled and rewrites the
+   plan on top of them.
+
+Do this when an answer is **load-bearing** — when it changes the shape of the
+contract rather than a detail inside it. A planner will tell you which of its
+questions those are. For a small answer, edit the plan yourself and mark it
+`ready`; a full re-plan costs more than the correction is worth.
+
 ## 4. Announce on the bus
 
 `hive bus intent` before dispatching, `hive bus done` after. Name the repo and

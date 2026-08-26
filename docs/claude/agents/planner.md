@@ -78,6 +78,23 @@ sure, and never retry a claim that succeeded — you would be dropping it.
 
 Read the ticket body first: `hive todo show <id>`.
 
+**Then check for a plan that already exists.** If `docs/plans/<id>.md` is there,
+this ticket has been through you before and came back — read it before you
+research anything.
+
+- A **`## Decisions`** section holds answers a human has already given to your
+  predecessor's open questions. They are **settled**. Build the contract on them,
+  do not re-litigate them, and do not ask them again in different words. Someone
+  spent their attention on those once already.
+- The previous **Open questions** that were *not* answered still stand. Carry
+  them forward.
+- When you rewrite the artifact, **copy the `## Decisions` section into the new
+  one verbatim.** Losing it means the next round asks the same questions and the
+  human answers them twice, which is the one thing this loop must never do.
+
+Everything else in the old artifact is your predecessor's reasoning against
+older code. Re-derive it rather than trusting it.
+
 Pull the anchors out of it — files, symbols, error strings, endpoints, ticket
 references. Group them into **independent clusters**, then dispatch one
 `context-loader` agent per cluster, **all in a single message** so they run
