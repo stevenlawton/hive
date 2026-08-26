@@ -62,13 +62,27 @@ Rules:
   scoping* (`ffy`).
 - Keep headlines to a short title, not a paragraph.
 - `add` takes the description **after a ` - ` separator** (an em-dash reads too),
-  or via `--description`/`-d`, and those flags work on either side of the
-  subject. Those are the only two forms — any other flag is refused rather than
-  folded into the subject, which is how `--description` used to end up as
-  literal text inside a task. `--` ends flag parsing if the subject itself
-  starts with a dash.
-- **A multi-paragraph body is fine**, and `-d`/`--description` is the way to give
-  one — quote it, or pass `"$(cat notes.md)"`. Keep the *subject* to one line:
+  via `--description`/`-d`, from a file with `--body-file <path>`, or piped in on
+  stdin (`--body-file -`, or just a bare pipe). Flags work on either side of the
+  subject. Giving the body twice is refused, as is any unrecognised flag —
+  folding it into the subject is how `--description` used to end up as literal
+  text inside a task. `--` ends flag parsing if the subject itself starts with a
+  dash.
+- **For anything longer than a line, pipe it — do not pass prose through argv.**
+  Quoting every apostrophe and backtick by hand is the failure mode this exists
+  to remove, and the shell mangles them silently:
+
+  ```
+  cat <<'EOF' | hive todo add "the subject"
+  Apostrophes, `backticks`, "quotes", $VARIABLE, £ — all safe.
+
+  Second paragraph.
+  EOF
+  ```
+
+  A quoted heredoc (`<<'EOF'`) passes the bytes through untouched. `--body-file
+  notes.md` does the same from a file, and `edit` takes both, which is what makes
+  rewriting a long body practical. Keep the *subject* to one line:
   a newline in a subject is flattened to a space, because a task line is one
   line by definition. The drawer's `e` key edits one line only and refuses a
   multi-line task, pointing you at `hive todo edit <id>` instead.

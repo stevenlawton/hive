@@ -97,10 +97,18 @@ func runTodoList() int {
 
 const todoAddUsage = `usage: hive todo add <subject - description>
        hive todo add --description <text> <subject>
+       hive todo add --body-file <path|-> <subject>
+       ... | hive todo add <subject>
 
 The description is optional. Separate it from the subject with " - " (an
-em-dash is accepted too), or pass it with --description/-d. Use "--" before a
-subject that starts with a dash.`
+em-dash is accepted too), or pass it with --description/-d, or read it from a
+file with --body-file ("-" means stdin). A body piped in on stdin is picked up
+even without the flag, as long as no other body was given.
+
+Prefer --body-file or a pipe for anything long: passing prose through argv
+means quoting every apostrophe and backtick, and the shell mangling is silent.
+
+Use "--" before a subject that starts with a dash.`
 
 // parseTodoAddArgs turns argv into a subject and description.
 //
@@ -125,10 +133,36 @@ func parseTodoAddArgs(args []string) (subject, desc string, err error) {
 			if i+1 >= len(args) {
 				return "", "", fmt.Errorf("%s needs a value", a)
 			}
+			if err = refuseSecondBody(flagged, a); err != nil {
+				return "", "", err
+			}
 			desc, flagged = args[i+1], true
 			i++
 		case strings.HasPrefix(a, "--description="):
+			if err = refuseSecondBody(flagged, "--description"); err != nil {
+				return "", "", err
+			}
 			desc, flagged = strings.TrimPrefix(a, "--description="), true
+		case a == "--body-file":
+			if i+1 >= len(args) {
+				return "", "", fmt.Errorf("%s needs a value", a)
+			}
+			if err = refuseSecondBody(flagged, a); err != nil {
+				return "", "", err
+			}
+			if desc, err = readBody(args[i+1]); err != nil {
+				return "", "", err
+			}
+			flagged = true
+			i++
+		case strings.HasPrefix(a, "--body-file="):
+			if err = refuseSecondBody(flagged, "--body-file"); err != nil {
+				return "", "", err
+			}
+			if desc, err = readBody(strings.TrimPrefix(a, "--body-file=")); err != nil {
+				return "", "", err
+			}
+			flagged = true
 		case strings.HasPrefix(a, "-") && len(a) > 1:
 			return "", "", fmt.Errorf("unknown flag %s", a)
 		default:
@@ -147,11 +181,58 @@ func finishTodoAdd(rest []string, desc string, flagged bool) (string, string, er
 	if inline != "" {
 		if flagged {
 			return "", "", fmt.Errorf(
-				"description given twice: once with --description and once after the separator")
+				"description given twice: once as a flag and once after the separator")
 		}
 		desc = inline
 	}
+	if desc == "" && !flagged {
+		desc = pipedBody()
+	}
 	return subject, desc, nil
+}
+
+// refuseSecondBody rejects a body given more than once. Silently letting the
+// last flag win would mean a body read from a file could be discarded by an
+// earlier -d with nothing to show it had happened.
+func refuseSecondBody(flagged bool, flag string) error {
+	if !flagged {
+		return nil
+	}
+	return fmt.Errorf("description given twice: %s conflicts with a body already given", flag)
+}
+
+// readBody reads a description from a file, or from stdin for "-". Passing prose
+// through argv means quoting every apostrophe and backtick, and the shell
+// mangles it silently; a file or a pipe carries the bytes untouched.
+func readBody(path string) (string, error) {
+	var (
+		data []byte
+		err  error
+	)
+	if path == "-" {
+		data, err = io.ReadAll(os.Stdin)
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return "", fmt.Errorf("--body-file %s: %w", path, err)
+	}
+	return strings.Trim(string(data), " \t\n"), nil
+}
+
+// pipedBody returns a body piped in on stdin, or "" if stdin is a terminal or
+// carries nothing. Only consulted when no body was given any other way, so an
+// add that merely happens to run with stdin attached cannot acquire one.
+func pipedBody() string {
+	info, err := os.Stdin.Stat()
+	if err != nil || info.Mode()&os.ModeCharDevice != 0 {
+		return "" // a terminal, not a pipe
+	}
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return ""
+	}
+	return strings.Trim(string(data), " \t\n")
 }
 
 func runTodoAdd(args []string) int {
