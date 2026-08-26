@@ -7,3 +7,7 @@
 
 # Claude code-review scratch — machine-local
 .claude/review/
+
+# Claude worktree sessions — EnterWorktree puts a full checkout here, and an
+# unignored one lands the whole tree back in the repo on any `git add -A`.
+.claude/worktrees/
