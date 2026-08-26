@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,12 +21,7 @@ func withTodos(repoPath string, mutate func([]Todo) []Todo) ([]Todo, error) {
 	}
 
 	path := todoFilePath(repoPath)
-	existing := ""
-	existed := false
-	if data, err := os.ReadFile(path); err == nil {
-		existing = string(data)
-		existed = true
-	}
+	existing, existed := readStore(repoPath)
 
 	todos := backfillIDs(mutate(backfillIDs(parseTodos(extractBlock(existing)))))
 	rendered := replaceBlock(existing, formatTodos(todos))
@@ -83,17 +76,15 @@ func lockTodos(repoPath string) (func(), error) {
 	return func() { f.Close() }, nil // closing the fd releases the lock
 }
 
-// todoLockPath is the lock for a repo's backlog, keyed by the resolved main
-// worktree so every worktree of a repo contends on the same file. It lives
-// outside the repo deliberately: a sidecar in docs/ would show up as untracked
-// in `git status` and would ride along with deploy rsyncs.
+// todoLockPath is the lock for a repo's backlog, keyed by the same identity as
+// the store so the two cannot disagree about which repo they serve. It lives in
+// the runtime dir: a lock should not survive a reboot, and a backlog should.
 func todoLockPath(repoPath string) string {
-	sum := sha256.Sum256([]byte(mainWorktree(repoPath)))
 	dir := os.Getenv("XDG_RUNTIME_DIR")
 	if dir == "" {
 		dir = os.TempDir()
 	}
-	return filepath.Join(dir, "hive", "todo-"+hex.EncodeToString(sum[:4])+".lock")
+	return filepath.Join(dir, "hive", "todo-"+repoKey(repoPath)+".lock")
 }
 
 // writeTodoFile replaces path atomically. The temp file shares the target's

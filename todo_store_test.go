@@ -51,7 +51,7 @@ func TestWithTodosConcurrentWritersAllSurvive(t *testing.T) {
 
 func TestWithTodosBackfillsBeforeAndAfterMutate(t *testing.T) {
 	dir := newTestRepo(t)
-	path := filepath.Join(dir, "docs", "TODO.md")
+	path := todoStorePath(dir)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestWithTodosBackfillsBeforeAndAfterMutate(t *testing.T) {
 
 func TestWithTodosPreservesSurroundingProse(t *testing.T) {
 	dir := newTestRepo(t)
-	path := filepath.Join(dir, "docs", "TODO.md")
+	path := todoStorePath(dir)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -108,11 +108,14 @@ func TestWithTodosPreservesSurroundingProse(t *testing.T) {
 
 func TestWriteTodoFileLeavesNoTempFiles(t *testing.T) {
 	dir := newTestRepo(t)
-	path := filepath.Join(dir, "TODO.md")
+	path := todoStorePath(dir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := writeTodoFile(path, "hello\n"); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(filepath.Dir(path))
 	if err != nil {
 		t.Fatal(err)
 	}

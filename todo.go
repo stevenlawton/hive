@@ -111,17 +111,11 @@ func worktreeClaim(cwd string) string {
 	return branch
 }
 
-// todoFilePath is the backlog file for a repo: docs/TODO.md if present, else a
-// root TODO.md, else docs/TODO.md (created on save).
+// todoFilePath is the backlog store for a repo. It lives under hive's data
+// directory, never in the repo: a hive-owned file in a git tree dirties every
+// deploy pre-flight and invites sessions to edit it by hand.
 func todoFilePath(repoPath string) string {
-	main := mainWorktree(repoPath)
-	if docs := filepath.Join(main, "docs", "TODO.md"); fileExists(docs) {
-		return docs
-	}
-	if root := filepath.Join(main, "TODO.md"); fileExists(root) {
-		return root
-	}
-	return filepath.Join(main, "docs", "TODO.md")
+	return todoStorePath(repoPath)
 }
 
 func fileExists(path string) bool {
@@ -130,12 +124,16 @@ func fileExists(path string) bool {
 }
 
 // loadTodos reads a repo's tasks from the TASKS block. Missing file/block → nil.
+// loadTodos reads a repo's backlog. It goes through withTodos rather than
+// reading the file directly so that a first access imports the repo's legacy
+// backlog — the first thing to touch a repo after the move is usually the
+// statusline, which only reads.
 func loadTodos(repoPath string) []Todo {
-	data, err := os.ReadFile(todoFilePath(repoPath))
+	todos, err := withTodos(repoPath, func(ts []Todo) []Todo { return ts })
 	if err != nil {
 		return nil
 	}
-	return parseTodos(extractBlock(string(data)))
+	return todos
 }
 
 // extractBlock returns the lines between the TASKS:BEGIN and TASKS:END markers
