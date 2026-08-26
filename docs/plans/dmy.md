@@ -5,6 +5,65 @@
 **Base commit:** 9f4302d64f48feaaf1d09f8e46702fa835be3bad
 **Written:** 2026-08-26
 
+---
+
+## How to test this (triage step)
+
+A demo repo is already set up at `~/repos/wt-demo` — a git repo with
+`scripts/wt-init.sh`, a gitignored `.env` in the parent, and `/.worktrees/`
+ignored. The script prints its arguments and copies `.env` in, so you can see
+exactly what ran.
+
+A binary built from this branch is at `/tmp/hive-test`.
+
+```bash
+/tmp/hive-test
+```
+
+**1. No script — nothing changes.** Create a worktree of any repo that has no
+`scripts/wt-init.sh` (hive itself qualifies). The pane should show the bare
+`env -u … claude …` line and nothing else. This is the no-op guarantee: repos
+without a script behave exactly as they did before.
+
+**2. Script present, flag off — a notice, and nothing runs.** Select
+`wt-demo`, create a worktree. The pane should show:
+
+```
+hive: scripts/wt-init.sh found but worktree init is off for wt-demo; enable it with E in the manager
+```
+
+The `WT-INIT RAN` banner must NOT appear. That is the security property — a
+script the repo controls does not execute until you say so.
+
+**3. Flag on — it runs.** Select `wt-demo`, press `E`, tab down to the
+**Worktree init** toggle (fifth one, after Yolo / Remote / Favourite /
+Collection), space to tick it, `ctrl+s` to save. Create another worktree. The
+pane should show:
+
+```
+==============================================
+WT-INIT RAN
+  parent ($1) : /home/steve/repos/wt-demo
+  branch ($2) : <the branch you typed>
+  pwd         : /home/steve/repos/wt-demo/.worktrees/<branch>
+  copied .env from parent
+==============================================
+```
+
+Then claude starts. The three things to check: `pwd` is the **new worktree**,
+`$1` is the **parent**, and `.env` is now present in the worktree despite being
+gitignored.
+
+**4. Cleanup.** `rm -rf ~/repos/wt-demo` and remove the `wt-demo` entry from
+`~/.config/hive/config.yaml` if step 3 wrote one.
+
+What this does not cover: the ten review findings below are code-reading
+findings, not reproducible failures. Two are worth knowing while you test —
+the toggle also appears on worktree rows where it silently does nothing, and
+`os.Stat` follows symlinks so the "always the parent's script" guarantee has a
+hole a hostile parent checkout could use.
+
+
 > **This is a rewrite.** The first draft chose option (a) — per-workspace YAML
 > listing files-to-copy and commands-to-run. Steve answered Q1 with **(b): a
 > repo-local `wt-init` script, no-op when absent**, and said the plan must be
