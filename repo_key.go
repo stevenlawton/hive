@@ -55,11 +55,72 @@ func normalizeRemote(raw string) string {
 	return strings.TrimSuffix(s, ".git")
 }
 
-// repoKey hashes a repo's identity into the token that names its store.
+// repoKey hashes a repo's identity into the token that names its store. The
+// result is memoised in the runtime dir: statusline runs on every Claude turn
+// and already spends two git subprocesses, so resolving the identity afresh
+// each time is a cost paid on a hot path for an answer that does not change.
 func repoKey(repoPath string) string {
+	main := mainWorktree(repoPath)
+	memo := repoKeyMemoPath(main)
+	if key, ok := readKeyMemo(memo, main); ok {
+		return key
+	}
 	id, _ := repoIdentity(repoPath)
 	sum := sha256.Sum256([]byte(id))
-	return hex.EncodeToString(sum[:4])
+	key := hex.EncodeToString(sum[:4])
+	if err := os.MkdirAll(filepath.Dir(memo), 0o700); err == nil {
+		_ = os.WriteFile(memo, []byte(key+"\n"), 0o600)
+	}
+	return key
+}
+
+// repoKeyMemoPath is where a resolved key is cached, addressed by the main
+// worktree path — the one thing already known before resolution starts.
+func repoKeyMemoPath(main string) string {
+	sum := sha256.Sum256([]byte(main))
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, "hive", "repokey-"+hex.EncodeToString(sum[:4]))
+}
+
+// readKeyMemo returns a memoised key if it is still trustworthy. A memo written
+// before the repo's identity changed would pin the old key forever and silently
+// strand the backlog under it, so git's config being written after the memo
+// invalidates it: `git remote add` is what changes a repo's identity, and that
+// is where it lands. One stat, rather than the subprocess the memo exists to
+// avoid.
+func readKeyMemo(memo, main string) (string, bool) {
+	mi, err := os.Stat(memo)
+	if err != nil {
+		return "", false
+	}
+	if ci, err := os.Stat(filepath.Join(main, ".git", "config")); err == nil && ci.ModTime().After(mi.ModTime()) {
+		return "", false
+	}
+	data, err := os.ReadFile(memo)
+	if err != nil {
+		return "", false
+	}
+	key := strings.TrimSpace(string(data))
+	if !isRepoKey(key) {
+		return "", false
+	}
+	return key, true
+}
+
+// isRepoKey guards against believing a truncated or corrupt memo.
+func isRepoKey(s string) bool {
+	if len(s) != 8 {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
 }
 
 // hiveDataDir is hive's data root. Data, not runtime: the backlog has to

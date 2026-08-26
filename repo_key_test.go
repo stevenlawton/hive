@@ -171,3 +171,68 @@ func TestTodoStorePathSharedAcrossWorktrees(t *testing.T) {
 		t.Errorf("worktrees disagree: %q vs %q", todoStorePath(dir), todoStorePath(wt))
 	}
 }
+
+// The memo must be a cache, never a source of truth: deleting it changes
+// nothing, and a corrupt one is ignored rather than believed.
+func TestRepoKeyMemoIsOnlyACache(t *testing.T) {
+	dir := newTestRepo(t)
+	gitInit(t, dir)
+	gitRemote(t, dir, "https://github.com/x/y.git")
+
+	want := repoKey(dir)
+	memo := repoKeyMemoPath(mainWorktree(dir))
+	if _, err := os.Stat(memo); err != nil {
+		t.Fatalf("first resolution wrote no memo: %v", err)
+	}
+	if got := repoKey(dir); got != want {
+		t.Errorf("memoised key = %q, want %q", got, want)
+	}
+
+	if err := os.WriteFile(memo, []byte("not-a-key!!\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := repoKey(dir); got != want {
+		t.Errorf("corrupt memo believed: got %q, want %q", got, want)
+	}
+
+	if err := os.Remove(memo); err != nil {
+		t.Fatal(err)
+	}
+	if got := repoKey(dir); got != want {
+		t.Errorf("key changed after deleting the memo: got %q, want %q", got, want)
+	}
+}
+
+// A memo written for one repo must never be served to another.
+func TestRepoKeyMemoIsPerRepo(t *testing.T) {
+	a, b := newTestRepo(t), t.TempDir()
+	gitInit(t, a)
+	gitInit(t, b)
+	gitRemote(t, a, "https://github.com/x/a.git")
+	gitRemote(t, b, "https://github.com/x/b.git")
+	if repoKey(a) == repoKey(b) {
+		t.Error("two repos shared a memoised key")
+	}
+	if repoKeyMemoPath(mainWorktree(a)) == repoKeyMemoPath(mainWorktree(b)) {
+		t.Error("two repos shared a memo path")
+	}
+}
+
+// The memo must not outlive the identity it caches. Without this, a repo that
+// gains a remote keeps resolving to its old key, the store is never adopted,
+// and the backlog is stranded under a key nothing looks for again.
+func TestRepoKeyMemoIsInvalidatedByAnIdentityChange(t *testing.T) {
+	dir := newTestRepo(t)
+	gitInit(t, dir)
+
+	before := repoKey(dir)
+	if _, err := os.Stat(repoKeyMemoPath(mainWorktree(dir))); err != nil {
+		t.Fatalf("no memo written: %v", err)
+	}
+
+	gitRemote(t, dir, "https://github.com/x/y.git")
+
+	if after := repoKey(dir); after == before {
+		t.Errorf("key %q survived a remote being added — the memo pinned it", after)
+	}
+}

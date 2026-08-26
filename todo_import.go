@@ -69,6 +69,7 @@ func readStore(repoPath string) (string, bool) {
 // Renaming means the walk costs one stat per tier once, not on every call.
 func adoptStore(repoPath string) string {
 	_, tier := repoIdentity(repoPath)
+	_ = os.Remove(repoKeyMemoPath(mainWorktree(repoPath))) // the memo pins the old key
 	want := todoStorePath(repoPath)
 	main := mainWorktree(repoPath)
 	slug := slugify(filepath.Base(main))
