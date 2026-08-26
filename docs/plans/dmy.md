@@ -1083,3 +1083,29 @@ to report it rather than claim it. It needs: (1) a worktree of a repo with no
 claude line and nothing else; (2) a scratch repo with a `wt-init.sh`, confirming
 the notice appears and the script does not run with the flag off, and that with
 the flag on the script runs with `pwd` = the new worktree and `$1` = the parent.
+
+---
+
+## Decision provenance — corrected 2026-08-26
+
+The section above headed "Decisions carried in from Steve — Settled 2026-08-26.
+Do not re-ask." has **no verifiable source**. Checked: the todo-store note
+entered via commit 96f4cbb, a bulk import of 253 tasks authored by Steve because
+he ran the import; every bus message mentioning wt-init is agent-authored; the
+section itself cites only technical reasoning and points nowhere. It should not
+have been written as a settled decision and must not be cited as one.
+
+**What Steve actually said, in conversation on 2026-08-26, verbatim:**
+
+> a standard way to init a workspace ... whatever or however - i dont care
+
+That is the whole of it. It expresses no preference between a repo-local script
+and per-workspace config, and it attaches no reasoning. The shipped design — a
+repo-local `scripts/wt-init.sh`, no-op when absent — satisfies it, so the build
+stands on this instruction rather than on the unverified section above.
+
+Nothing else in that section is confirmed. In particular the elaborate
+justification for the opt-in flag and the parent-checkout trust rule remains
+agent-authored reasoning. Both are defensible on their technical merits, which
+are argued in the contract and in Critic findings, but neither should be
+attributed to Steve.
