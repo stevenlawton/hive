@@ -1,5 +1,5 @@
 ---
-allowed-tools: Agent, Skill, Read, Write, Edit, Grep, Glob, Bash(hive:*), Bash(git:*), Bash(go:*), Bash(npm:*), Bash(make:*), Bash(php:*), Bash(composer:*), Bash(vendor/bin/pest:*), Bash(vendor/bin/phpunit:*), Bash(scripts/gate.sh:*), Bash(./scripts/gate.sh:*), mcp__hive-bus__hive_bus_intent, mcp__hive-bus__hive_bus_done, mcp__hive-bus__hive_bus_waiting, mcp__hive-bus__hive_bus_ask, mcp__hive-bus__hive_bus_reply
+allowed-tools: Agent, Skill, Read, Write, Edit, Grep, Glob, Bash(hive:*), Bash(git:*), Bash(go:*), Bash(npm:*), Bash(make:*), Bash(php:*), Bash(composer:*), Bash(vendor/bin/pest:*), Bash(vendor/bin/phpunit:*), Bash(scripts/gate.sh:*), Bash(./scripts/gate.sh:*), Bash(bash scripts/gate.sh:*), Bash(bash ./scripts/gate.sh:*), mcp__hive-bus__hive_bus_intent, mcp__hive-bus__hive_bus_done, mcp__hive-bus__hive_bus_waiting, mcp__hive-bus__hive_bus_ask, mcp__hive-bus__hive_bus_reply
 description: Run the full production line on a hive ticket — research, plan with review, TDD build, code review, then commit and close. Two human gates. Run /clear first.
 ---
 
