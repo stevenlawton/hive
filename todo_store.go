@@ -21,14 +21,17 @@ func withTodos(repoPath string, mutate func([]Todo) []Todo) ([]Todo, error) {
 	}
 
 	path := todoFilePath(repoPath)
-	existing, existed := readStore(repoPath)
+	existing, storeExists := readStore(repoPath)
 
 	todos := backfillIDs(mutate(backfillIDs(parseTodos(extractBlock(existing)))))
 	rendered := replaceBlock(existing, formatTodos(todos))
-	if stripSyncLine(rendered) == stripSyncLine(existing) {
+	// The no-op guard only applies once the store is on disk. A freshly imported
+	// backlog re-renders to the same bytes it came from, so applying it there
+	// would drop the import on the floor and re-run it on the next call.
+	if storeExists && stripSyncLine(rendered) == stripSyncLine(existing) {
 		return todos, nil
 	}
-	if !existed && len(todos) == 0 {
+	if !storeExists && len(todos) == 0 {
 		return todos, nil
 	}
 	if err := writeTodoFile(path, rendered); err != nil {

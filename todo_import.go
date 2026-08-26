@@ -33,10 +33,15 @@ func legacyBlock(path string) string {
 	return extractBlock(string(data))
 }
 
-// readStore returns a repo's store content, importing its legacy in-repo
-// backlog the first time the store is touched. The caller must already hold the
-// backlog lock: two worktrees reaching a repo for the first time at once must
-// not both import.
+// readStore returns a repo's store content and whether the store file itself
+// exists yet. The caller must already hold the backlog lock: two worktrees
+// reaching a repo for the first time at once must not both import.
+//
+// The bool is deliberately about the *file*, not the content. Imported content
+// is returned with false so the caller knows it still has to be written down —
+// an already-canonical repo file re-renders to identical bytes, and a caller
+// that skipped the write on that basis would re-import from the repo on every
+// call and never persist anything.
 //
 // Import is one-shot by construction — once the store exists it is the only
 // thing read, so a stale checkout of the old file cannot resurrect tasks.
@@ -58,7 +63,7 @@ func readStore(repoPath string) (string, bool) {
 	// stderr, not stdout: `hive todo statusline` renders stdout into the prompt.
 	fmt.Fprintf(os.Stderr, "hive: imported %d task(s) from %s into %s\n",
 		len(parseTodos(block)), src, path)
-	return replaceBlock("", block), true
+	return replaceBlock("", block), false
 }
 
 // adoptStore finds a store written under a weaker identity than the repo now

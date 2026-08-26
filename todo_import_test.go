@@ -267,3 +267,38 @@ func TestAdoptionBeatsLegacyImport(t *testing.T) {
 		t.Errorf("got %+v, want the adopted store to win", got)
 	}
 }
+
+// A repo file hive itself wrote is already canonically formatted, so importing
+// it re-renders to identical bytes. The no-op-write guard must not fire on that
+// — otherwise the import is recomputed from the repo file on every call and the
+// store is never created. Every real repo hits this; a hand-written fixture
+// does not, which is why this one is built through formatTodos.
+func TestImportOfAnAlreadyCanonicalFileIsPersisted(t *testing.T) {
+	repo := newTestRepo(t)
+	canonical := replaceBlock("", formatTodos([]Todo{
+		{Section: "Tasks", Subject: "already canonical", Description: "body", ID: "aaa"},
+	}))
+	path := filepath.Join(repo, "docs", "TODO.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(canonical), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := loadTodos(repo); len(got) != 1 || got[0].ID != "aaa" {
+		t.Fatalf("got %+v, want the one imported task", got)
+	}
+	if _, err := os.Stat(todoStorePath(repo)); err != nil {
+		t.Fatalf("the import was not persisted: %v", err)
+	}
+
+	// With the store on disk the repo file is inert, so emptying it changes
+	// nothing — proof the import really landed rather than being recomputed.
+	if err := os.WriteFile(path, []byte("# gone\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadTodos(repo); len(got) != 1 || got[0].ID != "aaa" {
+		t.Errorf("got %+v after blanking the repo file, want the task from the store", got)
+	}
+}
