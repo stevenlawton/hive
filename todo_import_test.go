@@ -193,3 +193,77 @@ func TestConcurrentFirstAccessImportsOnce(t *testing.T) {
 		t.Errorf("the imported task is not first or lost its id: %+v", got[0])
 	}
 }
+
+// A repo that gains a remote re-keys. Its backlog must follow, not be orphaned.
+func TestStoreIsAdoptedWhenTheRepoGainsARemote(t *testing.T) {
+	repo := newTestRepo(t)
+	gitInit(t, repo)
+
+	if _, err := withTodos(repo, func(ts []Todo) []Todo {
+		return addTodo(ts, "Now", "before the remote", "")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := todoStorePath(repo)
+	id := loadTodos(repo)[0].ID
+
+	gitRemote(t, repo, "https://github.com/x/y.git")
+	newPath := todoStorePath(repo)
+	if oldPath == newPath {
+		t.Fatal("fixture is wrong: adding a remote should re-key the repo")
+	}
+
+	got := loadTodos(repo)
+	if len(got) != 1 {
+		t.Fatalf("got %d tasks after re-key, want 1 — the backlog was orphaned", len(got))
+	}
+	if got[0].ID != id {
+		t.Errorf("id changed on adoption: %q -> %q", id, got[0].ID)
+	}
+	if _, err := os.Stat(newPath); err != nil {
+		t.Errorf("store was not renamed to the new key: %v", err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Error("the old store still exists — adoption copied instead of renaming")
+	}
+}
+
+// Adoption is a rename, so it happens once. A second call finds the store where
+// it now belongs and does no further work.
+func TestAdoptionIsIdempotent(t *testing.T) {
+	repo := newTestRepo(t)
+	gitInit(t, repo)
+	if _, err := withTodos(repo, func(ts []Todo) []Todo {
+		return addTodo(ts, "Now", "task", "")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	gitRemote(t, repo, "https://github.com/x/y.git")
+
+	_ = loadTodos(repo)
+	if got := adoptStore(repo); got != "" {
+		t.Errorf("adoptStore = %q on a settled repo, want \"\"", got)
+	}
+	if got := loadTodos(repo); len(got) != 1 {
+		t.Errorf("got %d tasks, want 1", len(got))
+	}
+}
+
+// A legacy repo file must not win over a store that already exists under a
+// weaker key — adoption is checked first.
+func TestAdoptionBeatsLegacyImport(t *testing.T) {
+	repo := newTestRepo(t)
+	gitInit(t, repo)
+	if _, err := withTodos(repo, func(ts []Todo) []Todo {
+		return addTodo(ts, "Now", "from the store", "")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeRepoBacklog(t, repo, "docs/TODO.md", "\n### Now\n\n- [ ] **from the repo file** <!-- id:zzz -->\n")
+	gitRemote(t, repo, "https://github.com/x/y.git")
+
+	got := loadTodos(repo)
+	if len(got) != 1 || got[0].Subject != "from the store" {
+		t.Errorf("got %+v, want the adopted store to win", got)
+	}
+}
