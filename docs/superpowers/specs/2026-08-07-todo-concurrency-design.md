@@ -58,6 +58,8 @@ typing is reverted when you hit enter.
 - Whether `TODO.md` should be git-tracked, and the churn/deploy consequences of
   it living in the main worktree's dirty tree. Real, separate, deliberately out
   of scope.
+  **Resolved 2026-08-25** by `2026-08-25-todo-store-out-of-repo-design.md`: the
+  store moved out of the repos entirely.
 - Reaping stale claims left by deleted worktrees.
 - Windows support. `syscall.Flock` is unix-only, so this makes hive formally
   unix-only; it is already effectively so, since it shells out to tmux

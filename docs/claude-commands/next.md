@@ -24,13 +24,36 @@ work gets stranded.
 ## 2. Otherwise, take the next one
 
 ```
-hive todo list | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^[a-z]{3}[[:space:]]+\[ \]' | grep -v '🔒@' | head -1
+hive todo list | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^[a-z]{3}[[:space:]]+\[ \]' | grep -v '🔒@' | sed 's/ ·ready//' | grep -v ' ·' | head -1
 ```
 
 The boxes are `[ ]` open, `[x]` done, `[-]` deferred — deferred is parked on
 purpose and sinks to the bottom, so never pick one. A `🔒@branch` suffix means
-another worktree holds it; `(yours)` means this one does. This selects the same
-item `hive todo statusline` reports as `next:` — if the two disagree, trust
+another worktree holds it; `(yours)` means this one does.
+
+A ` ·<state>` suffix is the ticket's **pipeline state**, and only two of them are
+yours to pick up:
+
+- **no tag** — unrefined. Yours: this is the ordinary case, a ticket nobody has
+  planned yet.
+- **`·ready`** — planned, and the human approved the plan. Yours.
+- **`·plan-review`** — a plan is written and waiting for a *human* to read it.
+  **Not yours.** Claiming it and starting to code jumps the gate the whole
+  pipeline exists to enforce.
+- **`·triage`** — built, waiting for a human to read the diff and the findings.
+  **Not yours.**
+
+Those two are worked in the **hive drawer**, not here: the human reads the plan
+and runs `hive todo state <id> ready`, or reads the branch and accepts it with
+`x:merge+close`.
+
+That is what the two extra filters do — strip the one state you *may* take, then
+reject anything still carrying a tag. An unrecognised future state is excluded by
+default, which is the safe direction: a state this command has never heard of is
+far more likely to be a new human queue than a new free-for-all.
+
+This mirrors `pickable()` in hive's own `todo.go`, so it selects the same item
+`hive todo statusline` reports as `next:` — if the two disagree, trust
 `statusline` and say so.
 
 Take the id from the first column and claim it:

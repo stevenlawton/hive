@@ -1,14 +1,14 @@
 ---
 allowed-tools: Bash(hive todo:*)
-description: Add / curate this repo's hive task list (the docs/TODO.md TASKS block on the main worktree) — the list shown in the hive drawer and the Claude statusline.
+description: Add / curate this repo's hive task list (stored by hive outside the repo) — the list shown in the hive drawer and the Claude statusline.
 ---
 
 # /todo
 
 Manage the local per-repo task list backed by the `hive todo` CLI. The list is
-the `TASKS:BEGIN/END` block in `docs/TODO.md` (or `TODO.md`) on the repo's
-**main worktree** (shared across all worktrees/branches); `hive todo` resolves
-it from the current directory, so just run the commands — no path handling needed.
+stored by hive outside the repo, keyed by the repo's git remote and shared
+across all its worktrees and branches; `hive todo` resolves it from the current
+directory, so just run the commands — no path handling needed.
 
 **This is the local dev list, NOT SliceWize.** Do not touch SliceWize tools here.
 
@@ -39,9 +39,10 @@ unclaimed one. `current` is an alias for `claim`.
 
 `<ref>` is the id shown in the left column of `hive todo list` (three letters,
 e.g. `kdx`); a positional number also works. Tasks are grouped under `###`
-sections and rendered `- [box] **subject** — description` in the `docs/TODO.md`
-(or `TODO.md`) `TASKS:BEGIN/END` block on the main worktree; content outside
-that block is left untouched. A description holding more than one line moves off
+sections and stored by hive under `~/.local/share/hive/todos/`, keyed by the
+repo's git remote. It is not in the repo and not in git: every worktree of a
+repo shares one backlog, and adding a task leaves the working tree untouched.
+A description holding more than one line moves off
 the task line onto continuation lines indented six spaces, with the marker left
 on the task line — so a body can carry paragraphs, its own bullets, even its own
 `###` heading without any of it being read as list structure.
@@ -71,6 +72,10 @@ Rules:
   a newline in a subject is flattened to a space, because a task line is one
   line by definition. The drawer's `e` key edits one line only and refuses a
   multi-line task, pointing you at `hive todo edit <id>` instead.
+- **Never edit the store by hand.** It is hive's file, not the repo's, and
+  nothing outside `hive todo` is expected to write it. If a verb misbehaves,
+  say so on the bus (`hive_bus_ask` / `hive_bus_intent`) and let it be fixed —
+  a hand-edit hides the bug from everyone else who is hitting it too.
 - To reword a task use `edit`, never `rm` + `add`: it rewrites in place, so the
   id and any claim survive. Peers address tasks by id, so a new one strands
   every reference to it. `edit` takes the same subject/description forms as
