@@ -77,12 +77,12 @@ Four states. Each session is in exactly one.
 | **keep going** | Turns are cheap, room to spare. Carry on. |
 | **wrap up** | Finish what is in flight; do not start anything large here. |
 | **hand off** | Continuing costs materially more than restarting. Move the work. |
-| **park** | The 5-hour quota is nearly gone. Nowhere to hand off *to*. Stop; resume after reset. |
+| **park** | The 5-hour quota is nearly gone *and* this session is cheap to resume. Stop; pick it up after reset. |
 
-`park` is an **override**, not a fourth score. It is fleet-wide and it outranks
-whatever the per-session rules concluded — see The 5-hour window below. This
-keeps the earlier decision intact: rate limits are not an input to the
-per-session calculation.
+`park` is an **override**, not a fourth score, and it is **conditional** — a big
+session near the quota must hand off rather than park. See The 5-hour window
+below. This keeps the earlier decision intact: rate limits are not an input to
+the per-session calculation, only an override on its result.
 
 ### How it is computed
 
@@ -129,10 +129,53 @@ the rebuild cost, and it is spent against the *same* exhausted quota. So when
 the window is nearly gone there is nowhere to hand off to, and the correct move
 is the opposite: finish what is in flight, or park.
 
+**The reset outlasts the cache, so resuming is not free.** Waiting for quota
+means waiting; the cache TTL is an hour at best. Whatever context the session is
+holding gets evicted and re-written in full on the first turn back, at the 2×
+write price with nothing read from cache:
+
 ```
-five_hour >= park_at_pct   ->  verdict := park, for every session
-                               reason  := "5h quota 94% — resets 14:20"
+ context     1h-TTL write   5m-TTL write   vs a warm turn
+   50,000   $       0.50   $       0.31       20x
+  250,000   $       2.50   $       1.56       20x
+  500,000   $       5.00   $       3.12       20x
+  555,680   $       5.56   $       3.47       20x
+1,000,000   $      10.00   $       6.25       20x
 ```
+
+Validated against observation, within 3% both times: a 102,441-token resume
+predicted $1.02 and cost $1.05; the four >4h resumes predicted $3.91 and
+averaged $3.95.
+
+Two consequences, and the second is the important one.
+
+**That toll is paid out of the freshly reset quota.** You wait five hours for a
+new bucket and the first thing it buys is re-reading what you already had.
+
+**So a big session must hand off *before* it parks.** Resuming a 555,680-token
+session costs $5.56; resuming a fresh 49,485-token one costs $0.49 — 11× less,
+and every turn after that is cheaper too. But a handoff itself spends tokens
+rebuilding context in the new session, and that has to come from somewhere. Let
+the quota run out first and you cannot afford to hand off either: you wait for
+the reset, pay the full resume toll, and only then move the work — paying twice.
+**Running out of quota holding a large context traps the work.** The window to
+act closes before the quota does.
+
+Hence the override is conditional:
+
+```
+time_to_reset  = resets_at - now
+cache_survives = time_to_reset < remaining cache TTL
+
+five_hour >= park_at_pct:
+    cache_survives            ->  park    "5h quota 94% — resets 14:20, cache holds"
+    ctx_pct <  handoff_at_pct ->  park    "5h quota 94% — resets 14:20, ~$0.50 to resume"
+    otherwise                 ->  hand off "5h quota 94% — hand off NOW, $5.56 to resume later"
+```
+
+`cache_survives` matters because the 5-hour limit is a **rolling** window: a
+reset can be twenty minutes away, not five hours. When it lands inside the cache
+TTL, parking costs nothing and none of the above applies.
 
 `resets_at` is a real deadline rather than a vague warning, so the reason line
 gives the clock time work can resume.
@@ -153,7 +196,13 @@ actionable part. One short clause, naming whichever rule fired:
 context 23% — turns ≈4.6× a fresh session
 context 74% — compaction likely soon
 idle 16h — cache cold, next turn ≈20× normal
+5h quota 94% — resets 14:20, cache holds
+5h quota 94% — hand off NOW, $5.56 to resume later
 ```
+
+The quota reasons are the only ones that quote money, because the resume toll is
+a real figure the payload lets us predict and it is the number that decides the
+action. Everything else stays a ratio.
 
 ### Config
 
@@ -380,7 +429,14 @@ worktree build and look at it. Everything else waits on that answer.
 1. **Thresholds are guesses.** 50/70 percent, 6×/5×, and 90% for the quota are
    reasoned from the tables above, not tuned. They want a week of real sessions.
    `park_at_pct` is the least defensible: it should probably account for how
-   fast the fleet is burning quota, not just where it stands.
+   fast the fleet is burning quota, not just where it stands — with nine
+   worktrees drawing on one bucket, 90% can become 100% in minutes, and the
+   hand-off-before-you-park window is exactly what that burn rate closes.
+4. **Predicting the resume toll needs a price table** keyed by model — the one
+   place prices re-enter a design that is otherwise all ratios. It is small
+   (input price × 2), it only feeds a displayed estimate, and the alternative is
+   saying "20× a warm turn", which is drift-free but does not tell you whether
+   to care.
 2. **Sessions with no hive pane.** A Claude session started outside hive still
    writes snapshots. Show it as unmanaged, or ignore? Leaning ignore for v1.
 3. **Subagents.** The payload carries `agent.name` when a subagent is driving.
