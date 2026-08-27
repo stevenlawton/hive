@@ -645,31 +645,46 @@ func todoRef(args []string) (string, bool) {
 func runTodoStatusline() int {
 	payload, havePayload := readStatuslinePayload()
 	cwd := payloadCwd(payload, havePayload)
-	todos := loadTodos(cwd)
-	done, active, deferred := todoProgress(todos)
-	if active+deferred == 0 {
-		return 0 // nothing to show
-	}
-	owner := worktreeClaim(cwd)
-	label := "all done ✓"
-	if cur := currentForClaim(todos, owner); cur != nil {
-		if owner != "" && cur.Claim == owner {
-			label = "▸ " + truncStr(cur.Subject, 55) // your claimed task
-		} else {
-			label = "next: " + truncStr(cur.Subject, 52) // unclaimed — up for grabs
-		}
-	}
-	out := fmt.Sprintf("%s · %d/%d", label, done, active)
-	if deferred > 0 {
-		out += fmt.Sprintf(" · %d parked", deferred)
-	}
+
+	tel := ""
 	if havePayload {
-		if suffix := statuslineTelemetry(payload); suffix != "" {
-			out += " " + suffix
-		}
+		tel = statuslineTelemetry(payload)
+	}
+
+	// The two halves are independent: an empty backlog must not hide the
+	// verdict, which is when there is least else on the line to look at.
+	out := joinStatusline(todoStatuslinePart(cwd), tel)
+	if out == "" {
+		return 0
 	}
 	fmt.Print(out)
 	return 0
+}
+
+// todoStatuslinePart is the backlog's share of the line: progress only. The
+// claimed task's subject used to lead here and no longer does — it is a long
+// string competing for width with the numbers, and the drawer already shows it.
+func todoStatuslinePart(cwd string) string {
+	todos := loadTodos(cwd)
+	done, active, deferred := todoProgress(todos)
+	if active+deferred == 0 {
+		return ""
+	}
+	out := fmt.Sprintf("%d/%d", done, active)
+	if deferred > 0 {
+		out += fmt.Sprintf(" · %d parked", deferred)
+	}
+	return out
+}
+
+func joinStatusline(parts ...string) string {
+	var kept []string
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, " · ")
 }
 
 // statuslineTelemetry collects and renders this session's verdict. It returns

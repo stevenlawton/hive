@@ -753,3 +753,22 @@ func TestFleetRateLimitStatus(t *testing.T) {
 		t.Errorf("a missing quota figure must not render as a reading, got %q", got)
 	}
 }
+
+// The telemetry half must not depend on the todo half. A repo with an empty
+// backlog used to return before anything rendered, which would have hidden the
+// verdict exactly where there is no task text to look at instead.
+func TestStatuslineJoin(t *testing.T) {
+	cases := []struct {
+		name, todo, tel, want string
+	}{
+		{"both", "2/9", "███░░ 38% · $29.14", "2/9 · ███░░ 38% · $29.14"},
+		{"no backlog", "", "███░░ 38% · $29.14", "███░░ 38% · $29.14"},
+		{"telemetry off", "2/9", "", "2/9"},
+		{"neither", "", "", ""},
+	}
+	for _, c := range cases {
+		if got := joinStatusline(c.todo, c.tel); got != c.want {
+			t.Errorf("%s: joinStatusline(%q, %q) = %q, want %q", c.name, c.todo, c.tel, got, c.want)
+		}
+	}
+}
