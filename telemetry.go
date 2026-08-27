@@ -439,7 +439,7 @@ func reasonTail(reason string) string {
 // that stopped reporting an hour ago is worse than no assertion.
 func renderTelemetrySuffix(s SessionSnapshot, colour bool) string {
 	if s.Stale {
-		out := "· ○ stale"
+		out := "○ stale"
 		if colour {
 			return colourStale + out + colourReset
 		}
@@ -448,7 +448,7 @@ func renderTelemetrySuffix(s SessionSnapshot, colour bool) string {
 
 	// No verdict label: the colour says which verdict this is, and repeating it
 	// in words only costs width that the task subject needs.
-	out := "· " + renderBar(s.CtxPct, 10) + fmt.Sprintf(" %.0f%%", s.CtxPct)
+	out := renderBar(s.CtxPct, 10) + fmt.Sprintf(" %.0f%%", s.CtxPct)
 
 	// Cost always shows. "Is this costing a lot" is the question underneath the
 	// whole feature, and a wrap-up session is exactly when you want the figure.

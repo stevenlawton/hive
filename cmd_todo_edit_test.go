@@ -188,7 +188,10 @@ func TestStatuslineImportNoticeGoesToStderr(t *testing.T) {
 	if !strings.Contains(errOut.String(), "imported") {
 		t.Errorf("the import notice did not reach stderr:\n%s", errOut.String())
 	}
-	if !strings.Contains(out.String(), "a task") {
+	// Progress, not the task subject: the statusline stopped leading with the
+	// claimed task's text. What this test is actually about is that the import
+	// notice goes to stderr while the line itself goes to stdout.
+	if !strings.Contains(out.String(), "0/1") {
 		t.Errorf("stdout did not render the status line:\n%s", out.String())
 	}
 }
