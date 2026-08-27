@@ -483,19 +483,45 @@ func renderTelemetrySuffix(s SessionSnapshot, colour bool) string {
 // A session inside a worktree belongs to that worktree's pane — hive names
 // those after the worktree directory, not the parent repo.
 func payloadTmuxSession(p statuslinePayload) string {
-	name := ""
-	switch {
-	case p.Worktree != nil && p.Worktree.Name != "":
-		name = p.Worktree.Name
-	case p.Workspace.ProjectDir != "":
-		name = filepath.Base(p.Workspace.ProjectDir)
-	case p.Cwd != "":
-		name = filepath.Base(p.Cwd)
+	dir := p.Workspace.ProjectDir
+	if dir == "" {
+		dir = p.Cwd
 	}
-	if name == "" || name == "." || name == string(filepath.Separator) {
+	if dir == "" {
 		return ""
 	}
-	return TmuxSessionName(name, false)
+	if parent, branch, ok := splitWorktreePath(dir); ok {
+		return TmuxSessionName(parent+"-wt-"+branch, false)
+	}
+	base := filepath.Base(dir)
+	if base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return TmuxSessionName(base, false)
+}
+
+// splitWorktreePath recognises hive's worktree layout, <repo>/.worktrees/<branch>,
+// and returns the parts its session name is built from.
+//
+// Deriving the name from the directory basename instead produced "hive-split-2"
+// where tmux had "hive-workspace-wt-split-2", so no worktree session ever
+// matched a pane. Path parsing keeps this off the hot path: the statusline runs
+// on every refresh and must not shell out to git to work out where it is.
+func splitWorktreePath(dir string) (parent, branch string, ok bool) {
+	for _, marker := range []string{"/.worktrees/", "/.claude/worktrees/"} {
+		i := strings.Index(dir, marker)
+		if i < 0 {
+			continue
+		}
+		parent = filepath.Base(dir[:i])
+		rest := dir[i+len(marker):]
+		if j := strings.IndexByte(rest, '/'); j >= 0 {
+			rest = rest[:j] // a sub-directory still belongs to its worktree
+		}
+		branch = rest
+		return parent, branch, parent != "" && parent != "." && branch != ""
+	}
+	return "", "", false
 }
 
 // collectTelemetry folds the payload into this session's snapshot and persists
