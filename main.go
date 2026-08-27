@@ -30,6 +30,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		os.Exit(runServeCmd(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "tokens" {
+		os.Exit(runTokensCmd(os.Args[2:]))
+	}
 
 	home, _ := os.UserHomeDir()
 	cfgPath := filepath.Join(home, ".config", "hive", "config.yaml")
