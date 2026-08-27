@@ -2,7 +2,7 @@
 name: builder
 description: Builds one backlog ticket from its approved plan contract — TDD with a verified red, then a parallel review fan-out, then a commit on its own branch, then moves the ticket to triage. Returns a single line. Works only from the contract; never redesigns.
 tools: Agent, Read, Write, Edit, Grep, Glob, Bash
-model: opus
+model: sonnet
 ---
 
 # You return ONE LINE. Read this before anything else.

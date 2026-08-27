@@ -57,7 +57,7 @@ Set per agent in frontmatter. `effort` accepts `medium`, `high`, `xhigh`.
 | `go-reviewer`, `php-reviewer` | opus | where the non-obvious findings come from |
 | `plan-critic` | opus | adversarial reasoning about a design |
 | `planner` | opus, `effort: medium` | full capability, less deliberation — its contract is what every later agent executes |
-| `builder` | opus | orchestrates; the thinking is delegated, so this is the weakest case for opus |
+| `builder` | sonnet | orchestrates; the thinking is delegated to test-writer, implementer and the reviewers |
 | `implementer` | sonnet | executes an already-detailed contract, and a reviewer checks it |
 | `test-writer` | sonnet | note: reproduce mode is the risky half — a test that passes against the bug certifies it |
 | `context-loader` | sonnet | token-heavy digest work; exactly what you do not want on opus |
