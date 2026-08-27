@@ -141,7 +141,7 @@ func quotaOverride(s SessionSnapshot, cfg TelemetryConfig, now time.Time) (strin
 	if !s.HasFiveHour || s.FiveHourPct < cfg.ParkAtPct {
 		return "", "", false
 	}
-	head := fmt.Sprintf("5h quota %.0f%%", s.FiveHourPct)
+	head := fmt.Sprintf("5h %.0f%%", s.FiveHourPct)
 	clock := ""
 	resetsIn := time.Duration(0)
 	if s.FiveHourResetsAt > 0 {
@@ -156,19 +156,12 @@ func quotaOverride(s SessionSnapshot, cfg TelemetryConfig, now time.Time) (strin
 		return VerdictPark, head + clock + ", cache holds", true
 	}
 
-	cost, priced := resumeCostUSD(s.Model, s.CtxTokens)
 	if s.CtxPct < cfg.HandoffAtPct {
-		r := head + clock
-		if priced {
-			r += fmt.Sprintf(", ~$%.2f to resume", cost)
-		}
-		return VerdictPark, r, true
+		return VerdictPark, head + clock, true
 	}
-	r := head + " — hand off NOW"
-	if priced {
-		r += fmt.Sprintf(", $%.2f to resume later", cost)
-	}
-	return VerdictHandOff, r, true
+	return VerdictHandOff,
+		fmt.Sprintf("%s — hand off now, ≈%d× to resume later", head, resumeMultiple),
+		true
 }
 
 func cacheCold(s SessionSnapshot, cfg TelemetryConfig, now time.Time) bool {
@@ -205,41 +198,19 @@ func roundDuration(d time.Duration) string {
 	}
 }
 
-// ------------------------------------------------------------- resume pricing
+// -------------------------------------------------------- the resume penalty
 
-// inputPricePerMTok is the only place money enters. Cache writes cost 2x input
-// at the 1-hour TTL, and a resume after the cache has gone means the entire
-// window is re-written at that rate with nothing read back.
+// resumeMultiple is what the first turn back costs after the cache has gone,
+// relative to a warm turn: the whole window is re-written at the cache-write
+// price instead of read at the cache-read price.
 //
-// Prefix-matched so a dated or suffixed model id still prices. An unknown model
-// reports not-ok rather than guessing — a wrong figure here would drive the
-// wrong action.
-var inputPricePerMTok = []struct {
-	prefix string
-	usd    float64
-}{
-	{"claude-fable-5", 10.0},
-	{"claude-mythos-5", 10.0},
-	{"claude-opus-5", 5.0},
-	{"claude-opus-4", 5.0},
-	{"claude-sonnet-5", 2.0},
-	{"claude-sonnet-4-6", 3.0},
-	{"claude-haiku-4-5", 1.0},
-}
-
-const cacheWrite1hMultiple = 2.0
-
-func resumeCostUSD(model string, tokens int) (float64, bool) {
-	if tokens <= 0 {
-		return 0, false
-	}
-	for _, p := range inputPricePerMTok {
-		if strings.HasPrefix(model, p.prefix) {
-			return float64(tokens) * p.usd * cacheWrite1hMultiple / 1e6, true
-		}
-	}
-	return 0, false
-}
+// Deliberately a ratio and not a currency figure. A price table put one real
+// session at $194.78 when Claude's own total_cost_usd said $93.38 — 2.09x out,
+// the cache-read term alone exceeding the true total — so absolute figures
+// derived from a table cannot be trusted here. The ratio survives that: a
+// uniform mispricing cancels top and bottom. Displayed cost still comes from
+// Claude directly and is unaffected.
+const resumeMultiple = 20
 
 // ----------------------------------------------------------------- rendering
 
@@ -428,26 +399,15 @@ func updateSnapshot(prev SessionSnapshot, p statuslinePayload, tmuxSession strin
 // ------------------------------------------------------------------ rendering
 
 const (
-	colourKeepGoing = "[38;5;108m"
-	colourWrapUp    = "[38;5;179m"
-	colourHandOff   = "[38;5;167m"
-	colourPark      = "[38;5;110m"
-	colourStale     = "[38;5;244m"
-	colourReset     = "[0m"
+	colourKeepGoing = "\x1b[38;5;108m"
+	// 179 was a light goldenrod and glared on a dark terminal. This line is on
+	// screen permanently, so the colour has to be readable, not loud.
+	colourWrapUp  = "\x1b[38;5;137m"
+	colourHandOff = "\x1b[38;5;167m"
+	colourPark    = "\x1b[38;5;110m"
+	colourStale   = "\x1b[38;5;244m"
+	colourReset   = "\x1b[0m"
 )
-
-func verdictLabel(v string) string {
-	switch v {
-	case VerdictWrapUp:
-		return "wrap up"
-	case VerdictHandOff:
-		return "hand off"
-	case VerdictPark:
-		return "park"
-	default:
-		return "keep going"
-	}
-}
 
 func verdictColour(v string) string {
 	switch v {
@@ -486,16 +446,19 @@ func renderTelemetrySuffix(s SessionSnapshot, colour bool) string {
 		return out
 	}
 
-	out := "· ● " + verdictLabel(s.Verdict) +
-		" · " + renderBar(s.CtxPct, 10) +
-		fmt.Sprintf(" %.0f%%", s.CtxPct)
+	// No verdict label: the colour says which verdict this is, and repeating it
+	// in words only costs width that the task subject needs.
+	out := "· " + renderBar(s.CtxPct, 10) + fmt.Sprintf(" %.0f%%", s.CtxPct)
 
-	if s.Verdict == VerdictKeepGoing {
-		if s.CostUSD > 0 {
-			out += fmt.Sprintf(" · $%.2f", s.CostUSD)
+	// Cost always shows. "Is this costing a lot" is the question underneath the
+	// whole feature, and a wrap-up session is exactly when you want the figure.
+	if s.CostUSD > 0 {
+		out += fmt.Sprintf(" · $%.2f", s.CostUSD)
+	}
+	if s.Verdict != VerdictKeepGoing {
+		if tail := reasonTail(s.Reason); tail != "" {
+			out += " · " + tail
 		}
-	} else if tail := reasonTail(s.Reason); tail != "" {
-		out += " · " + tail
 	}
 
 	if colour {

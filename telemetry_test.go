@@ -116,7 +116,7 @@ func TestQuotaNearLimitBigSessionHandsOffRatherThanParks(t *testing.T) {
 	if v != VerdictHandOff {
 		t.Fatalf("big session at 94%% quota: got %q (%q), want hand_off", v, reason)
 	}
-	if !strings.Contains(reason, "quota") {
+	if !strings.Contains(reason, "5h") {
 		t.Errorf("reason %q should name the quota as the driver", reason)
 	}
 }
@@ -182,17 +182,34 @@ func TestVerdictWithoutGrowthBaseline(t *testing.T) {
 	}
 }
 
-func TestResumeCostMatchesObservation(t *testing.T) {
-	// Measured: a 102,441-token resume cost $1.05. Predicted at 2x input.
-	got, ok := resumeCostUSD("claude-opus-5", 102441)
-	if !ok {
-		t.Fatal("opus 5 should be priced")
+// The resume penalty is quoted as a MULTIPLE, never in currency.
+//
+// A price table put the cost of a real session at $194.78 when Claude's own
+// total_cost_usd for it was $93.38 — 2.09x out, with the cache-read term alone
+// exceeding the true total. The earlier "validation" of that table compared a
+// prediction against an observation computed from the same table, which proved
+// arithmetic consistency and nothing else.
+//
+// The RATIO survives that error where the absolute does not: it is
+// write-price over read-price, so any uniform mispricing cancels.
+func TestResumePenaltyIsAMultipleNotMoney(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	s := healthySnapshot(now)
+	s.CtxPct = 74
+	s.CtxTokens = 555680
+	s.HasFiveHour = true
+	s.FiveHourPct = 94
+	s.FiveHourResetsAt = now.Add(4 * time.Hour).Unix()
+
+	v, reason := computeVerdict(s, testTelemetryConfig(), now)
+	if v != VerdictHandOff {
+		t.Fatalf("got %q, want hand_off", v)
 	}
-	if got < 0.95 || got > 1.15 {
-		t.Errorf("resumeCostUSD = %.2f, want ~1.02 (observed 1.05)", got)
+	if strings.Contains(reason, "$") {
+		t.Errorf("reason %q must not quote money we cannot verify", reason)
 	}
-	if _, ok := resumeCostUSD("some-future-model", 100000); ok {
-		t.Error("an unpriced model must report not-ok rather than guess")
+	if !strings.Contains(reason, "×") {
+		t.Errorf("reason %q should quote the resume penalty as a multiple", reason)
 	}
 }
 
@@ -367,13 +384,20 @@ func TestUpdateSnapshotFirstSightSetsTheBaseline(t *testing.T) {
 	}
 }
 
-func TestRenderTelemetrySuffix(t *testing.T) {
+// The verdict is carried by colour, not by a word. Spelling it out as well
+// just takes width from a line that has to share space with the task subject.
+func TestRenderTelemetrySuffixHasNoVerdictLabel(t *testing.T) {
 	s := SessionSnapshot{CtxPct: 22.8, CostUSD: 25.07, Verdict: VerdictKeepGoing,
 		Reason: "context 23% — turns ≈4.6× a fresh session"}
 	got := renderTelemetrySuffix(s, false)
-	for _, want := range []string{"keep going", "23%", "$25.07"} {
+	for _, want := range []string{"23%", "$25.07"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("render = %q, want it to contain %q", got, want)
+		}
+	}
+	for _, unwanted := range []string{"keep going", "wrap up", "hand off"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("render = %q, should not spell out the verdict", got)
 		}
 	}
 	if strings.Contains(got, "\x1b[") {
