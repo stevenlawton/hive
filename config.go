@@ -35,6 +35,18 @@ type WorkspaceConfig struct {
 	Remote       bool   `yaml:"remote,omitempty"`
 	Favourite    bool   `yaml:"favourite,omitempty"`
 	Collection   bool   `yaml:"collection,omitempty"`
+
+	BuildConcurrency int `yaml:"build_concurrency,omitempty"` // parallel /build workers; 0 = default
+}
+
+// buildConcurrency caps how many /build workers run at once. Each one holds a
+// worktree and a branch, and every one of them lands in the triage queue, so the
+// default is deliberately small.
+func (w WorkspaceConfig) buildConcurrency() int {
+	if w.BuildConcurrency > 0 {
+		return w.BuildConcurrency
+	}
+	return 3
 }
 
 type Config struct {

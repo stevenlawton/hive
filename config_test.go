@@ -202,3 +202,17 @@ func TestApplyWorkspaceConfig_WorktreeInit(t *testing.T) {
 		t.Errorf("unconfigured workspace: repo.WorktreeInit = true, want false")
 	}
 }
+
+// Concurrent builds each hold a worktree, a branch and a slot in the human's
+// triage queue, so an unset cap must be small rather than unlimited.
+func TestBuildConcurrencyDefaultsToThree(t *testing.T) {
+	if got := (WorkspaceConfig{}).buildConcurrency(); got != 3 {
+		t.Errorf("default: got %d, want 3", got)
+	}
+	if got := (WorkspaceConfig{BuildConcurrency: 5}).buildConcurrency(); got != 5 {
+		t.Errorf("configured: got %d, want 5", got)
+	}
+	if got := (WorkspaceConfig{BuildConcurrency: -1}).buildConcurrency(); got != 3 {
+		t.Errorf("negative should fall back to the default, got %d", got)
+	}
+}

@@ -49,6 +49,10 @@ workspaces:
                                  # worktree before claude starts. Off by default:
                                  # it executes a script the repo controls, so it
                                  # is opt-in per workspace. Toggle it with E.
+    # build_concurrency: 3       # How many /build workers run at once. Each holds
+                                 # a worktree and a branch, and each one lands in
+                                 # your triage queue — so raise it only as fast as
+                                 # you are willing to read the results.
   another-app:
     name: "Another App"
     short: "AA"
