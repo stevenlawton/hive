@@ -80,6 +80,11 @@ type SessionSnapshot struct {
 	// cold; a change in token count can.
 	LastChangeAt time.Time `json:"last_change_at"`
 
+	// CostSamples is a short history, because a burn rate needs a span. The
+	// statusline fires on activity rather than on a timer, so successive samples
+	// can be milliseconds or hours apart.
+	CostSamples []costSample `json:"cost_samples,omitempty"`
+
 	Verdict string `json:"verdict"`
 	Reason  string `json:"reason"`
 
@@ -392,6 +397,7 @@ func updateSnapshot(prev SessionSnapshot, p statuslinePayload, tmuxSession strin
 		s.FiveHourResetsAt = fh.ResetsAt
 	}
 
+	s.CostSamples = appendCostSample(prev.CostSamples, s.CostUSD, now)
 	s.Growth = s.growth()
 	return s
 }
@@ -454,6 +460,9 @@ func renderTelemetrySuffix(s SessionSnapshot, colour bool) string {
 	// whole feature, and a wrap-up session is exactly when you want the figure.
 	if s.CostUSD > 0 {
 		out += fmt.Sprintf(" · $%.2f", s.CostUSD)
+	}
+	if rate, ok := burnRateUSDPerHour(s); ok && rate > 0 {
+		out += fmt.Sprintf(" · $%.2f/h", rate)
 	}
 	if s.Verdict != VerdictKeepGoing {
 		if tail := reasonTail(s.Reason); tail != "" {
@@ -634,7 +643,7 @@ func (m model) applySessionVerdicts(now time.Time) {
 		tab.Tone = tabToneForVerdict(s.Verdict, s.Stale)
 	}
 
-	m.workspace.TabBar.RightStatus = fleetRateLimitStatus(snaps, m.cfg.Telemetry, now)
+	m.workspace.TabBar.RightStatus = fleetStatus(snaps, m.cfg.Telemetry, now)
 
 	// Splits key on the tmux session name directly, so a split showing another
 	// repo's session gets that session's verdict rather than its tab's.
@@ -705,6 +714,22 @@ func (m model) attachWindowStyle(sessionName string) func() {
 //
 // It stays silent below the floor: a number that is always on screen stops
 // being read long before it starts mattering.
+// fleetStatus is what is true of the machine rather than of any one session:
+// what it is all costing per hour, and how much of the shared quota is left.
+func fleetStatus(snaps map[string]SessionSnapshot, cfg TelemetryConfig, now time.Time) string {
+	var parts []string
+	if rate, n := fleetBurnRateUSDPerHour(snaps); n > 0 && rate > 0 {
+		parts = append(parts, fmt.Sprintf("$%.2f/h", rate))
+	}
+	if q := fleetRateLimitStatus(snaps, cfg, now); q != "" {
+		parts = append(parts, strings.TrimSpace(q))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, " · ") + " "
+}
+
 func fleetRateLimitStatus(snaps map[string]SessionSnapshot, cfg TelemetryConfig, now time.Time) string {
 	var best SessionSnapshot
 	found := false
@@ -724,4 +749,59 @@ func fleetRateLimitStatus(snaps map[string]SessionSnapshot, cfg TelemetryConfig,
 		out += " · resets " + time.Unix(best.FiveHourResetsAt, 0).Local().Format("15:04")
 	}
 	return out + " "
+}
+
+const costSampleWindow = 8
+
+type costSample struct {
+	At      time.Time `json:"at"`
+	CostUSD float64   `json:"cost_usd"`
+}
+
+// minBurnSpan is how much elapsed time a rate needs to mean anything. The
+// statusline fires on activity, so two samples can land milliseconds apart and
+// dividing by that span reports an absurd figure.
+const minBurnSpan = 60 * time.Second
+
+func appendCostSample(in []costSample, cost float64, at time.Time) []costSample {
+	out := append(in, costSample{At: at, CostUSD: cost})
+	if len(out) > costSampleWindow {
+		out = out[len(out)-costSampleWindow:]
+	}
+	return out
+}
+
+// burnRateUSDPerHour is dollars per hour over the samples held, measured from
+// the oldest to the newest rather than the last pair — a single pair is at the
+// mercy of whenever the statusline happened to fire.
+func burnRateUSDPerHour(s SessionSnapshot) (float64, bool) {
+	if len(s.CostSamples) < 2 {
+		return 0, false
+	}
+	first, last := s.CostSamples[0], s.CostSamples[len(s.CostSamples)-1]
+	span := last.At.Sub(first.At)
+	if span < minBurnSpan {
+		return 0, false
+	}
+	spent := last.CostUSD - first.CostUSD
+	// Cost only ever rises within a run. A drop means the session restarted and
+	// its counter reset, so these samples describe two different runs.
+	if spent < 0 {
+		return 0, false
+	}
+	return spent / span.Hours(), true
+}
+
+// fleetBurnRateUSDPerHour is what the machine as a whole is spending per hour.
+// Sessions without enough of a span contribute nothing rather than distorting
+// the total; the count says how many actually fed it.
+func fleetBurnRateUSDPerHour(snaps map[string]SessionSnapshot) (float64, int) {
+	total, n := 0.0, 0
+	for _, s := range snaps {
+		if r, ok := burnRateUSDPerHour(s); ok {
+			total += r
+			n++
+		}
+	}
+	return total, n
 }

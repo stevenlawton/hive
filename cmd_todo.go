@@ -39,13 +39,15 @@ func runTodoCmd(args []string) int {
 		return runTodoState(args[1:])
 	case "reap":
 		return runTodoReap(args[1:])
+	case "cost", "spend":
+		return runTodoCost(args[1:])
 	case "normalize", "resave":
 		return runTodoNormalize()
 	case "rm", "del", "delete":
 		return runTodoRm(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown todo subcommand: %s\n", args[0])
-		fmt.Fprintln(os.Stderr, "usage: hive todo [list|add|edit|show|done|reopen|current|defer|state|reap|rm|statusline]")
+		fmt.Fprintln(os.Stderr, "usage: hive todo [list|add|edit|show|done|reopen|current|defer|state|cost|reap|rm|statusline]")
 		return 1
 	}
 }
@@ -360,7 +362,7 @@ func runTodoCurrent(args []string) int {
 		return 1
 	}
 	var held string
-	rc := mutateOne(cwd, ref, func(ts []Todo, i int) ([]Todo, string) {
+	rc := mutateOneVerb(cwd, "claim", ref, func(ts []Todo, i int) ([]Todo, string) {
 		out, changed := claimTodo(ts, i, owner)
 		if !changed {
 			held = ts[i].Claim
@@ -433,7 +435,7 @@ func runTodoState(args []string) int {
 	}
 
 	var refused string
-	rc := mutateOne(todoCwd(), ref, func(ts []Todo, i int) ([]Todo, string) {
+	rc := mutateOneVerb(todoCwd(), "state", ref, func(ts []Todo, i int) ([]Todo, string) {
 		if stateRank(want) < stateRank(ts[i].State) && strings.TrimSpace(note) == "" {
 			refused = fmt.Sprintf("moving %s back to %q needs --note explaining why", ts[i].ID, want)
 			return ts, ""
@@ -597,6 +599,12 @@ func indentBody(s string) string {
 // from an earlier `list` may point at a different task by now. apply returns the
 // message to print, or "" when it declined and reported the reason itself.
 func mutateOne(cwd, ref string, apply func([]Todo, int) ([]Todo, string)) int {
+	return mutateOneVerb(cwd, "", ref, apply)
+}
+
+// mutateOneVerb is mutateOne with the verb named, so ticket attribution can
+// tell working from looking.
+func mutateOneVerb(cwd, verb, ref string, apply func([]Todo, int) ([]Todo, string)) int {
 	var msg, refErr string
 	var missing bool
 	_, err := withTodos(cwd, func(ts []Todo) []Todo {
@@ -604,6 +612,13 @@ func mutateOne(cwd, ref string, apply func([]Todo, int) ([]Todo, string)) int {
 		if !ok {
 			missing, refErr = true, todoRefError(ts, ref)
 			return ts
+		}
+		// Committing to a ticket is the moment hive learns which ticket the
+		// caller is working, and where. Pipeline agents claim and move state as
+		// a matter of course, so their sub-agents' spend attributes without any
+		// pipeline change — they inherit the directory.
+		if verbCommitsToTicket(verb) {
+			recordTicketCwd(ts[i].ID, cwd, time.Now())
 		}
 		out, m := apply(ts, i)
 		msg = m
