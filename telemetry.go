@@ -27,12 +27,18 @@ const (
 )
 
 type TelemetryConfig struct {
-	Enabled           bool    `yaml:"enabled"`
-	WrapupAtPct       float64 `yaml:"wrapup_at_pct"`
-	HandoffAtPct      float64 `yaml:"handoff_at_pct"`
-	WrapupGrowth      float64 `yaml:"wrapup_growth"`
-	ColdGrowth        float64 `yaml:"cold_growth"`
-	ParkAtPct         float64 `yaml:"park_at_pct"`
+	Enabled      bool    `yaml:"enabled"`
+	WrapupAtPct  float64 `yaml:"wrapup_at_pct"`
+	HandoffAtPct float64 `yaml:"handoff_at_pct"`
+	WrapupGrowth float64 `yaml:"wrapup_growth"`
+	ColdGrowth   float64 `yaml:"cold_growth"`
+	ParkAtPct    float64 `yaml:"park_at_pct"`
+
+	// Spend thresholds, in dollars. Zero disables each, so a config written
+	// before these keys existed keeps its old verdicts exactly.
+	WrapupAtCostUSD  float64 `yaml:"wrapup_at_cost_usd"`
+	HandoffAtCostUSD float64 `yaml:"handoff_at_cost_usd"`
+
 	CacheTTLMinutes   int     `yaml:"cache_ttl_minutes"`
 	RateLimitFloorPct float64 `yaml:"rate_limit_floor_pct"`
 	StaleAfterSeconds int     `yaml:"stale_after_seconds"`
@@ -47,6 +53,8 @@ func defaultTelemetryConfig() TelemetryConfig {
 		WrapupGrowth:      6,
 		ColdGrowth:        5,
 		ParkAtPct:         90,
+		WrapupAtCostUSD:   50,
+		HandoffAtCostUSD:  120,
 		RateLimitFloorPct: 60,
 		CacheTTLMinutes:   60,
 		StaleAfterSeconds: 300,
@@ -118,6 +126,15 @@ func perSessionVerdict(s SessionSnapshot, cfg TelemetryConfig, now time.Time) (s
 	if s.CtxPct >= cfg.HandoffAtPct {
 		return VerdictHandOff, fmt.Sprintf("context %.0f%% — compaction likely soon", s.CtxPct)
 	}
+	// Spend is the only signal here that counts turns. CtxPct and growth both
+	// describe the window as it stands, so a session holding steady at 46% for
+	// 250 turns re-reads that window 250 times and looks identical to one that
+	// reached 46% on turn 20 and stopped — at roughly twelve times the cost.
+	// CostUSD is Claude's own total_cost_usd: cumulative, and inclusive of
+	// subagent spend, so it also sees a session whose work happens elsewhere.
+	if cfg.HandoffAtCostUSD > 0 && s.CostUSD >= cfg.HandoffAtCostUSD {
+		return VerdictHandOff, fmt.Sprintf("$%.0f spent — a fresh session re-reads none of it", s.CostUSD)
+	}
 	// A session left past the cache TTL has had its window evicted: the next
 	// turn re-writes the lot at the 2x price instead of reading it at 0.1x.
 	// Only worth acting on when the window is big enough for that to hurt.
@@ -130,6 +147,9 @@ func perSessionVerdict(s SessionSnapshot, cfg TelemetryConfig, now time.Time) (s
 	}
 	if g >= cfg.WrapupGrowth {
 		return VerdictWrapUp, fmt.Sprintf("turns ≈%.1f× a fresh session", g)
+	}
+	if cfg.WrapupAtCostUSD > 0 && s.CostUSD >= cfg.WrapupAtCostUSD {
+		return VerdictWrapUp, fmt.Sprintf("$%.0f spent%s", s.CostUSD, growthClause(g))
 	}
 	return VerdictKeepGoing, fmt.Sprintf("context %.0f%%%s", s.CtxPct, growthClause(g))
 }
