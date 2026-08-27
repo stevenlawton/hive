@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Steve, 2026-08-26: "im not gunna nit - either i want stuff changed - or not."
@@ -142,5 +145,38 @@ func TestReviewDocNamesTheBuildItJudged(t *testing.T) {
 		if !strings.Contains(doc, want) {
 			t.Errorf("build review missing %q:\n%s", want, doc)
 		}
+	}
+}
+
+// The web UI failing to start is the one failure nobody sees: stderr is behind
+// the TUI's alt-screen, so a clash has to reach the bus or it reaches nobody.
+func TestServeAlongsideReportsAPortAlreadyInUse(t *testing.T) {
+	squatter, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("could not take a port to squat: %v", err)
+	}
+	defer squatter.Close()
+	port := squatter.Addr().(*net.TCPAddr).Port
+
+	var head, body string
+	restore := busAnnounce
+	busAnnounce = func(h, b string) { head, body = h, b }
+	defer func() { busAnnounce = restore }()
+
+	done := make(chan struct{})
+	go func() { serveAlongside(port); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("serveAlongside hung on a port already in use instead of reporting it")
+	}
+	if head == "" {
+		t.Fatal("a port clash left the web UI dead and said nothing on the bus")
+	}
+	if !strings.Contains(head, fmt.Sprint(port)) {
+		t.Errorf("the announcement does not name the port that is blocked: %q", head)
+	}
+	if !strings.Contains(body, "ss -ltnp") {
+		t.Errorf("the announcement does not say how to find the squatter: %q", body)
 	}
 }
