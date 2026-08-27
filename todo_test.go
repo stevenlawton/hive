@@ -621,3 +621,70 @@ func TestAddTodoFlattensSubject(t *testing.T) {
 		t.Errorf("round-trip produced %d tasks, want 1: %+v", len(got), got)
 	}
 }
+
+func refFixture() []Todo {
+	return []Todo{
+		{ID: "kdx", Subject: "hive web: read the backlog from a phone"},
+		{ID: "mfp", Subject: "web"},
+		{ID: "qrz", Subject: "refuse two bodies"},
+	}
+}
+
+func TestResolveTodoRefBySubject(t *testing.T) {
+	cases := []struct {
+		arg  string
+		want int
+	}{
+		{"hive web", 0},          // unique substring
+		{"BACKLOG", 0},           // case-insensitive
+		{"bodies", 2},            // matches mid-subject
+		{"web", 1},               // an exact subject beats a substring of another
+		{"  bodies  ", 2},        // trimmed like every other ref
+		{"refuse two bodies", 2}, // the whole subject
+	}
+	for _, c := range cases {
+		got, ok := resolveTodoRef(refFixture(), c.arg)
+		if !ok || got != c.want {
+			t.Errorf("resolveTodoRef(%q) = %d,%v; want %d,true", c.arg, got, ok, c.want)
+		}
+	}
+}
+
+func TestResolveTodoRefAmbiguousSubjectDoesNotGuess(t *testing.T) {
+	if i, ok := resolveTodoRef(refFixture(), "e"); ok {
+		t.Errorf("a subject fragment matching every task resolved to %d; want no match", i)
+	}
+}
+
+func TestResolveTodoRefIDBeatsSubject(t *testing.T) {
+	todos := []Todo{
+		{ID: "kdx", Subject: "unrelated"},
+		{ID: "mfp", Subject: "the kdx rewrite"},
+	}
+	if got, ok := resolveTodoRef(todos, "kdx"); !ok || got != 0 {
+		t.Errorf("resolveTodoRef(kdx) = %d,%v; want 0,true (the id, not the subject)", got, ok)
+	}
+}
+
+func TestResolveTodoRefPositionBeatsSubject(t *testing.T) {
+	todos := []Todo{
+		{ID: "kdx", Subject: "2 for the road"},
+		{ID: "mfp", Subject: "beta"},
+	}
+	if got, ok := resolveTodoRef(todos, "2"); !ok || got != 1 {
+		t.Errorf("resolveTodoRef(2) = %d,%v; want 1,true (the position, not the subject)", got, ok)
+	}
+}
+
+func TestSubjectMatchesEmptyRefMatchesNothing(t *testing.T) {
+	if got := subjectMatches(refFixture(), ""); len(got) != 0 {
+		t.Errorf("subjectMatches(\"\") = %v; want none", got)
+	}
+}
+
+func TestSubjectMatchesListsEveryCandidate(t *testing.T) {
+	got := subjectMatches(refFixture(), "web")
+	if len(got) != 2 || got[0] != 0 || got[1] != 1 {
+		t.Errorf("subjectMatches(web) = %v; want [0 1]", got)
+	}
+}

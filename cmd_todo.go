@@ -540,10 +540,11 @@ func runTodoShow(args []string) int {
 		ref = args[0]
 	}
 
-	t, ok := resolveTodoForShow(loadTodos(cwd), worktreeClaim(cwd), ref)
+	todos := loadTodos(cwd)
+	t, ok := resolveTodoForShow(todos, worktreeClaim(cwd), ref)
 	if !ok {
 		if ref != "" {
-			fmt.Fprintf(os.Stderr, "no task %q — run: hive todo list\n", ref)
+			fmt.Fprintf(os.Stderr, "%s\n", todoRefError(todos, ref))
 			return 1
 		}
 		fmt.Println("(no task claimed in this worktree — run: hive todo claim <ref>)")
@@ -574,12 +575,12 @@ func indentBody(s string) string {
 // from an earlier `list` may point at a different task by now. apply returns the
 // message to print, or "" when it declined and reported the reason itself.
 func mutateOne(cwd, ref string, apply func([]Todo, int) ([]Todo, string)) int {
-	var msg string
+	var msg, refErr string
 	var missing bool
 	_, err := withTodos(cwd, func(ts []Todo) []Todo {
 		i, ok := resolveTodoRef(ts, ref)
 		if !ok {
-			missing = true
+			missing, refErr = true, todoRefError(ts, ref)
 			return ts
 		}
 		out, m := apply(ts, i)
@@ -588,7 +589,7 @@ func mutateOne(cwd, ref string, apply func([]Todo, int) ([]Todo, string)) int {
 	})
 	switch {
 	case missing:
-		fmt.Fprintf(os.Stderr, "error: no such task %q (see: hive todo list)\n", ref)
+		fmt.Fprintf(os.Stderr, "error: %s\n", refErr)
 		return 1
 	case err != nil:
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -603,7 +604,7 @@ func mutateOne(cwd, ref string, apply func([]Todo, int) ([]Todo, string)) int {
 // todoRef pulls the task reference from a verb's arguments.
 func todoRef(args []string) (string, bool) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: need a task id or number (see: hive todo list)")
+		fmt.Fprintln(os.Stderr, "error: need a task id, subject or number (see: hive todo list)")
 		return "", false
 	}
 	return args[0], true
@@ -660,4 +661,20 @@ func statuslineCwd() string {
 		return wd
 	}
 	return "."
+}
+
+// todoRefError explains why ref did not resolve. A fragment naming several
+// tasks is a different failure from one naming none, and saying "no such task"
+// for it sends the caller looking for a task that is right there.
+func todoRefError(todos []Todo, ref string) string {
+	m := subjectMatches(todos, ref)
+	if len(m) < 2 {
+		return fmt.Sprintf("no such task %q (see: hive todo list)", ref)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%q matches %d tasks — name one, or use its id:", ref, len(m))
+	for _, i := range m {
+		fmt.Fprintf(&b, "\n  %-4s %s", todos[i].ID, truncStr(todos[i].Subject, 60))
+	}
+	return b.String()
 }
