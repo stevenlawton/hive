@@ -91,3 +91,44 @@ func TestTerminalPaneScroll(t *testing.T) {
 		t.Errorf("expected ScrollTop 0 after ScrollToTop, got %d", tp.ScrollTop)
 	}
 }
+
+func TestTintedLineUntonedIsByteIdenticalToToday(t *testing.T) {
+	// The embedded pane renderer has a live garbling bug. An untoned pane is
+	// the overwhelmingly common case and must not change by a single byte.
+	line := "hello \x1b[38;5;153mworld\x1b[0m"
+	if got, want := tintedLine(line, 40, ""), line+"\x1b[0m\x1b[K"; got != want {
+		t.Errorf("tintedLine untoned = %q, want %q", got, want)
+	}
+}
+
+// Captured content carries its own resets. A background set only at the start
+// of the line would be wiped by the first one, leaving the tint in stripes.
+func TestTintedLineReassertsBackgroundAfterContentResets(t *testing.T) {
+	bg := "\x1b[48;5;52m"
+	got := tintedLine("a\x1b[0mb\x1b[0mc", 10, bg)
+	if !strings.HasPrefix(got, bg) {
+		t.Errorf("tint must open the line: %q", got)
+	}
+	if n := strings.Count(got, bg); n < 3 {
+		t.Errorf("background asserted %d times, want it restored after each content reset: %q", n, got)
+	}
+}
+
+func TestTintedLinePadsToWidthSoTheTintIsFlush(t *testing.T) {
+	bg := "\x1b[48;5;52m"
+	got := tintedLine("abc", 10, bg)
+	// 3 visible chars + 7 spaces of padding, all under the background.
+	if !strings.Contains(got, "abc"+strings.Repeat(" ", 7)) {
+		t.Errorf("short line not padded to width: %q", got)
+	}
+	if !strings.HasSuffix(got, "\x1b[0m\x1b[K") {
+		t.Errorf("line must reset before erasing to end: %q", got)
+	}
+}
+
+func TestTintedLineNeverPadsNegative(t *testing.T) {
+	bg := "\x1b[48;5;52m"
+	if got := tintedLine("abcdefghijklmnop", 4, bg); got == "" {
+		t.Error("an over-long line must still render")
+	}
+}

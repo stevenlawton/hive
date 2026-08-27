@@ -1,6 +1,11 @@
 package ui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"charm.land/lipgloss/v2"
+)
 
 func TestTabBarAddRemove(t *testing.T) {
 	tb := NewTabBar()
@@ -129,5 +134,37 @@ func TestFlashingOutranksTone(t *testing.T) {
 
 	if tb.View() != flashOnly.View() {
 		t.Error("a flashing tab should render as flashing regardless of tone")
+	}
+}
+
+func TestTabBarRightStatus(t *testing.T) {
+	tb := NewTabBar()
+	tb.Add("a", "alpha")
+	tb.Width = 60
+
+	plain := tb.View()
+	tb.RightStatus = "5h 94% · resets 14:20"
+	toned := tb.View()
+
+	if !strings.Contains(toned, "5h 94%") {
+		t.Errorf("status not rendered: %q", toned)
+	}
+	if lipgloss.Width(plain) != lipgloss.Width(toned) {
+		t.Errorf("status changed the bar width: %d vs %d", lipgloss.Width(plain), lipgloss.Width(toned))
+	}
+	// Tab hit zones must be untouched — the status lives in the filler.
+	if w := tb.TabWidths(); w[0] != lipgloss.Width(TabActiveStyle.Render(" alpha ")) {
+		t.Errorf("tab width changed with a right status: %d", w[0])
+	}
+}
+
+func TestTabBarRightStatusTooNarrowIsDropped(t *testing.T) {
+	tb := NewTabBar()
+	tb.Add("a", "alpha")
+	tb.Width = 10
+	tb.RightStatus = "a very long fleet status that cannot fit"
+	got := tb.View()
+	if lipgloss.Width(got) > 10 {
+		t.Errorf("bar overflowed its width: %d", lipgloss.Width(got))
 	}
 }

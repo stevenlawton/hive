@@ -34,6 +34,7 @@ type TelemetryConfig struct {
 	ColdGrowth        float64 `yaml:"cold_growth"`
 	ParkAtPct         float64 `yaml:"park_at_pct"`
 	CacheTTLMinutes   int     `yaml:"cache_ttl_minutes"`
+	RateLimitFloorPct float64 `yaml:"rate_limit_floor_pct"`
 	StaleAfterSeconds int     `yaml:"stale_after_seconds"`
 	PruneAfterHours   int     `yaml:"prune_after_hours"`
 }
@@ -46,6 +47,7 @@ func defaultTelemetryConfig() TelemetryConfig {
 		WrapupGrowth:      6,
 		ColdGrowth:        5,
 		ParkAtPct:         90,
+		RateLimitFloorPct: 60,
 		CacheTTLMinutes:   60,
 		StaleAfterSeconds: 30,
 		PruneAfterHours:   24,
@@ -643,4 +645,95 @@ func (m model) applySessionVerdicts(now time.Time) {
 		}
 		tab.Tone = tabToneForVerdict(s.Verdict, s.Stale)
 	}
+
+	m.workspace.TabBar.RightStatus = fleetRateLimitStatus(snaps, m.cfg.Telemetry, now)
+
+	// Splits key on the tmux session name directly, so a split showing another
+	// repo's session gets that session's verdict rather than its tab's.
+	for _, wt := range m.workspace.Tabs {
+		if wt == nil || wt.SplitPane == nil {
+			continue
+		}
+		for i := range wt.SplitPane.Splits {
+			term := wt.SplitPane.Splits[i].Terminal
+			if term == nil {
+				continue
+			}
+			s, ok := snaps[term.SessionName]
+			if !ok {
+				term.Tone = ui.ToneNone
+				continue
+			}
+			term.Tone = tabToneForVerdict(s.Verdict, s.Stale)
+		}
+	}
+}
+
+// verdictWindowStyle is the tmux window-style for a verdict, or "default" to
+// clear. Deliberately dark: Claude Code paints foreground colours chosen
+// against the terminal's own background, so a strong wash costs readability.
+func verdictWindowStyle(verdict string, stale bool) string {
+	if stale {
+		return "default"
+	}
+	switch verdict {
+	case VerdictHandOff:
+		return "bg=#2a1416"
+	case VerdictWrapUp:
+		return "bg=#2a2410"
+	case VerdictPark:
+		return "bg=#141a2a"
+	default:
+		return "default"
+	}
+}
+
+// attachWindowStyle tints a session's tmux window for the duration of a
+// full-screen attach, returning a function that clears it again. The clear must
+// run on every exit path — a tint left behind outlives the reason for it, and
+// nothing else would ever remove it.
+func (m model) attachWindowStyle(sessionName string) func() {
+	if m.cfg == nil || !m.cfg.Telemetry.Enabled || sessionName == "" {
+		return func() {}
+	}
+	snaps := readSessionSnapshots(m.cfg.Telemetry, time.Now())
+	s, ok := snaps[sessionName]
+	if !ok {
+		return func() {}
+	}
+	style := verdictWindowStyle(s.Verdict, s.Stale)
+	if style == "default" {
+		return func() {}
+	}
+	if err := TmuxSetWindowStyle(sessionName, style); err != nil {
+		return func() {}
+	}
+	return func() { _ = TmuxSetWindowStyle(sessionName, "default") }
+}
+
+// fleetRateLimitStatus renders the shared five-hour window once, for the whole
+// machine. Every session reports the same account-wide figure, so this takes
+// the freshest reading rather than summing or averaging nine copies of it.
+//
+// It stays silent below the floor: a number that is always on screen stops
+// being read long before it starts mattering.
+func fleetRateLimitStatus(snaps map[string]SessionSnapshot, cfg TelemetryConfig, now time.Time) string {
+	var best SessionSnapshot
+	found := false
+	for _, s := range snaps {
+		if !s.HasFiveHour {
+			continue
+		}
+		if !found || s.CapturedAt.After(best.CapturedAt) {
+			best, found = s, true
+		}
+	}
+	if !found || best.FiveHourPct < cfg.RateLimitFloorPct {
+		return ""
+	}
+	out := fmt.Sprintf(" 5h %.0f%%", best.FiveHourPct)
+	if best.FiveHourResetsAt > 0 {
+		out += " · resets " + time.Unix(best.FiveHourResetsAt, 0).Local().Format("15:04")
+	}
+	return out + " "
 }

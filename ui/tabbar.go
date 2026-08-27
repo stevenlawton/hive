@@ -32,6 +32,11 @@ type TabBar struct {
 	Tabs      []Tab
 	ActiveIdx int
 	Width     int
+
+	// RightStatus is fleet-wide text pinned to the right of the filler — for
+	// things that are true of the machine rather than of any one tab, like the
+	// shared rate-limit window. It never affects tab hit zones.
+	RightStatus string
 }
 
 // NewTabBar creates an empty tab bar.
@@ -209,6 +214,18 @@ func (tb *TabBar) View() string {
 	if remaining < 0 {
 		remaining = 0
 	}
+
+	// The status is dropped rather than truncated when it will not fit: half a
+	// rate-limit figure is worse than none, and overflowing the bar would push
+	// the layout around.
+	status := tb.RightStatus
+	if status != "" && lipgloss.Width(status)+1 > remaining {
+		status = ""
+	}
+	if status != "" {
+		remaining -= lipgloss.Width(status)
+	}
+
 	separator := strings.Repeat("─", remaining)
-	return tabs + StatusBarStyle.Render(separator)
+	return tabs + StatusBarStyle.Render(separator+status)
 }

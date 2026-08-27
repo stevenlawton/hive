@@ -21,6 +21,9 @@ const CursorSentinel = "​"
 
 // TerminalPane renders tmux pane output and optionally forwards input.
 type TerminalPane struct {
+	// Tone washes the pane background to match its session's verdict.
+	Tone TabTone
+
 	SessionName string
 	Content     string // live capture (visible portion)
 	Width       int
@@ -154,6 +157,46 @@ func (t *TerminalPane) IsScrolledUp() bool {
 	return t.ScrollTop >= 0
 }
 
+// tintedLine finishes one rendered row, optionally washing it in a background.
+//
+// Two things make this fiddlier than setting a colour once. Captured content
+// emits its own resets, and a background opened at the start of the line would
+// be wiped by the first of them, leaving the tint in stripes — so it is
+// re-asserted after every reset the content contains. And the tint has to reach
+// the right-hand edge of the pane, which is done by padding with spaces rather
+// than by colouring the erase-to-end-of-line: EL clears to the edge of the
+// terminal, not of the pane, so a coloured one would bleed across a neighbour.
+//
+// With no background this is byte-for-byte what the renderer produced before.
+func tintedLine(line string, width int, bg string) string {
+	if bg == "" {
+		return line + "\033[0m\033[K"
+	}
+	body := strings.ReplaceAll(line, "\033[0m", "\033[0m"+bg)
+	pad := width - lipgloss.Width(line)
+	if pad < 0 {
+		pad = 0
+	}
+	return bg + body + strings.Repeat(" ", pad) + "\033[0m\033[K"
+}
+
+// toneBackground is a deliberately dark wash. Claude Code paints foreground
+// colours only, chosen against the terminal's own background, so a saturated
+// tint costs contrast on text you are trying to read. The tab bar carries the
+// loud end of the scale; this only has to be noticeable.
+func toneBackground(tone TabTone) string {
+	switch tone {
+	case ToneDanger:
+		return "\033[48;5;52m"
+	case ToneWarn:
+		return "\033[48;5;58m"
+	case ToneInfo:
+		return "\033[48;5;17m"
+	default:
+		return ""
+	}
+}
+
 // View renders the terminal pane content.
 // Width/Height are the total allocation including border; content uses inner dimensions.
 func (t *TerminalPane) View() string {
@@ -211,11 +254,12 @@ func (t *TerminalPane) View() string {
 
 	// Clamp each line to inner width, restore carried ANSI state at the
 	// start, reset at the end, and erase to end of line.
+	bg := toneBackground(t.Tone)
 	lines := strings.Split(rendered, "\n")
 	for i, line := range lines {
 		prefix := carry.Prefix()
 		carry.Consume(line)
-		lines[i] = prefix + ClampToWidth(line, iw) + "\033[0m\033[K"
+		lines[i] = tintedLine(prefix+ClampToWidth(line, iw), iw, bg)
 	}
 
 	// Append scroll status bar when paused.

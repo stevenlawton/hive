@@ -23,6 +23,7 @@ telemetry:
   wrapup_growth: 6         # turns costing this many times a fresh session
   cold_growth: 5           # how big a cache-cold session must be to be worth moving
   park_at_pct: 90          # 5-hour quota; a fleet-wide override, not a per-session input
+  rate_limit_floor_pct: 60 # only show the shared 5h window once it is worth knowing
   cache_ttl_minutes: 60    # assumed prompt-cache TTL; drops to 5 under usage overage
   stale_after_seconds: 30  # no report in this long -> render grey, not a stale verdict
   prune_after_hours: 24    # delete snapshots older than this

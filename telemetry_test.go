@@ -621,3 +621,111 @@ func TestApplySessionVerdictsDisabledLeavesTabsAlone(t *testing.T) {
 		t.Error("disabled telemetry must not touch tab tones at all")
 	}
 }
+
+// A split can show a session from a different repo than its tab, so panes key
+// on the tmux session name directly rather than inheriting the tab's verdict.
+func TestApplySessionVerdictsTintsPanesBySession(t *testing.T) {
+	rt := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", rt)
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+
+	s := SessionSnapshot{SessionID: "a", TmuxSession: "hive-beta",
+		Verdict: VerdictHandOff, CapturedAt: now.Add(-2 * time.Second)}
+	if err := writeSnapshot(sessionSnapshotPath("a"), s); err != nil {
+		t.Fatal(err)
+	}
+
+	wv := ui.NewWorkspaceView()
+	wv.TabBar.Add("alpha", "alpha")
+	wt := &ui.WorkspaceTab{ID: "alpha", SplitPane: ui.NewSplitPane()}
+	wt.SplitPane.AddSplit("beta", "hive-beta")
+	wt.SplitPane.AddSplit("gamma", "hive-gamma")
+	wv.Tabs["alpha"] = wt
+
+	m := model{cfg: &Config{Telemetry: testTelemetryConfig()}, workspace: wv}
+	m.applySessionVerdicts(now)
+
+	if got := wt.SplitPane.Splits[0].Terminal.Tone; got != ui.ToneDanger {
+		t.Errorf("pane on hive-beta tone = %v, want ToneDanger", got)
+	}
+	if got := wt.SplitPane.Splits[1].Terminal.Tone; got != ui.ToneNone {
+		t.Errorf("pane with no snapshot tone = %v, want ToneNone", got)
+	}
+	// The tab itself never reported, so it stays untinted even though a split
+	// inside it is in trouble.
+	for _, tab := range wv.TabBar.Tabs {
+		if tab.ID == "alpha" && tab.Tone != ui.ToneNone {
+			t.Errorf("tab alpha tone = %v, want ToneNone", tab.Tone)
+		}
+	}
+}
+
+func TestTmuxWindowStyleArgs(t *testing.T) {
+	got := tmuxWindowStyleArgs("hive-x", "bg=#2a1416")
+	want := []string{"set-option", "-t", "=hive-x", "window-style", "bg=#2a1416"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	// Clearing must go through the same verb: a tint left behind outlives the
+	// reason for it, and there is no other exit path that would remove it.
+	clear := tmuxWindowStyleArgs("hive-x", "default")
+	if clear[len(clear)-1] != "default" {
+		t.Errorf("clear args = %v, want them to end in default", clear)
+	}
+}
+
+func TestVerdictWindowStyle(t *testing.T) {
+	if s := verdictWindowStyle(VerdictKeepGoing, false); s != "default" {
+		t.Errorf("keep_going = %q, want default (no wash for the common case)", s)
+	}
+	if s := verdictWindowStyle(VerdictHandOff, false); s == "default" {
+		t.Error("hand_off should tint")
+	}
+	if s := verdictWindowStyle(VerdictHandOff, true); s != "default" {
+		t.Errorf("a stale verdict must not tint: %q", s)
+	}
+}
+
+// The 5-hour window is account-wide: every session reports the same figure and
+// they all drain one bucket. So it renders once, not once per pane.
+func TestFleetRateLimitStatus(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	cfg := testTelemetryConfig()
+	cfg.RateLimitFloorPct = 60
+
+	quiet := map[string]SessionSnapshot{
+		"a": {HasFiveHour: true, FiveHourPct: 22},
+		"b": {HasFiveHour: true, FiveHourPct: 22},
+	}
+	if got := fleetRateLimitStatus(quiet, cfg, now); got != "" {
+		t.Errorf("below the floor should say nothing, got %q", got)
+	}
+
+	busy := map[string]SessionSnapshot{
+		"a": {HasFiveHour: true, FiveHourPct: 22, CapturedAt: now.Add(-9 * time.Second)},
+		"b": {HasFiveHour: true, FiveHourPct: 94, CapturedAt: now.Add(-2 * time.Second),
+			FiveHourResetsAt: now.Add(80 * time.Minute).Unix()},
+	}
+	got := fleetRateLimitStatus(busy, cfg, now)
+	if !strings.Contains(got, "94%") {
+		t.Errorf("got %q, want the freshest reading (94%%), not the stalest", got)
+	}
+	if !strings.Contains(got, "resets") {
+		t.Errorf("got %q, want the reset time — it is a real deadline", got)
+	}
+
+	if got := fleetRateLimitStatus(map[string]SessionSnapshot{}, cfg, now); got != "" {
+		t.Errorf("no sessions should say nothing, got %q", got)
+	}
+
+	// Absent means unknown, never zero.
+	none := map[string]SessionSnapshot{"a": {HasFiveHour: false}}
+	if got := fleetRateLimitStatus(none, cfg, now); got != "" {
+		t.Errorf("a missing quota figure must not render as a reading, got %q", got)
+	}
+}
