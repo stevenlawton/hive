@@ -580,7 +580,7 @@ func TestTabToneForVerdict(t *testing.T) {
 		{VerdictWrapUp, false, ui.ToneWarn},
 		{VerdictHandOff, false, ui.ToneDanger},
 		{VerdictPark, false, ui.ToneInfo},
-		{VerdictHandOff, true, ui.ToneNone}, // stale: no longer a live claim
+		{VerdictHandOff, true, ui.ToneDanger}, // stale keeps its verdict
 		{"", false, ui.ToneNone},
 	}
 	for _, c := range cases {
@@ -620,7 +620,10 @@ func TestApplySessionVerdictsColoursTheMatchingTab(t *testing.T) {
 	want := map[string]ui.TabTone{
 		"alpha": ui.ToneDanger,
 		"beta":  ui.ToneWarn,
-		"gamma": ui.ToneNone, // stale verdicts do not colour
+		// gamma's snapshot is stale, and it keeps its tone. Idle is the normal
+		// state of a session waiting on a human, and its context has not shrunk
+		// while it waited. See TestStaleDoesNotSuppressTheTone.
+		"gamma": ui.ToneDanger,
 		"delta": ui.ToneNone, // no snapshot at all
 	}
 	for _, tab := range wv.TabBar.Tabs {
@@ -770,5 +773,60 @@ func TestStatuslineJoin(t *testing.T) {
 		if got := joinStatusline(c.todo, c.tel); got != c.want {
 			t.Errorf("%s: joinStatusline(%q, %q) = %q, want %q", c.name, c.todo, c.tel, got, c.want)
 		}
+	}
+}
+
+// Two Claude sessions in one directory produce the same tmux session name, so
+// snapshots collide. Last-writer-wins let an empty session mask a heavy one:
+// observed live, a 59%/$102 session hidden behind a 0%/$0 one in the same dir.
+// The worst verdict must win, or the signal can be silently swallowed.
+func TestReadSessionSnapshotsWorstVerdictWinsACollision(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	cfg := testTelemetryConfig()
+
+	heavy := SessionSnapshot{SessionID: "heavy", TmuxSession: "hive-workspace",
+		CtxPct: 59, CostUSD: 102.23, Verdict: VerdictWrapUp, CapturedAt: now.Add(-519 * time.Second)}
+	empty := SessionSnapshot{SessionID: "empty", TmuxSession: "hive-workspace",
+		CtxPct: 0, Verdict: VerdictKeepGoing, CapturedAt: now.Add(-504 * time.Second)} // fresher
+	if err := writeSnapshot(filepath.Join(dir, "heavy.json"), heavy); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSnapshot(filepath.Join(dir, "empty.json"), empty); err != nil {
+		t.Fatal(err)
+	}
+
+	got := readSessionSnapshotsFrom(dir, cfg, now)
+	if got["hive-workspace"].Verdict != VerdictWrapUp {
+		t.Errorf("collision resolved to %q (%.0f%%), want the wrap_up session",
+			got["hive-workspace"].Verdict, got["hive-workspace"].CtxPct)
+	}
+}
+
+func TestVerdictSeverityOrdering(t *testing.T) {
+	order := []string{VerdictKeepGoing, VerdictPark, VerdictWrapUp, VerdictHandOff}
+	for i := 1; i < len(order); i++ {
+		if verdictSeverity(order[i]) <= verdictSeverity(order[i-1]) {
+			t.Errorf("%s should outrank %s", order[i], order[i-1])
+		}
+	}
+	if verdictSeverity("") != 0 {
+		t.Error("an unknown verdict must rank lowest, not highest")
+	}
+}
+
+// Context and cost do not decay while a session sits idle, so a stale
+// snapshot's verdict is still TRUE — the session is merely quiet. Statuslines
+// refresh on activity, not on a timer, so going quiet is normal and must not
+// strip the colour off the sessions most worth flagging.
+func TestStaleDoesNotSuppressTheTone(t *testing.T) {
+	if got := tabToneForVerdict(VerdictHandOff, true); got != ui.ToneDanger {
+		t.Errorf("stale hand_off tone = %v, want ToneDanger — idle+big is the strongest candidate", got)
+	}
+	if got := tabToneForVerdict(VerdictWrapUp, true); got != ui.ToneWarn {
+		t.Errorf("stale wrap_up tone = %v, want ToneWarn", got)
+	}
+	if got := tabToneForVerdict(VerdictKeepGoing, true); got != ui.ToneNone {
+		t.Errorf("stale keep_going tone = %v, want ToneNone", got)
 	}
 }
