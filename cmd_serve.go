@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -567,6 +568,12 @@ func apiBuild(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// busAnnounce posts to the shared bus. A variable so tests can watch it fire
+// without writing to the real machine-wide log.
+var busAnnounce = func(head, body string) {
+	_ = runBusCmd([]string{"announce", head, "--body", body})
+}
+
 // serveAlongside runs the web UI beside the TUI. It never takes hive down: a
 // port in use, or a token it cannot write, is reported and shrugged off.
 func serveAlongside(port int) {
@@ -576,9 +583,24 @@ func serveAlongside(port int) {
 		return
 	}
 	addr := fmt.Sprintf("0.0.0.0:%d", port)
-	srv := &http.Server{Addr: addr, Handler: newServeMux(token), ReadHeaderTimeout: 10 * time.Second}
+	// Bind before serving, so a port already taken is known now rather than
+	// somewhere inside ListenAndServe. Behind the TUI's alt-screen stderr is
+	// invisible, so a clash also goes on the bus: a dead review UI is exactly
+	// the kind of fact every session needs and nobody would otherwise see.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hive web: %v\n", err)
+		busAnnounce(
+			fmt.Sprintf("hive web is NOT running — port %d is already in use", port),
+			fmt.Sprintf("hive started with web_port %d but could not bind it: %v\n\n"+
+				"Something else holds the port — most likely a stray 'hive serve --port %d' left over "+
+				"from an earlier pane. Whatever is on it is serving its own build, not this one.\n\n"+
+				"Find it with: ss -ltnp | grep :%d", port, err, port, port))
+		return
+	}
+	srv := &http.Server{Handler: newServeMux(token), ReadHeaderTimeout: 10 * time.Second}
 	fmt.Printf("hive web on http://%s:%d/?t=%s\n", hostGuess("0.0.0.0"), port, token)
-	if err := srv.ListenAndServe(); err != nil {
+	if err := srv.Serve(ln); err != nil {
 		fmt.Fprintf(os.Stderr, "hive web: %v\n", err)
 	}
 }
