@@ -48,14 +48,20 @@ on the task line — so a body can carry paragraphs, its own bullets, even its o
 `###` heading without any of it being read as list structure.
 
 Rules:
-- Address tasks by the **id** shown in the left column of `hive todo list` (three
-  letters, e.g. `kdx`). Ids are stable — a peer session adding or removing tasks
-  never changes them. A positional number still works but is unsafe when other
-  worktrees are active, because positions shift.
-- Run `hive todo list` to discover ids; you do not need to re-run it before each
-  command the way positional numbers required.
-- **Ids address, subjects describe.** The id rule above is about *commands*. When
-  you name a task to a human — a plan, a bus announcement, a commit message, a
+- Address tasks by **subject** or by the **id** shown in the left column of
+  `hive todo list` (three letters, e.g. `kdx`). Any unique fragment of a subject
+  resolves, case-insensitively — `hive todo show "worktree creation"` — and an
+  exact subject wins over being a fragment of a longer one. A fragment matching
+  several tasks is refused with the candidates listed, never resolved by
+  guessing. Ids are stable — a peer session adding or removing tasks never
+  changes them — so reach for one when a subject is ambiguous or when you are
+  passing a handle to another agent. A positional number still works but is
+  unsafe when other worktrees are active, because positions shift.
+- Run `hive todo list` to discover tasks; you do not need to re-run it before
+  each command the way positional numbers required.
+- **Say the subject, not the code.** A subject addresses a task as well as an id
+  does, so there is no longer a reason to speak in three-letter codes. When you
+  name a task to a human — a plan, a bus announcement, a commit message, a
   handover — lead with the subject: `hive todo show` prints it. "claiming ffy"
   tells the reader nothing, and nobody reading the bus has the list in front of
   them. Give both when they may want to act on it: *staff pivot for per-event

@@ -713,9 +713,15 @@ func indexByID(todos []Todo, id string) (int, bool) {
 }
 
 // resolveTodoRef maps a CLI argument to an index: an id first, then a 1-based
-// position. Ids contain no digits, so the two forms cannot collide. Callers must
-// resolve inside withTodos, against the on-disk list — a position read from an
-// earlier `list` may point at a different task by now.
+// position, then the subject. Ids contain no digits, so the first two forms
+// cannot collide. Callers must resolve inside withTodos, against the on-disk
+// list — a position read from an earlier `list` may point at a different task
+// by now.
+//
+// Subjects resolve because that is how tasks are named in conversation and in
+// handovers; requiring the id here is what pushed agents into speaking in
+// three-letter codes. A fragment matching several tasks resolves to nothing
+// rather than to a guess — see subjectMatches for naming the candidates.
 func resolveTodoRef(todos []Todo, arg string) (int, bool) {
 	arg = strings.TrimSpace(arg)
 	if i, ok := indexByID(todos, arg); ok {
@@ -724,7 +730,47 @@ func resolveTodoRef(todos []Todo, arg string) (int, bool) {
 	if v, err := strconv.Atoi(arg); err == nil && v >= 1 && v <= len(todos) {
 		return v - 1, true
 	}
+	if i, ok := indexBySubject(todos, arg); ok {
+		return i, true
+	}
+	if m := subjectMatches(todos, arg); len(m) == 1 {
+		return m[0], true
+	}
 	return 0, false
+}
+
+// indexBySubject finds a task whose whole subject is arg, case-insensitively.
+// An exact subject wins over being a fragment of a longer one, so a short
+// subject stays reachable however many tasks quote it.
+func indexBySubject(todos []Todo, arg string) (int, bool) {
+	if arg == "" {
+		return 0, false
+	}
+	lower := strings.ToLower(arg)
+	found, n := 0, 0
+	for i := range todos {
+		if strings.ToLower(strings.TrimSpace(todos[i].Subject)) == lower {
+			found, n = i, n+1
+		}
+	}
+	return found, n == 1
+}
+
+// subjectMatches lists every task whose subject contains arg, case-insensitively.
+// Callers use it to name the candidates when a ref was too vague to resolve.
+func subjectMatches(todos []Todo, arg string) []int {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		return nil
+	}
+	lower := strings.ToLower(arg)
+	var out []int
+	for i := range todos {
+		if strings.Contains(strings.ToLower(todos[i].Subject), lower) {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // truncStr shortens s to at most max display runes, adding an ellipsis.

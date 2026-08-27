@@ -570,3 +570,16 @@ func TmuxSessionCwd(sessionName string) (string, error) {
 	}
 	return strings.TrimSpace(out), nil
 }
+
+// tmuxWindowStyleArgs sets (or clears, with "default") a session's window
+// background. Full-screen attach pipes the raw PTY, so hive is not compositing
+// and cannot paint the pane itself — tmux does it instead.
+func tmuxWindowStyleArgs(sessionName, style string) []string {
+	return []string{"set-option", "-t", tmuxTarget(sessionName), "window-style", style}
+}
+
+// TmuxSetWindowStyle applies a window background to a session. Failure is
+// ignored by callers: an untinted attach is a cosmetic loss, not a broken one.
+func TmuxSetWindowStyle(sessionName, style string) error {
+	return tmuxRun(tmuxWindowStyleArgs(sessionName, style)...)
+}

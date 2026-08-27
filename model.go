@@ -1062,6 +1062,8 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		m.acknowledgeTab(active.ID)
 	}
 
+	m.applySessionVerdicts(time.Now())
+
 	sessions, err := TmuxListSessions()
 	if err != nil {
 		return m, healthTick()
@@ -1501,7 +1503,9 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 		sesName := m.workspace.FocusedSessionName()
 		if sesName != "" {
 			m.mode = viewAttach
+			clearStyle := m.attachWindowStyle(sesName)
 			return m, func() tea.Msg {
+				defer clearStyle()
 				ui.AttachSession(sesName)
 				return reconnectMsg{} // return to workspace after detach
 			}

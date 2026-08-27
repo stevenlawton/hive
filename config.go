@@ -42,6 +42,7 @@ type Config struct {
 	ScratchDir    string                     `yaml:"scratch_dir"`
 	DefaultAction string                     `yaml:"default_action"`
 	Notifications NotificationConfig         `yaml:"notifications"`
+	Telemetry     TelemetryConfig            `yaml:"telemetry"`
 	Workspaces    map[string]WorkspaceConfig `yaml:"workspaces"`
 }
 
@@ -57,6 +58,7 @@ func LoadConfig(path string) (*Config, error) {
 			Sound:        true,
 			PollInterval: 5,
 		},
+		Telemetry:  defaultTelemetryConfig(),
 		Workspaces: make(map[string]WorkspaceConfig),
 	}
 
@@ -131,6 +133,12 @@ func decodeConfigNode(root *yaml.Node, cfg *Config) ([]wsEntry, error) {
 		case "notifications":
 			if err := val.Decode(&cfg.Notifications); err != nil {
 				return nil, fmt.Errorf("notifications: %w", err)
+			}
+		case "telemetry":
+			// Decoded into the defaults already in cfg, so a partial block
+			// overrides only the keys it names.
+			if err := val.Decode(&cfg.Telemetry); err != nil {
+				return nil, fmt.Errorf("telemetry: %w", err)
 			}
 		case "workspaces":
 			if val.Kind != yaml.MappingNode {
