@@ -114,8 +114,9 @@ function renderGates(){
       <div class="meta"><span class="pill">${esc(t.repo)}</span><span class="id mono">${esc(t.id)}</span>
       ${p?"":"<span>no plan on file</span>"}
       ${n?`<span class="pill you">${n} comment${n>1?"s":""}</span>`:""}</div>
-      <div class="acts">${p?`<button class="primary" data-read="${esc(t.id)}">${n?"Continue review":"Review the plan"}</button>`
-        :"<button disabled>No plan to read</button>"}</div></article>`}).join("")}
+      <div class="acts">${(t.state==="triage"?t.hasBuild:t.hasPlan)
+        ? `<button class="primary" data-read="${esc(t.id)}">${n?"Continue review":(t.state==="triage"?"Review the build":"Review the plan")}</button>`
+        : `<button disabled>${t.state==="triage"?"No branch found for this ticket":"No plan to read"}</button>`}</div></article>`}).join("")}
 function renderPipe(){const a=all();
   document.getElementById("pipe").innerHTML=STATES.map(([s,l],i)=>{
     const n=s==="done"?a.filter(t=>t.done).length:a.filter(t=>isOpen(t)&&t.state===s).length;
@@ -160,6 +161,25 @@ function draw(){renderTotals();renderPal();renderGates();renderPipe();renderChip
 function lineClass(t){
   if(!t.trim())return"blank";
   if(/^#\s/.test(t))return"h1"; if(/^##\s/.test(t))return"h2"; return""}
+function diffClass(t){
+  if(/^diff --git |^index |^--- |^\+\+\+ /.test(t))return"dmeta";
+  if(/^@@/.test(t))return"dhunk";
+  if(/^\+/.test(t))return"dadd";
+  if(/^-/.test(t))return"ddel";
+  return""}
+function renderDiff(){
+  const p=PLANS[openPlan],lines=p.text.split("\n"),byLine={};
+  cs(openPlan).forEach((c,i)=>{(byLine[c.line]=byLine[c.line]||[]).push({...c,i})});
+  let h=`<div class="src diff">`;
+  lines.forEach((t,i)=>{
+    const n=i+1,has=byLine[n];
+    h+=`<div class="ln ${diffClass(t)}${has?" has":""}" id="L${n}">
+      <span class="num mono" data-line="${n}" role="button" tabindex="0" title="Comment on line ${n}">${n}</span>
+      <span class="txt">${esc(t)||" "}</span></div>`;
+    (has||[]).forEach(c=>{h+=threadHtml(c)});
+    if(composing===n)h+=composerHtml(n);
+  });
+  return h+"</div>"}
 function renderSource(){
   const p=PLANS[openPlan],lines=p.text.split("\n"),byLine={};
   cs(openPlan).forEach((c,i)=>{(byLine[c.line]=byLine[c.line]||[]).push({...c,i})});
@@ -197,8 +217,12 @@ function renderRendered(){
   return h+"</div>"}
 
 function renderReader(){
+  const isBuild=PLANS[openPlan]&&PLANS[openPlan].kind==="build";
+  // A diff has no markdown to render, so the toggle is meaningless for a build.
+  document.getElementById("mRen").style.display=isBuild?"none":"";
+  document.getElementById("mSrc").style.display=isBuild?"none":"";
   document.getElementById("rmain").innerHTML =
-    mode==="src" ? renderSource() : renderRendered();
+    isBuild ? renderDiff() : (mode==="src" ? renderSource() : renderRendered());
   document.getElementById("mSrc").setAttribute("aria-pressed",mode==="src");
   document.getElementById("mRen").setAttribute("aria-pressed",mode==="ren");
   const n=cs(openPlan).length;
@@ -209,7 +233,9 @@ function renderReader(){
   ap.title=n?"Delete your comments first, or send it back":"";
   document.getElementById("ccount").textContent = n
     ? `${n} comment${n>1?"s":""} — approval is off until they are resolved`
-    : "No comments — tap + on any block to add one";
+    : "No comments — tap a line number to add one";
+  const isB=PLANS[openPlan]&&PLANS[openPlan].kind==="build";
+  ap.textContent=isB?"Accept the build":"Approve";
   renderOutbox();
   if(composing){const b=document.getElementById("cbox");if(b)b.focus()}}
 function reviewDoc(verdict){
@@ -222,7 +248,8 @@ function reviewDoc(verdict){
   return s}
 async function submitReview(verdict){
   const t=find(openPlan),p=PLANS[openPlan];
-  const body={verdict,planHash:p.hash,comments:cs(openPlan).map(c=>({line:c.line,text:c.text}))};
+  const body={verdict,kind:p.kind||"plan",hash:p.hash,
+    comments:cs(openPlan).map(c=>({line:c.line,text:c.text}))};
   try{
     const res=await api(`/api/review/${encodeURIComponent(t.repo)}/${encodeURIComponent(openPlan)}`,
       {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
@@ -231,10 +258,11 @@ async function submitReview(verdict){
       wrote:res.wrote};
     delete comments[openPlan];save();
     await load();closeReader();
-    alert((verdict==="approve"?"Approved":"Sent back")+" — review written to "+res.wrote);
+    alert((verdict==="approve"?(p.kind==="build"?"Accepted":"Approved"):"Sent back")+
+      " — review written to "+res.wrote);
   }catch(e){
     if(e.status===409){
-      alert("The plan changed while you were reviewing it.\n\nYour comments point at lines that may have moved, so the review was not recorded. Reopen the plan to see the new version.");
+      alert("The "+(p.kind||"plan")+" changed while you were reviewing it.\n\nYour comments point at lines that may have moved, so the review was not recorded. Reopen it to see the new version.");
       delete PLANS[openPlan];closeReader();await load();return}
     alert("Review not saved: "+e.message)}}
 
@@ -254,15 +282,20 @@ function renderOutbox(){
   if(!r){el.innerHTML="";return}
   el.innerHTML=`<h4>Recorded</h4><pre>${esc(r.verdict)} · ${esc(r.at)} · against plan-hash ${esc(r.hash)}
 written to ${esc(r.wrote||"")}</pre>`}
+const kindOf=t=>t.state==="triage"?"build":"plan";
 async function openReader(id){
-  const t=find(id);if(!t||!t.hasPlan)return;
+  const t=find(id);if(!t)return;
+  const kind=kindOf(t);
+  if(kind==="build"&&!t.hasBuild){alert("No unmerged branch carries a commit for this ticket.");return}
+  if(kind==="plan"&&!t.hasPlan){alert("No plan on file for this ticket.");return}
   if(!PLANS[id]){
-    try{PLANS[id]=await api(`/api/plan/${encodeURIComponent(t.repo)}/${encodeURIComponent(id)}`)}
-    catch(e){alert("Could not load the plan: "+e.message);return}}
-  const p=PLANS[id];
+    try{PLANS[id]=await api(`/api/${kind}/${encodeURIComponent(t.repo)}/${encodeURIComponent(id)}`)}
+    catch(e){alert("Could not load the "+kind+": "+e.message);return}}
+  const p=PLANS[id];p.kind=kind;
   openPlan=id;composing=null;mode="ren";
   document.getElementById("rtitle").textContent=t.subject;
-  document.getElementById("rhash").textContent=`${t.id} · ${p.lines} lines · ${p.hash}`;
+  document.getElementById("rhash").textContent =
+    `${t.id} · ${p.path||""} · ${p.lines} lines · ${p.hash}`;
   document.getElementById("reader").classList.add("open");
   document.body.style.overflow="hidden";
   renderReader();document.getElementById("reader").scrollTop=0}

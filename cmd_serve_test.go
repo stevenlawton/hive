@@ -17,12 +17,13 @@ func TestReviewVerdictRules(t *testing.T) {
 		post reviewPost
 		ok   bool
 	}{
-		{"approve with no comments", reviewPost{Verdict: "approve", PlanHash: "abc"}, true},
-		{"approve holding a comment", reviewPost{Verdict: "approve", PlanHash: "abc", Comments: one}, false},
-		{"changes with a comment", reviewPost{Verdict: "changes", PlanHash: "abc", Comments: one}, true},
-		{"changes with nothing to say", reviewPost{Verdict: "changes", PlanHash: "abc"}, false},
-		{"a third path", reviewPost{Verdict: "nits", PlanHash: "abc", Comments: one}, false},
-		{"no plan hash", reviewPost{Verdict: "approve"}, false},
+		{"approve with no comments", reviewPost{Verdict: "approve", Kind: "plan", Hash: "abc"}, true},
+		{"approve holding a comment", reviewPost{Verdict: "approve", Kind: "plan", Hash: "abc", Comments: one}, false},
+		{"changes with a comment", reviewPost{Verdict: "changes", Kind: "plan", Hash: "abc", Comments: one}, true},
+		{"changes with nothing to say", reviewPost{Verdict: "changes", Kind: "plan", Hash: "abc"}, false},
+		{"a third path", reviewPost{Verdict: "nits", Kind: "plan", Hash: "abc", Comments: one}, false},
+		{"no hash", reviewPost{Verdict: "approve", Kind: "plan"}, false},
+		{"no kind", reviewPost{Verdict: "approve", Hash: "abc"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -43,12 +44,13 @@ func TestReviewDocQuotesTheLineItIsAgainst(t *testing.T) {
 	plan := "# Plan\n\nfirst para\n\nthe wrong bit\n"
 	doc := reviewDoc("A subject", "abc", reviewPost{
 		Verdict:  "changes",
-		PlanHash: "deadbeef",
+		Kind:     "plan",
+		Hash:     "deadbeef",
 		Comments: []reviewComment{{Line: 5, Text: "this is wrong"}},
 	}, plan, "docs/plans/abc.md")
 
 	for _, want := range []string{
-		"# Review — A subject", "ticket: abc", "plan-hash: deadbeef",
+		"# Review — A subject", "ticket: abc", "hash: deadbeef", "reviewed: plan",
 		"verdict: changes requested", "## Line 5", "> the wrong bit", "this is wrong",
 	} {
 		if !strings.Contains(doc, want) {
@@ -59,7 +61,7 @@ func TestReviewDocQuotesTheLineItIsAgainst(t *testing.T) {
 
 func TestReviewDocOrdersCommentsByLine(t *testing.T) {
 	plan := strings.Repeat("x\n", 20)
-	doc := reviewDoc("S", "abc", reviewPost{Verdict: "changes", PlanHash: "h", Comments: []reviewComment{
+	doc := reviewDoc("S", "abc", reviewPost{Verdict: "changes", Kind: "plan", Hash: "h", Comments: []reviewComment{
 		{Line: 12, Text: "c"}, {Line: 2, Text: "a"}, {Line: 7, Text: "b"},
 	}}, plan, "p")
 	i2, i7, i12 := strings.Index(doc, "Line 2"), strings.Index(doc, "Line 7"), strings.Index(doc, "Line 12")
@@ -70,7 +72,7 @@ func TestReviewDocOrdersCommentsByLine(t *testing.T) {
 
 // A line number past the end of the plan must not panic or silently vanish.
 func TestReviewDocSurvivesAnOutOfRangeLine(t *testing.T) {
-	doc := reviewDoc("S", "abc", reviewPost{Verdict: "changes", PlanHash: "h",
+	doc := reviewDoc("S", "abc", reviewPost{Verdict: "changes", Kind: "plan", Hash: "h",
 		Comments: []reviewComment{{Line: 9999, Text: "stale"}}}, "one\ntwo\n", "p")
 	if !strings.Contains(doc, "Line 9999") || !strings.Contains(doc, "stale") {
 		t.Errorf("out-of-range comment was lost:\n%s", doc)
@@ -120,5 +122,20 @@ func TestUnknownRepoIsRefused(t *testing.T) {
 	}
 	if _, ok := repoByName("definitely-not-a-repo-xyzzy"); ok {
 		t.Error("an unknown repo resolved")
+	}
+}
+
+// A build review judges the diff, not the plan, and says so in the artifact an
+// agent will read.
+func TestReviewDocNamesTheBuildItJudged(t *testing.T) {
+	doc := reviewDoc("Bootstrap a checkout", "dmy", reviewPost{
+		Verdict: "changes", Kind: "build", Hash: "335f92aa4c1c",
+		Comments: []reviewComment{{Line: 4, Text: "this hunk is wrong"}},
+	}, "commit\nsubject\n\n+added line\n", "worktree-wt-init-bootstrap @ fa69ae26b2c3")
+	for _, want := range []string{"reviewed: build", "build: worktree-wt-init-bootstrap @ fa69ae26b2c3",
+		"hash: 335f92aa4c1c", "> +added line", "this hunk is wrong"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("build review missing %q:\n%s", want, doc)
+		}
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -41,6 +42,7 @@ type serveTask struct {
 	Done     bool   `json:"done"`
 	Deferred bool   `json:"deferred"`
 	HasPlan  bool   `json:"hasPlan"`
+	HasBuild bool   `json:"hasBuild"`
 }
 
 type serveRepo struct {
@@ -53,9 +55,13 @@ type reviewComment struct {
 	Text string `json:"text"`
 }
 
+// reviewPost is a verdict on one artifact. Kind says which: a plan at
+// plan-review, or a build's diff at triage. They re-hash different things and
+// move the ticket differently, so the browser must say which it read.
 type reviewPost struct {
 	Verdict  string          `json:"verdict"` // "approve" | "changes"
-	PlanHash string          `json:"planHash"`
+	Kind     string          `json:"kind"`    // "plan" | "build"
+	Hash     string          `json:"hash"`    // of the artifact as read
 	Comments []reviewComment `json:"comments"`
 }
 
@@ -144,6 +150,7 @@ func newServeMux(token string) http.Handler {
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))
 	mux.HandleFunc("GET /api/backlog", apiBacklog)
 	mux.HandleFunc("GET /api/plan/{repo}/{id}", apiPlan)
+	mux.HandleFunc("GET /api/build/{repo}/{id}", apiBuild)
 	mux.HandleFunc("POST /api/review/{repo}/{id}", apiReview)
 	mux.HandleFunc("POST /api/task/{repo}/{id}", apiTask)
 	return withAuth(token, mux)
@@ -212,12 +219,20 @@ func apiBacklog(w http.ResponseWriter, r *http.Request) {
 				ID: t.ID, Subject: t.Subject, Desc: t.Description,
 				Section: t.sectionOrDefault(), State: t.State, Claim: t.Claim,
 				Since: t.Since, Done: t.Done, Deferred: t.Deferred,
-				HasPlan: planPath(repo.Path, t.ID) != "",
+				HasPlan:  planPath(repo.Path, t.ID) != "",
+				HasBuild: t.State == StateTriage && hasBuild(repo.Path, t.ID),
 			})
 		}
 		out = append(out, sr)
 	}
 	writeJSON(w, 200, out)
+}
+
+// hasBuild says whether a triage ticket has an unmerged branch to look at. Kept
+// cheap: this runs for every task on every backlog load.
+func hasBuild(repoPath, id string) bool {
+	b, _, _, _, _ := buildFor(repoPath, id)
+	return b != ""
 }
 
 // planPath is the plan document for a ticket, or "" when it has none.
@@ -275,23 +290,36 @@ func apiReview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	p := planPath(repo.Path, id)
-	if p == "" {
-		http.Error(w, "no plan for that ticket", 404)
-		return
+
+	// Re-read whatever was reviewed and re-hash it. A plan rewritten, or a
+	// branch pushed to, under the reviewer makes their line numbers meaningless.
+	var text, where string
+	if post.Kind == "plan" {
+		p := planPath(repo.Path, id)
+		if p == "" {
+			http.Error(w, "no plan for that ticket", 404)
+			return
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		text = string(b)
+		where = strings.TrimPrefix(p, mainWorktree(repo.Path)+"/")
+	} else {
+		branch, commit, _, diff, _ := buildFor(repo.Path, id)
+		if branch == "" {
+			http.Error(w, "no unmerged branch carries a commit for this ticket", 404)
+			return
+		}
+		text = diff
+		where = branch + " @ " + commit[:12]
 	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	// The whole point of carrying the hash: a plan rewritten under the reviewer
-	// makes their line numbers meaningless, so the review is refused rather
-	// than recorded against text nobody read.
-	if now := hashOf(b); now != post.PlanHash {
+	if now := hashOf([]byte(text)); now != post.Hash {
 		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "the plan changed while you were reviewing it",
-			"was":   post.PlanHash, "now": now})
+			"error": "the " + post.Kind + " changed while you were reviewing it",
+			"was":   post.Hash, "now": now})
 		return
 	}
 
@@ -302,10 +330,16 @@ func apiReview(w http.ResponseWriter, r *http.Request) {
 			return ts
 		}
 		subject = ts[i].Subject
-		if post.Verdict == "approve" {
-			ts[i].State = StateReady
-		} else {
+		switch {
+		case post.Kind == "plan" && post.Verdict == "approve":
+			ts[i].State = StateReady // planned and approved; a builder may take it
+		case post.Kind == "plan":
+			ts[i].State = StateUnrefined // back to the planner
+		case post.Verdict == "approve":
+			ts = toggleTodoDone(ts, i) // the build is accepted
 			ts[i].State = StateUnrefined
+		default:
+			ts[i].State = StateReady // the plan stands; the build does not
 		}
 		ts[i].Claim, ts[i].Since = "", ""
 		return ts
@@ -313,8 +347,13 @@ func apiReview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	doc := reviewDoc(subject, id, post, string(b), strings.TrimPrefix(p, mainWorktree(repo.Path)+"/"))
-	out := filepath.Join(filepath.Dir(p), id+".review.md")
+
+	doc := reviewDoc(subject, id, post, text, where)
+	out := filepath.Join(mainWorktree(repo.Path), "docs", "plans", id+".review.md")
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	if err := os.WriteFile(out, []byte(doc), 0o644); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -341,8 +380,11 @@ func checkVerdict(p reviewPost) error {
 	default:
 		return fmt.Errorf("verdict must be \"approve\" or \"changes\"")
 	}
-	if p.PlanHash == "" {
-		return fmt.Errorf("a review must carry the hash of the plan it read")
+	if p.Hash == "" {
+		return fmt.Errorf("a review must carry the hash of the artifact it read")
+	}
+	if p.Kind != "plan" && p.Kind != "build" {
+		return fmt.Errorf("kind must be \"plan\" or \"build\"")
 	}
 	return nil
 }
@@ -350,16 +392,20 @@ func checkVerdict(p reviewPost) error {
 // reviewDoc renders the review an agent will read. Each comment quotes its
 // source line verbatim, so it stays legible after a rewrite has moved the line
 // numbers out from under it.
-func reviewDoc(subject, id string, p reviewPost, planText, planRel string) string {
-	lines := strings.Split(planText, "\n")
+func reviewDoc(subject, id string, p reviewPost, artifact, planRel string) string {
+	lines := strings.Split(artifact, "\n")
 	verdict := "changes requested"
 	if p.Verdict == "approve" {
 		verdict = "approved"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Review — %s\n\n", subject)
-	fmt.Fprintf(&b, "ticket: %s\nplan: %s\nplan-hash: %s\nreviewer: Steve\nverdict: %s\ncomments: %d\nat: %s\n\n",
-		id, planRel, p.PlanHash, verdict, len(p.Comments), nowFunc().UTC().Format(time.RFC3339))
+	kind := "plan"
+	if p.Kind == "build" {
+		kind = "build"
+	}
+	fmt.Fprintf(&b, "ticket: %s\nreviewed: %s\n%s: %s\nhash: %s\nreviewer: Steve\nverdict: %s\ncomments: %d\nat: %s\n\n",
+		id, kind, kind, planRel, p.Hash, verdict, len(p.Comments), nowFunc().UTC().Format(time.RFC3339))
 	if len(p.Comments) == 0 {
 		b.WriteString("_No comments._\n")
 		return b.String()
@@ -389,8 +435,8 @@ func announceReview(repo, id, subject string, p reviewPost) {
 	if p.Verdict == "approve" {
 		verdict = "approved"
 	}
-	head := fmt.Sprintf("review posted on %s (%s) — %s, %d comment(s), against plan-hash %s",
-		id, repo, verdict, len(p.Comments), p.PlanHash)
+	head := fmt.Sprintf("%s review posted on %s (%s) — %s, %d comment(s), against hash %s",
+		p.Kind, id, repo, verdict, len(p.Comments), p.Hash)
 	body := fmt.Sprintf("Reviewed from hive web. Subject: %s\nThe review is at docs/plans/%s.review.md, "+
 		"and the ticket has moved to %s.\nEach comment quotes the plan line it is against.",
 		subject, id, map[string]string{"approve": "ready", "changes": "unrefined"}[p.Verdict])
@@ -448,4 +494,71 @@ func apiTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]string{"ok": body.Op})
+}
+
+// buildFor locates the work a triage ticket is waiting on: an unmerged branch
+// carrying a commit for it. There is no recorded link from ticket to branch, so
+// this looks for the plan document the builder commits alongside its work —
+// docs/plans/<id>.md — and falls back to naming every unmerged branch rather
+// than guessing. A wrong branch shown confidently is worse than none.
+func buildFor(repoPath, id string) (branch, commit, stat, diff string, others []string) {
+	main := mainWorktree(repoPath)
+	git := func(args ...string) string {
+		out, err := runGit(main, args...)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(out)
+	}
+	raw := git("branch", "--format=%(refname:short)", "--no-merged", "main")
+	if raw == "" {
+		return "", "", "", "", nil
+	}
+	for _, b := range strings.Split(raw, "\n") {
+		b = strings.TrimSpace(b)
+		if b == "" {
+			continue
+		}
+		others = append(others, b)
+		if branch != "" {
+			continue
+		}
+		// The commit that introduced this ticket's plan is the build's commit.
+		if c := git("log", "-1", "--format=%H", b, "--", "docs/plans/"+id+".md"); c != "" {
+			branch, commit = b, c
+		}
+	}
+	if branch == "" {
+		return "", "", "", "", others
+	}
+	stat = git("show", "--stat", "--oneline", commit)
+	diff = git("show", "--format=%H%n%s%n", commit)
+	return branch, commit, stat, diff, others
+}
+
+func runGit(dir string, args ...string) (string, error) {
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+	return string(out), err
+}
+
+func apiBuild(w http.ResponseWriter, r *http.Request) {
+	repo, ok := repoByName(r.PathValue("repo"))
+	if !ok {
+		http.Error(w, "no such repo", 404)
+		return
+	}
+	id := r.PathValue("id")
+	branch, commit, stat, diff, others := buildFor(repo.Path, id)
+	if branch == "" {
+		writeJSON(w, 404, map[string]any{
+			"error":    "no unmerged branch carries a commit for this ticket",
+			"unmerged": others})
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"branch": branch, "commit": commit[:12], "stat": stat,
+		"text": diff, "hash": hashOf([]byte(diff)),
+		"lines": strings.Count(diff, "\n") + 1,
+		"path":  branch + " @ " + commit[:12],
+	})
 }
