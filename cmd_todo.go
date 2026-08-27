@@ -189,7 +189,7 @@ func finishTodoAdd(rest []string, desc string, flagged bool) (string, string, er
 	// piped body was silently discarded when the subject happened to contain a
 	// " - " separator — which ate a 3000-character ticket, reported success, and
 	// is exactly the silent-data-loss this tool should never do.
-	if piped := pipedBody(); piped != "" {
+	if piped := pipedBody(flagged || desc != ""); piped != "" {
 		if desc != "" || flagged {
 			return "", "", fmt.Errorf(
 				"description given twice: once on stdin and once %s\n"+
@@ -239,18 +239,41 @@ func readBody(path string) (string, error) {
 }
 
 // pipedBody returns a body piped in on stdin, or "" if stdin is a terminal or
-// carries nothing. Only consulted when no body was given any other way, so an
-// add that merely happens to run with stdin attached cannot acquire one.
-func pipedBody() string {
+// carries nothing.
+//
+// peek changes how long we are willing to wait. With no other body given, the
+// pipe is the intended source and we block for it — a slow producer must not
+// lose its body. With a body already given we are only looking for a conflict
+// to refuse, and blocking there hangs every caller that inherited an open pipe
+// it never writes to: a script, a CI step, an agent's shell. That hang is worse
+// than the conflict it was looking for.
+func pipedBody(peek bool) string {
 	info, err := os.Stdin.Stat()
 	if err != nil || info.Mode()&os.ModeCharDevice != 0 {
 		return "" // a terminal, not a pipe
 	}
-	data, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		return ""
+	if !peek {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return ""
+		}
+		return strings.Trim(string(data), " \t\n")
 	}
-	return strings.Trim(string(data), " \t\n")
+	ch := make(chan string, 1)
+	go func() {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			ch <- ""
+			return
+		}
+		ch <- strings.Trim(string(data), " \t\n")
+	}()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(250 * time.Millisecond):
+		return "" // nothing waiting; treat the inherited pipe as empty
+	}
 }
 
 func runTodoAdd(args []string) int {

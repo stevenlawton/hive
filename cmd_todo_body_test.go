@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // pipeStdin replaces os.Stdin with a pipe carrying s, the way a shell pipe or a
@@ -179,5 +180,50 @@ func TestEditTakesABodyFile(t *testing.T) {
 	}
 	if got[0].Description != body {
 		t.Errorf("description = %q, want %q", got[0].Description, body)
+	}
+}
+
+// Reading stdin to look for a conflict must not block on an inherited pipe that
+// nobody writes to. That hangs every scripted caller — it hung this project's
+// own tooling — and the hang is worse than the conflict it was looking for.
+func TestPeekingAtStdinDoesNotBlock(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close() // deliberately never written to and never closed in time
+	orig := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = orig }()
+
+	done := make(chan string, 1)
+	go func() { done <- pipedBody(true) }()
+	select {
+	case got := <-done:
+		if got != "" {
+			t.Errorf("peek returned %q from an empty pipe", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("pipedBody(peek=true) blocked on an open pipe")
+	}
+}
+
+// With no other body given the pipe is the intended source, so it is worth
+// waiting for — a slow producer must not lose its body.
+func TestReadingStdinAsTheBodyWaitsForIt(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = orig }()
+	go func() {
+		time.Sleep(400 * time.Millisecond) // slower than the peek timeout
+		w.WriteString("a slow body\n")
+		w.Close()
+	}()
+	if got := pipedBody(false); got != "a slow body" {
+		t.Errorf("got %q, want the slow body — blocking read must wait", got)
 	}
 }
