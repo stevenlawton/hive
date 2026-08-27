@@ -14,18 +14,27 @@ plan you write goes in a file on disk. What comes back to the caller is a single
 line of text.
 
 Your final message must be exactly one of these, and nothing else — no preamble,
-no summary, no "I've completed the analysis", no bullet list of what you found:
+no summary, no "I've completed the analysis", no bullet list of what you found.
+**Lead with words, not the id.** A bare id means nothing to the human who
+eventually reads it — in chat, on the bus, in a transcript — so open with a
+short paraphrase of the ticket's subject (six words or fewer is plenty) and keep
+the id as a small parenthetical handle, because that is the one thing the
+commands after this line still need:
 
 ```
-lxg → plan-review, 2 open questions
-lxg → FAILED, could not locate the reported endpoint
+stdin body for todo add (lxg) → plan-review, 2 open questions
+stdin body for todo add (lxg) → FAILED, could not locate the reported endpoint
 ```
+
+You already have the subject in hand from `hive todo show <id>` in §2, so this
+costs no extra lookup.
 
 Other permitted lines, covered below: `SKIPPED`, `OBSOLETE`.
 
 If you are tempted to add a second line explaining something, that impulse is
 the failure mode this design exists to prevent. Put it in the plan artifact. The
-human reads the artifact in the hive drawer; the caller reads your one line.
+human reads the artifact in the hive drawer; the caller reads your one line — and
+now so does anyone skimming the bus or a transcript later, without a lookup.
 
 Singular/plural: write `1 open question`, `2 open questions`, `0 open questions`.
 
@@ -46,7 +55,7 @@ Three cases:
 - **`🔒@<owner>`** — another worktree holds it. Return and stop:
 
   ```
-  <id> → SKIPPED, claimed by <owner>
+  <subject fragment> (<id>) → SKIPPED, claimed by <owner>
   ```
 
 - **`(yours)`** — this worktree already holds it. Almost always a previous run
@@ -113,7 +122,7 @@ Research sometimes shows the ticket is already fixed, or was never broken.
 Say so and stop — do not invent work to justify the dispatch:
 
 ```
-<id> → OBSOLETE, guard added at OrderController.php:212 in a3f91c2, reported crash cannot occur
+<subject fragment> (<id>) → OBSOLETE, guard added at OrderController.php:212 in a3f91c2, reported crash cannot occur
 ```
 
 Cite the evidence in the line: a file:line, a commit, a test that already covers

@@ -55,15 +55,15 @@ concurrently. Give each one its ticket id and its worktree path.
 
 A table: ticket, outcome, files, findings.
 
-**Name every ticket by its subject, not its id.** The workers return
-`<id> → ...` because the id is a machine handle they hand back for re-queueing.
-It is not what you show a human. `dmy → plan-review, 3 open questions` tells the
-reader nothing; "Worktree creation never bootstraps the new checkout" tells them
-what you spent the last ten minutes on.
+**Name every ticket by its subject, not its id.** The workers already lead their
+returned line with a short subject paraphrase and keep the id as a parenthetical
+— `worktree bootstrap (dmy) → plan-review, 3 open questions`, not a bare id — so
+just carry that straight into your table. Do not spend an extra `hive todo show
+<id>` call re-deriving what the line already told you; that lookup was only ever
+a workaround for workers that returned the id alone, and they no longer do.
 
-Resolve each one with `hive todo show <id>` — one cheap CLI call per ticket, no
-plan content — and put the subject in the first column, with the id kept only as
-a small handle for the commands the human might run next.
+If a line still comes back id-first — an older worker, or one that slipped —
+resolve it with `hive todo show <id>` rather than showing the human a bare id.
 
 **Do not read the diffs. Do not read the findings.** They are in the artifact and
 on the branch, which is where the human reads them at triage. Pulling them in

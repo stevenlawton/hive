@@ -12,19 +12,30 @@ the scarce resource. The diff lives in git; the findings live in the plan
 artifact. What comes back to the caller is a single line.
 
 Your final message must be exactly one of these and nothing else — no summary of
-what you changed, no list of findings, no diff:
+what you changed, no list of findings, no diff. **Lead with words, not the id.**
+A bare id means nothing to the human who eventually reads it — in chat, on the
+bus, in a transcript — so open with a short paraphrase of the ticket's subject
+(six words or fewer is plenty) and keep the id as a small parenthetical handle,
+because that is the one thing the commands after this line still need:
 
 ```
-lxg → triage, 3 files, 1 Confirmed finding
-lxg → STALE, plan base 9fd348c but api.go moved
-lxg → FAILED, could not reach a green suite
-lxg → QUEUED, overlaps dmy
-lxg → SKIPPED, claimed by split-2
+stdin body for todo add (lxg) → triage, 3 files, 1 Confirmed finding
+stdin body for todo add (lxg) → STALE, plan base 9fd348c but api.go moved
+stdin body for todo add (lxg) → FAILED, could not reach a green suite
+stdin body for todo add (lxg) → QUEUED, overlaps the worktree-bootstrap build
+stdin body for todo add (lxg) → SKIPPED, claimed by split-2
 ```
+
+You already have the subject in hand — you read it off `hive todo show <id>` (or
+the ticket line handed to you) before doing anything else, so this costs no
+extra lookup. If another ticket shows up inside the detail text (an overlap, a
+prior claim), name it the same way when you can do so cheaply; do not spend an
+extra `hive todo show` call chasing it if it isn't already in front of you.
 
 Singular/plural: `1 file`, `3 files`, `0 Confirmed findings`, `1 Confirmed finding`.
 
-The human reads the artifact at triage. The caller reads your one line.
+The human reads the artifact at triage. The caller reads your one line — and now
+so does anyone skimming the bus or a transcript later, without a lookup.
 
 ---
 
@@ -43,7 +54,7 @@ Three cases:
 - **`🔒@<owner>`** — another worktree holds it. Return and stop:
 
   ```
-  <id> → SKIPPED, claimed by <owner>
+  <subject fragment> (<id>) → SKIPPED, claimed by <owner>
   ```
 
 - **`(yours)`** — this worktree already holds it. Almost always a previous run
@@ -62,7 +73,7 @@ Three cases:
   once more to take it back, and carry on.
 
 Now read the contract at `<main worktree>/docs/plans/<id>.md`. If it is not
-there, return `<id> → FAILED, no plan artifact at docs/plans/<id>.md`. You do
+there, return `<subject fragment> (<id>) → FAILED, no plan artifact at docs/plans/<id>.md`. You do
 not write your own plan — a ticket without one is not ready to build.
 
 ### Guard A — staleness
@@ -81,7 +92,7 @@ hive todo state <id> plan-review --note "plan stale: <files> moved since <base>"
 ```
 
 ```
-<id> → STALE, plan base 9fd348c but api.go moved
+<subject fragment> (<id>) → STALE, plan base 9fd348c but api.go moved
 ```
 
 This is not a failure. It is the guard working — building on a stale contract is
@@ -93,7 +104,7 @@ If another in-flight build's contract names any file yours does, stop before
 starting rather than racing it:
 
 ```
-<id> → QUEUED, overlaps dmy
+<subject fragment> (<id>) → QUEUED, overlaps <other ticket, named the same way if you have it in hand>
 ```
 
 Your caller re-queues you. Do not try to sequence yourself around it.
@@ -137,7 +148,7 @@ If there is no gate script, use the repo's plain test command (`go test ./...`,
 `php artisan test`, `npm test` — whatever CLAUDE.md or the Makefile says).
 
 Green is required. If you cannot get there, return
-`<id> → FAILED, could not reach a green suite` — do not commit a red tree and
+`<subject fragment> (<id>) → FAILED, could not reach a green suite` — do not commit a red tree and
 leave it for triage.
 
 ## 4. Review — fan out in one message
