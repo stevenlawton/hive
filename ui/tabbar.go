@@ -7,6 +7,17 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// Tone backgrounds are deliberately muted and deliberately NOT the palette's
+// ColorOrange / ColorRed: those already mean "active tab" and "flashing tab"
+// respectively, and a tone that borrows one is not a signal, it is a collision.
+// They also sit behind text you have to read all day, so they are dark enough
+// to carry light foreground rather than glare.
+var (
+	toneWarnBG   = lipgloss.Color("#6b5314")
+	toneDangerBG = lipgloss.Color("#7a2222")
+	toneInfoBG   = lipgloss.Color("#243d63")
+)
+
 // TabTone is how urgently a tab wants attention. It is deliberately about
 // presentation rather than cause: the ui package renders a tone, and the caller
 // decides what earns one.
@@ -167,11 +178,11 @@ func toneStyle(tone TabTone, active bool) lipgloss.Style {
 	var bg color.Color
 	switch tone {
 	case ToneDanger:
-		bg = ColorRed
+		bg = toneDangerBG
 	case ToneWarn:
-		bg = ColorOrange
+		bg = toneWarnBG
 	case ToneInfo:
-		bg = ColorBlue
+		bg = toneInfoBG
 	default:
 		if active {
 			return TabActiveStyle
@@ -179,7 +190,7 @@ func toneStyle(tone TabTone, active bool) lipgloss.Style {
 		return TabInactiveStyle
 	}
 	s := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#1a1a2e")).
+		Foreground(lipgloss.Color("#e8e8e8")).
 		Background(bg).
 		Padding(0, 1)
 	if active {

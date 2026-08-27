@@ -168,3 +168,36 @@ func TestTabBarRightStatusTooNarrowIsDropped(t *testing.T) {
 		t.Errorf("bar overflowed its width: %d", lipgloss.Width(got))
 	}
 }
+
+// A tone must not borrow a colour the bar already uses for something else.
+// ToneWarn was ColorOrange, which is exactly TabActiveStyle's background, so a
+// wrap-up tab was indistinguishable from the active one; ToneDanger was
+// ColorRed, which is TabFlashStyle. A signal that looks like another signal is
+// not a signal.
+func TestTabTonesDoNotCollideWithExistingMeanings(t *testing.T) {
+	active := TabActiveStyle.Render(" x ")
+	flash := TabFlashStyle.Render(" x ")
+	inactive := TabInactiveStyle.Render(" x ")
+
+	for _, tone := range []TabTone{ToneWarn, ToneDanger, ToneInfo} {
+		got := toneStyle(tone, false).Render(" x ")
+		if got == active {
+			t.Errorf("tone %v renders identically to the ACTIVE tab", tone)
+		}
+		if got == flash {
+			t.Errorf("tone %v renders identically to a FLASHING tab", tone)
+		}
+		if got == inactive {
+			t.Errorf("tone %v renders identically to an untoned tab", tone)
+		}
+	}
+	// And the tones must differ from each other.
+	seen := map[string]TabTone{}
+	for _, tone := range []TabTone{ToneWarn, ToneDanger, ToneInfo} {
+		r := toneStyle(tone, false).Render(" x ")
+		if prev, dup := seen[r]; dup {
+			t.Errorf("tones %v and %v render identically", prev, tone)
+		}
+		seen[r] = tone
+	}
+}
