@@ -1062,6 +1062,8 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		m.acknowledgeTab(active.ID)
 	}
 
+	m.applySessionVerdicts(time.Now())
+
 	sessions, err := TmuxListSessions()
 	if err != nil {
 		return m, healthTick()

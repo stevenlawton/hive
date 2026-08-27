@@ -1,9 +1,22 @@
 package ui
 
 import (
+	"image/color"
 	"strings"
 
 	"charm.land/lipgloss/v2"
+)
+
+// TabTone is how urgently a tab wants attention. It is deliberately about
+// presentation rather than cause: the ui package renders a tone, and the caller
+// decides what earns one.
+type TabTone int
+
+const (
+	ToneNone TabTone = iota
+	ToneInfo
+	ToneWarn
+	ToneDanger
 )
 
 // Tab represents a single tab in the tab bar.
@@ -11,6 +24,7 @@ type Tab struct {
 	ID       string
 	Label    string
 	Flashing bool
+	Tone     TabTone
 }
 
 // TabBar manages a row of tabs.
@@ -114,21 +128,59 @@ func (tb *TabBar) ActiveTab() *Tab {
 func (tb *TabBar) TabWidths() []int {
 	widths := make([]int, len(tb.Tabs))
 	for i, tab := range tb.Tabs {
-		label := " " + tab.Label + " "
-		var style lipgloss.Style
-		switch {
-		case tab.Flashing:
-			style = TabFlashStyle
-		case tab.ID == HomeTabID:
-			style = TabHomeStyle
-		case i == tb.ActiveIdx:
-			style = TabActiveStyle
-		default:
-			style = TabInactiveStyle
-		}
-		widths[i] = lipgloss.Width(style.Render(label))
+		widths[i] = lipgloss.Width(tb.renderTab(i, tab))
 	}
 	return widths
+}
+
+// renderTab is the single place a tab's appearance is decided. TabWidths and
+// View both go through it: the mouse hit zones are derived from the former and
+// drawn by the latter, so any divergence puts clicks on the wrong tab.
+func (tb *TabBar) renderTab(i int, tab Tab) string {
+	label := " " + tab.Label + " "
+	var style lipgloss.Style
+	switch {
+	case tab.Flashing:
+		// The session is asking for input now. That outranks a verdict, which
+		// is advice about the next few minutes.
+		style = TabFlashStyle
+	case tab.ID == HomeTabID:
+		style = TabHomeStyle
+	case tab.Tone != ToneNone:
+		style = toneStyle(tab.Tone, i == tb.ActiveIdx)
+	case i == tb.ActiveIdx:
+		style = TabActiveStyle
+	default:
+		style = TabInactiveStyle
+	}
+	return style.Render(label)
+}
+
+// toneStyle keeps the padding of the normal tab styles so a toned tab occupies
+// exactly the same cells as an untoned one.
+func toneStyle(tone TabTone, active bool) lipgloss.Style {
+	var bg color.Color
+	switch tone {
+	case ToneDanger:
+		bg = ColorRed
+	case ToneWarn:
+		bg = ColorOrange
+	case ToneInfo:
+		bg = ColorBlue
+	default:
+		if active {
+			return TabActiveStyle
+		}
+		return TabInactiveStyle
+	}
+	s := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#1a1a2e")).
+		Background(bg).
+		Padding(0, 1)
+	if active {
+		s = s.Bold(true)
+	}
+	return s
 }
 
 // SetFlashing marks a tab as flashing by ID.
@@ -149,19 +201,7 @@ func (tb *TabBar) View() string {
 
 	var parts []string
 	for i, tab := range tb.Tabs {
-		label := " " + tab.Label + " "
-		var style lipgloss.Style
-		switch {
-		case tab.Flashing:
-			style = TabFlashStyle
-		case tab.ID == HomeTabID:
-			style = TabHomeStyle
-		case i == tb.ActiveIdx:
-			style = TabActiveStyle
-		default:
-			style = TabInactiveStyle
-		}
-		parts = append(parts, style.Render(label))
+		parts = append(parts, tb.renderTab(i, tab))
 	}
 
 	tabs := strings.Join(parts, "")

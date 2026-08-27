@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/stevenlawton/hive/ui"
 )
 
 // Session telemetry answers one question per session: hand the work off, or
@@ -556,4 +558,89 @@ func loadTelemetryConfig() TelemetryConfig {
 		return defaultTelemetryConfig()
 	}
 	return cfg.Telemetry
+}
+
+// ------------------------------------------------------------------- the fleet
+
+// readSessionSnapshots gives the TUI every session it can place, keyed by the
+// tmux session name so a tab can find its own verdict without a reverse lookup.
+func readSessionSnapshots(cfg TelemetryConfig, now time.Time) map[string]SessionSnapshot {
+	return readSessionSnapshotsFrom(sessionSnapshotDir(), cfg, now)
+}
+
+func readSessionSnapshotsFrom(dir string, cfg TelemetryConfig, now time.Time) map[string]SessionSnapshot {
+	out := map[string]SessionSnapshot{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		s, ok := readSnapshot(path)
+		if !ok {
+			continue
+		}
+		if cfg.PruneAfterHours > 0 && !s.CapturedAt.IsZero() &&
+			now.Sub(s.CapturedAt) > time.Duration(cfg.PruneAfterHours)*time.Hour {
+			_ = os.Remove(path)
+			continue
+		}
+		// A snapshot with no tmux session cannot be attached to a pane. Filing
+		// it under the empty key would let one unmanaged session claim every
+		// tab that has not reported.
+		if s.TmuxSession == "" {
+			continue
+		}
+		s.Stale = snapshotStale(s, cfg, now)
+		out[s.TmuxSession] = s
+	}
+	return out
+}
+
+// tabToneForVerdict decides what earns colour in the tab bar. Only a verdict
+// asking for action does: if keep_going tinted a tab then every tab would be
+// tinted all the time, and none of them would mean anything.
+//
+// A stale snapshot earns nothing either. Its verdict was true when the session
+// was still reporting, and colouring a tab red for a session that stopped an
+// hour ago sends you somewhere pointless.
+func tabToneForVerdict(verdict string, stale bool) ui.TabTone {
+	if stale {
+		return ui.ToneNone
+	}
+	switch verdict {
+	case VerdictWrapUp:
+		return ui.ToneWarn
+	case VerdictHandOff:
+		return ui.ToneDanger
+	case VerdictPark:
+		return ui.ToneInfo
+	default:
+		return ui.ToneNone
+	}
+}
+
+// applySessionVerdicts colours each tab by its session's verdict, so "which of
+// these nine needs handing off" is answerable without opening any of them.
+//
+// A tab with no snapshot loses its tone rather than keeping the last one: a
+// session that stopped reporting has no verdict, and holding the old colour
+// would assert something nobody is still checking.
+func (m model) applySessionVerdicts(now time.Time) {
+	if m.cfg == nil || !m.cfg.Telemetry.Enabled || m.workspace == nil || m.workspace.TabBar == nil {
+		return
+	}
+	snaps := readSessionSnapshots(m.cfg.Telemetry, now)
+	for i := range m.workspace.TabBar.Tabs {
+		tab := &m.workspace.TabBar.Tabs[i]
+		s, ok := snaps[TmuxSessionName(tab.ID, false)]
+		if !ok {
+			tab.Tone = ui.ToneNone
+			continue
+		}
+		tab.Tone = tabToneForVerdict(s.Verdict, s.Stale)
+	}
 }

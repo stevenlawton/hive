@@ -84,3 +84,50 @@ func TestTabBarFlashing(t *testing.T) {
 		t.Error("expected tab to stop flashing")
 	}
 }
+
+// A tone must change how a tab looks without changing how wide it is: the
+// mouse hit zones are computed from TabWidths, and View and TabWidths pick
+// their style through the same helper precisely so they cannot drift.
+func TestTabToneDoesNotChangeWidth(t *testing.T) {
+	plain := NewTabBar()
+	plain.Add("a", "repo-one")
+	toned := NewTabBar()
+	toned.Add("a", "repo-one")
+	toned.Tabs[0].Tone = ToneDanger
+
+	pw, tw := plain.TabWidths(), toned.TabWidths()
+	if pw[0] != tw[0] {
+		t.Errorf("width changed with tone: %d vs %d", pw[0], tw[0])
+	}
+	if plain.View() == toned.View() {
+		t.Error("a toned tab should render differently from a plain one")
+	}
+}
+
+func TestTabToneNoneRendersAsBefore(t *testing.T) {
+	plain := NewTabBar()
+	plain.Add("a", "repo-one")
+	toned := NewTabBar()
+	toned.Add("a", "repo-one")
+	toned.Tabs[0].Tone = ToneNone
+	if plain.View() != toned.View() {
+		t.Error("ToneNone must be indistinguishable from no tone at all")
+	}
+}
+
+// Flashing means the session is asking for input right now. That outranks a
+// verdict, which is advice about the next few minutes.
+func TestFlashingOutranksTone(t *testing.T) {
+	tb := NewTabBar()
+	tb.Add("a", "repo-one")
+	tb.Tabs[0].Tone = ToneDanger
+	tb.Tabs[0].Flashing = true
+
+	flashOnly := NewTabBar()
+	flashOnly.Add("a", "repo-one")
+	flashOnly.Tabs[0].Flashing = true
+
+	if tb.View() != flashOnly.View() {
+		t.Error("a flashing tab should render as flashing regardless of tone")
+	}
+}

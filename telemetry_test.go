@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stevenlawton/hive/ui"
 )
 
 func testTelemetryConfig() TelemetryConfig {
@@ -490,5 +492,132 @@ func TestPartialTelemetryConfigKeepsDefaults(t *testing.T) {
 	}
 	if cfg.Telemetry.CacheTTLMinutes != 60 {
 		t.Errorf("CacheTTLMinutes = %v, want the default 60", cfg.Telemetry.CacheTTLMinutes)
+	}
+}
+
+func TestReadSessionSnapshotsKeysByTmuxSession(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	cfg := testTelemetryConfig()
+
+	fresh := SessionSnapshot{SessionID: "a", TmuxSession: "hive-workspace",
+		CapturedAt: now.Add(-3 * time.Second), Verdict: VerdictHandOff}
+	stale := SessionSnapshot{SessionID: "b", TmuxSession: "hive-other",
+		CapturedAt: now.Add(-10 * time.Minute), Verdict: VerdictHandOff}
+	if err := writeSnapshot(filepath.Join(dir, "a.json"), fresh); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSnapshot(filepath.Join(dir, "b.json"), stale); err != nil {
+		t.Fatal(err)
+	}
+
+	got := readSessionSnapshotsFrom(dir, cfg, now)
+	if len(got) != 2 {
+		t.Fatalf("got %d snapshots, want 2", len(got))
+	}
+	if got["hive-workspace"].Stale {
+		t.Error("a 3s-old snapshot should not be marked stale")
+	}
+	if !got["hive-other"].Stale {
+		t.Error("a 10m-old snapshot should be marked stale")
+	}
+}
+
+// A snapshot with no tmux session cannot be attached to a pane. Keeping it
+// under an empty key would let one unmanaged session claim every untagged tab.
+func TestReadSessionSnapshotsSkipsUnplaceable(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	if err := writeSnapshot(filepath.Join(dir, "a.json"),
+		SessionSnapshot{SessionID: "a", CapturedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSessionSnapshotsFrom(dir, testTelemetryConfig(), now); len(got) != 0 {
+		t.Errorf("got %v, want nothing placeable", got)
+	}
+}
+
+func TestReadSessionSnapshotsMissingDirIsEmpty(t *testing.T) {
+	got := readSessionSnapshotsFrom(filepath.Join(t.TempDir(), "nope"), testTelemetryConfig(), time.Now())
+	if len(got) != 0 {
+		t.Errorf("a missing directory should read as empty, got %v", got)
+	}
+}
+
+// Only a verdict that wants action earns colour. If keep_going tinted a tab,
+// every tab would be tinted all the time and none of them would mean anything.
+func TestTabToneForVerdict(t *testing.T) {
+	cases := []struct {
+		verdict string
+		stale   bool
+		want    ui.TabTone
+	}{
+		{VerdictKeepGoing, false, ui.ToneNone},
+		{VerdictWrapUp, false, ui.ToneWarn},
+		{VerdictHandOff, false, ui.ToneDanger},
+		{VerdictPark, false, ui.ToneInfo},
+		{VerdictHandOff, true, ui.ToneNone}, // stale: no longer a live claim
+		{"", false, ui.ToneNone},
+	}
+	for _, c := range cases {
+		if got := tabToneForVerdict(c.verdict, c.stale); got != c.want {
+			t.Errorf("tabToneForVerdict(%q, stale=%v) = %v, want %v", c.verdict, c.stale, got, c.want)
+		}
+	}
+}
+
+// The join from a snapshot to a pane goes tab.ID -> TmuxSessionName -> snapshot.
+// Getting it wrong would colour the wrong tab, or silently colour none, and
+// neither failure is visible without running the TUI.
+func TestApplySessionVerdictsColoursTheMatchingTab(t *testing.T) {
+	rt := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", rt)
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+
+	write := func(id, tmux, verdict string, at time.Time) {
+		s := SessionSnapshot{SessionID: id, TmuxSession: tmux, Verdict: verdict, CapturedAt: at}
+		if err := writeSnapshot(sessionSnapshotPath(id), s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a", TmuxSessionName("alpha", false), VerdictHandOff, now.Add(-2*time.Second))
+	write("b", TmuxSessionName("beta", false), VerdictWrapUp, now.Add(-2*time.Second))
+	write("c", TmuxSessionName("gamma", false), VerdictHandOff, now.Add(-30*time.Minute)) // stale
+
+	wv := ui.NewWorkspaceView()
+	wv.TabBar.Add("alpha", "alpha")
+	wv.TabBar.Add("beta", "beta")
+	wv.TabBar.Add("gamma", "gamma")
+	wv.TabBar.Add("delta", "delta") // never reported
+
+	m := model{cfg: &Config{Telemetry: testTelemetryConfig()}, workspace: wv}
+	m.applySessionVerdicts(now)
+
+	want := map[string]ui.TabTone{
+		"alpha": ui.ToneDanger,
+		"beta":  ui.ToneWarn,
+		"gamma": ui.ToneNone, // stale verdicts do not colour
+		"delta": ui.ToneNone, // no snapshot at all
+	}
+	for _, tab := range wv.TabBar.Tabs {
+		if w, ok := want[tab.ID]; ok && tab.Tone != w {
+			t.Errorf("tab %q tone = %v, want %v", tab.ID, tab.Tone, w)
+		}
+	}
+}
+
+func TestApplySessionVerdictsDisabledLeavesTabsAlone(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	wv := ui.NewWorkspaceView()
+	wv.TabBar.Add("alpha", "alpha")
+	wv.TabBar.Tabs[len(wv.TabBar.Tabs)-1].Tone = ui.ToneDanger
+
+	cfg := testTelemetryConfig()
+	cfg.Enabled = false
+	m := model{cfg: &Config{Telemetry: cfg}, workspace: wv}
+	m.applySessionVerdicts(time.Now())
+
+	if wv.TabBar.Tabs[len(wv.TabBar.Tabs)-1].Tone != ui.ToneDanger {
+		t.Error("disabled telemetry must not touch tab tones at all")
 	}
 }
