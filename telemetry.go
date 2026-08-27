@@ -49,7 +49,7 @@ func defaultTelemetryConfig() TelemetryConfig {
 		ParkAtPct:         90,
 		RateLimitFloorPct: 60,
 		CacheTTLMinutes:   60,
-		StaleAfterSeconds: 30,
+		StaleAfterSeconds: 300,
 		PruneAfterHours:   24,
 	}
 }
@@ -560,22 +560,47 @@ func readSessionSnapshotsFrom(dir string, cfg TelemetryConfig, now time.Time) ma
 			continue
 		}
 		s.Stale = snapshotStale(s, cfg, now)
+
+		// Two Claude sessions in one directory resolve to the same tmux name,
+		// so snapshots collide. The worst verdict wins: taking the freshest
+		// instead let an empty session mask a heavy one in the same directory,
+		// which is how a 59%/$102 session went uncoloured.
+		if prev, clash := out[s.TmuxSession]; clash &&
+			verdictSeverity(prev.Verdict) >= verdictSeverity(s.Verdict) {
+			continue
+		}
 		out[s.TmuxSession] = s
 	}
 	return out
 }
 
+// verdictSeverity ranks verdicts so a collision can be resolved without hiding
+// the one that wanted attention. Unknown ranks lowest.
+func verdictSeverity(verdict string) int {
+	switch verdict {
+	case VerdictHandOff:
+		return 3
+	case VerdictWrapUp:
+		return 2
+	case VerdictPark:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // tabToneForVerdict decides what earns colour in the tab bar. Only a verdict
 // asking for action does: if keep_going tinted a tab then every tab would be
 // tinted all the time, and none of them would mean anything.
-//
-// A stale snapshot earns nothing either. Its verdict was true when the session
-// was still reporting, and colouring a tab red for a session that stopped an
-// hour ago sends you somewhere pointless.
 func tabToneForVerdict(verdict string, stale bool) ui.TabTone {
-	if stale {
-		return ui.ToneNone
-	}
+	// Staleness deliberately does NOT clear the tone. Context and cost do not
+	// decay while a session sits idle, so the verdict is still true — the
+	// session is just quiet. And statuslines refresh on activity rather than on
+	// a timer (no refreshInterval is configured), so going quiet is the normal
+	// state of a session waiting on a human. Clearing the colour there would
+	// hide precisely the sessions worth flagging: idle and holding a big
+	// context is the strongest hand-off candidate there is.
+	_ = stale
 	switch verdict {
 	case VerdictWrapUp:
 		return ui.ToneWarn
