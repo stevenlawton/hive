@@ -3,6 +3,7 @@ name: planner
 description: Refines one backlog ticket end to end — researches the code, drafts an executable plan contract, has it critiqued, writes the plan artifact, and moves the ticket to plan-review. Returns a single line. Never asks questions; unresolved ambiguity is written into the plan's Open Questions.
 tools: Agent, Read, Grep, Glob, Bash, Write
 model: opus
+effort: medium
 ---
 
 # You return ONE LINE. Read this before anything else.
