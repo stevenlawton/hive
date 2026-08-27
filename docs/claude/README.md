@@ -8,6 +8,13 @@ drift apart.
 ```
 docs/claude/agents/planner.md         -> ~/.claude/agents/planner.md
 docs/claude/agents/builder.md         -> ~/.claude/agents/builder.md
+docs/claude/agents/implementer.md     -> ~/.claude/agents/implementer.md
+docs/claude/agents/test-writer.md     -> ~/.claude/agents/test-writer.md
+docs/claude/agents/plan-critic.md     -> ~/.claude/agents/plan-critic.md
+docs/claude/agents/context-loader.md  -> ~/.claude/agents/context-loader.md
+docs/claude/agents/review-router.md   -> ~/.claude/agents/review-router.md
+docs/claude/agents/go-reviewer.md     -> ~/.claude/agents/go-reviewer.md
+docs/claude/agents/php-reviewer.md    -> ~/.claude/agents/php-reviewer.md
 docs/claude/commands/*.md             -> ~/.claude/commands/*.md
 docs/claude/templates/plan-artifact.md -> ~/.claude/docs/templates/plan-artifact.md
 ```
@@ -34,12 +41,32 @@ deleting the checkout.
 Verify them at any time:
 
 ```bash
-for f in ~/.claude/agents/{planner,builder}.md \
+for f in ~/.claude/agents/{planner,builder,implementer,test-writer,plan-critic,context-loader,review-router,go-reviewer,php-reviewer}.md \
          ~/.claude/commands/{refine,build,backlog-loop,ship,next,pickup,todo}.md \
          ~/.claude/docs/templates/plan-artifact.md; do
   [ -s "$f" ] || echo "BROKEN: $f"
 done
 ```
+
+## Model allocation
+
+Set per agent in frontmatter. `effort` accepts `medium`, `high`, `xhigh`.
+
+| agent | model | why |
+|---|---|---|
+| `go-reviewer`, `php-reviewer` | opus | where the non-obvious findings come from |
+| `plan-critic` | opus | adversarial reasoning about a design |
+| `planner` | opus, `effort: medium` | full capability, less deliberation — its contract is what every later agent executes |
+| `builder` | opus | orchestrates; the thinking is delegated, so this is the weakest case for opus |
+| `implementer` | sonnet | executes an already-detailed contract, and a reviewer checks it |
+| `test-writer` | sonnet | note: reproduce mode is the risky half — a test that passes against the bug certifies it |
+| `context-loader` | sonnet | token-heavy digest work; exactly what you do not want on opus |
+| `review-router` | haiku | detects language and delegates |
+
+Sizing, before anyone spends time here: model choice is roughly 5x. Session
+length is roughly 26x — cost per turn rises as context accumulates, so a long
+session re-reads itself to death. Measure with `hive tokens` before tuning
+models; this is the smaller lever.
 
 ## What each file is
 
