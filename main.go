@@ -43,6 +43,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Serve the backlog alongside the TUI when configured. It runs in its own
+	// goroutine and its failures are printed, never fatal: hive is a terminal
+	// tool first, and a port already in use must not stop it opening.
+	if cfg.WebPort > 0 {
+		go serveAlongside(cfg.WebPort)
+	}
+
 	if err := startSessionWatcher(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: session watcher failed to start: %v\n", err)
 	}

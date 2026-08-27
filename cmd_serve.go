@@ -562,3 +562,19 @@ func apiBuild(w http.ResponseWriter, r *http.Request) {
 		"path":  branch + " @ " + commit[:12],
 	})
 }
+
+// serveAlongside runs the web UI beside the TUI. It never takes hive down: a
+// port in use, or a token it cannot write, is reported and shrugged off.
+func serveAlongside(port int) {
+	token, err := webToken()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hive web: %v\n", err)
+		return
+	}
+	addr := fmt.Sprintf("0.0.0.0:%d", port)
+	srv := &http.Server{Addr: addr, Handler: newServeMux(token), ReadHeaderTimeout: 10 * time.Second}
+	fmt.Printf("hive web on http://%s:%d/?t=%s\n", hostGuess("0.0.0.0"), port, token)
+	if err := srv.ListenAndServe(); err != nil {
+		fmt.Fprintf(os.Stderr, "hive web: %v\n", err)
+	}
+}

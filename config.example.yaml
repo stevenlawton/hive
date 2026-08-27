@@ -3,6 +3,13 @@
 
 # Global settings
 repos_dir: ~/repos              # Directory to scan for repos
+
+# Serve the backlog over HTTP alongside the TUI, so it can be read and reviewed
+# from a phone. 0 or absent is off. The URL, token included, is printed on start
+# and the token is kept at ~/.local/share/hive/web-token.
+# Binds 0.0.0.0 so a tailnet address works — Tailscale is the security boundary,
+# so do not expose this to the internet.
+web_port: 8787
 scratch_dir: /tmp/hive-scratch  # Where scratch instances are created
 default_action: claude           # "claude" (start claude on open) or "shell" (just a shell)
 

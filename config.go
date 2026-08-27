@@ -38,7 +38,10 @@ type WorkspaceConfig struct {
 }
 
 type Config struct {
-	ReposDir      string                     `yaml:"repos_dir"`
+	ReposDir string `yaml:"repos_dir"`
+	// WebPort serves the backlog over HTTP alongside the TUI. 0 or absent is
+	// off; the URL with its token is printed on start.
+	WebPort       int                        `yaml:"web_port,omitempty"`
 	ScratchDir    string                     `yaml:"scratch_dir"`
 	DefaultAction string                     `yaml:"default_action"`
 	Notifications NotificationConfig         `yaml:"notifications"`
