@@ -336,7 +336,9 @@ func apiReview(w http.ResponseWriter, r *http.Request) {
 		case post.Kind == "plan":
 			ts[i].State = StateUnrefined // back to the planner
 		case post.Verdict == "approve":
-			ts = toggleTodoDone(ts, i) // the build is accepted
+			// Set, not toggle: a second acceptance of the same build must not
+			// un-accept it.
+			ts[i].Done = true
 			ts[i].State = StateUnrefined
 		default:
 			ts[i].State = StateReady // the plan stands; the build does not
@@ -370,7 +372,9 @@ func apiReview(w http.ResponseWriter, r *http.Request) {
 func checkVerdict(p reviewPost) error {
 	switch p.Verdict {
 	case "approve":
-		if len(p.Comments) > 0 {
+		// Comments block approval of a plan, but not acceptance of a build:
+		// notes on work you are taking are the ordinary outcome of triage.
+		if p.Kind == "plan" && len(p.Comments) > 0 {
 			return fmt.Errorf("a plan you hold %d comment(s) against cannot be approved — send it back, or clear them", len(p.Comments))
 		}
 	case "changes":
