@@ -427,6 +427,31 @@ func TestRenderTelemetrySuffixStaleSaysSo(t *testing.T) {
 // The join key from a payload to a hive pane. Deliberately derived from fields
 // the payload already carries — the statusline is on a hot path and must not
 // shell out to git to work out where it is.
+// The join key, against pairs observed live. hive names a worktree session
+// <parent>-wt-<branch> (worktree.go:241), not after the worktree directory —
+// so deriving it from the directory basename missed EVERY worktree session,
+// which is every split. Tabs still matched for main checkouts by coincidence,
+// because both sides derived the same wrong string there.
+func TestPayloadTmuxSessionMatchesRealSessionNames(t *testing.T) {
+	cases := []struct{ projectDir, want string }{
+		{"/home/steve/repos/workspace/.worktrees/split-2", "hive-workspace-wt-split-2"},
+		{"/home/steve/repos/workspace/.worktrees/split-3", "hive-workspace-wt-split-3"},
+		{"/home/steve/repos/he-events/.worktrees/split-2", "hive-he-events-wt-split-2"},
+		{"/home/steve/repos/stevenlawton.com/.worktrees/split-1", "hive-stevenlawton_com-wt-split-1"},
+		{"/home/steve/repos/workspace", "hive-workspace"},
+		{"/home/steve/repos/stevenlawton.com", "hive-stevenlawton_com"},
+		// A sub-directory of a worktree still belongs to that worktree's session.
+		{"/home/steve/repos/workspace/.worktrees/split-2/ui", "hive-workspace-wt-split-2"},
+	}
+	for _, c := range cases {
+		var p statuslinePayload
+		p.Workspace.ProjectDir = c.projectDir
+		if got := payloadTmuxSession(p); got != c.want {
+			t.Errorf("payloadTmuxSession(%q) = %q, want %q", c.projectDir, got, c.want)
+		}
+	}
+}
+
 func TestPayloadTmuxSession(t *testing.T) {
 	var p statuslinePayload
 	p.Workspace.ProjectDir = "/home/steve/repos/workspace"
@@ -440,8 +465,8 @@ func TestPayloadTmuxSession(t *testing.T) {
 		Name   string `json:"name"`
 		Branch string `json:"branch"`
 	}{Name: "split-2"}
-	if got := payloadTmuxSession(p); got != "hive-split-2" {
-		t.Errorf("got %q, want hive-split-2", got)
+	if got := payloadTmuxSession(p); got != "hive-workspace" {
+		t.Errorf("got %q, want the repo session — a worktree NAME alone is not the key", got)
 	}
 
 	if got := payloadTmuxSession(statuslinePayload{}); got != "" {
