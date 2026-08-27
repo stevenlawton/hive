@@ -24,6 +24,11 @@ func TestReviewVerdictRules(t *testing.T) {
 		{"a third path", reviewPost{Verdict: "nits", Kind: "plan", Hash: "abc", Comments: one}, false},
 		{"no hash", reviewPost{Verdict: "approve", Kind: "plan"}, false},
 		{"no kind", reviewPost{Verdict: "approve", Hash: "abc"}, false},
+		// Triage is not plan review: accepting a build while holding notes on
+		// it is the ordinary outcome, so the comments ride along.
+		{"accept a build holding a comment", reviewPost{Verdict: "approve", Kind: "build", Hash: "abc", Comments: one}, true},
+		{"accept a build with nothing to say", reviewPost{Verdict: "approve", Kind: "build", Hash: "abc"}, true},
+		{"send a build back with nothing to say", reviewPost{Verdict: "changes", Kind: "build", Hash: "abc"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

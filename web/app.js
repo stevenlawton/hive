@@ -226,15 +226,18 @@ function renderReader(){
   document.getElementById("mSrc").setAttribute("aria-pressed",mode==="src");
   document.getElementById("mRen").setAttribute("aria-pressed",mode==="ren");
   const n=cs(openPlan).length;
-  // A plan you hold corrections against is not a plan you approve. Clear them
-  // or send it back — there is no third answer.
-  const ap=document.getElementById("vApprove");
-  ap.disabled=n>0;
-  ap.title=n?"Delete your comments first, or send it back":"";
-  document.getElementById("ccount").textContent = n
-    ? `${n} comment${n>1?"s":""} — approval is off until they are resolved`
-    : "No comments — tap a line number to add one";
   const isB=PLANS[openPlan]&&PLANS[openPlan].kind==="build";
+  // A plan you hold corrections against is not a plan you approve. A build is
+  // the other way round: notes on work you are accepting are the ordinary
+  // outcome of a triage pass, so they ride along with the acceptance.
+  const ap=document.getElementById("vApprove");
+  ap.disabled=n>0&&!isB;
+  ap.title=ap.disabled?"Delete your comments first, or send it back":"";
+  document.getElementById("ccount").textContent = n
+    ? (isB
+        ? `${n} comment${n>1?"s":""} — recorded with the build when you accept it`
+        : `${n} comment${n>1?"s":""} — approval is off until they are resolved`)
+    : "No comments — tap a line number to add one";
   ap.textContent=isB?"Accept the build":"Approve";
   renderOutbox();
   if(composing){const b=document.getElementById("cbox");if(b)b.focus()}}
@@ -322,8 +325,8 @@ document.addEventListener("click",e=>{
   const D=e.target.closest("[data-del]");
   if(D){comments[openPlan].splice(+D.dataset.del,1);save();renderReader();return}
   const V=e.target.closest("[data-verdict]");
-  if(V){const n=cs(openPlan).length;
-    if(V.dataset.verdict==="approve"&&n){
+  if(V){const n=cs(openPlan).length,vb=PLANS[openPlan]&&PLANS[openPlan].kind==="build";
+    if(V.dataset.verdict==="approve"&&n&&!vb){
       alert("You have "+n+" comment"+(n>1?"s":"")+" on this plan. Send it back, or delete them first.");return}
     if(V.dataset.verdict==="changes"&&!n){alert("Request changes needs at least one comment — say what is wrong.");return}
     submitReview(V.dataset.verdict);return}
