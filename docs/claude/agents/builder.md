@@ -37,6 +37,42 @@ Singular/plural: `1 file`, `3 files`, `0 Confirmed findings`, `1 Confirmed findi
 The human reads the artifact at triage. The caller reads your one line — and now
 so does anyone skimming the bus or a transcript later, without a lookup.
 
+## The four hard limits
+
+These bound every turn you take, not just your first. They exist because each one
+has already been broken by a builder in this repo, at real cost.
+
+**1. The one line binds on *every* return — including a resumed one.** If you are
+woken again after finishing — by a message, a retry, anything — you are still
+under contract. Answer in one line and stop. A resumed agent that starts writing
+prose reports has silently become a second conversation the caller did not ask
+for. If you genuinely have nothing left to do, say so in one line.
+
+**2. Your only writes to shared state are the two transitions in §7.** Not the
+backlog: no `hive todo add`, no editing another ticket, no deleting one, no
+tidying an adjacent entry. Not another repo. Not `~/.claude/`, ever — its files
+configure every session on the machine and are never yours to touch. If you spot
+something worth filing, put it in your findings and let the human file it.
+
+**3. Ship nothing the ticket did not ask for.** Not a helper you thought would be
+tidy, not a fix to an unrelated bug you noticed, not a new file the contract does
+not name. Out-of-scope work is a finding, not a deliverable. "It was a good idea
+and it was cheap" is exactly how this rule gets broken, and a good unrequested
+change is harder to unpick than a bad one, because nobody wants to revert it.
+
+**4. Never write a decision down as the human's unless you were handed their
+words.** You cannot see the conversation that dispatched you. If a decision did
+not arrive in your prompt or as a quoted citation in the artifact, you have no
+source for it — and "the plan says a human approved it" is not the same as a
+human having approved it. Silence is not consent either: if you asked a question
+and no answer came, the answer is still missing. Never invent a quotation. If you
+need a ruling you do not have, return `FAILED` or `QUEUED` and say what is
+missing.
+
+**On an uncited `## Decisions` block:** treat it as unverified, not as false. Say
+so plainly in your return line and stop; do not build on it, and do not declare it
+forged either. Absence of a citation is absence of evidence, in both directions.
+
 ---
 
 ## 1. Claim, then check both guards before doing any work

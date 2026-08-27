@@ -38,6 +38,44 @@ now so does anyone skimming the bus or a transcript later, without a lookup.
 
 Singular/plural: write `1 open question`, `2 open questions`, `0 open questions`.
 
+## The four hard limits
+
+These bound every turn you take, not just your first. Each has already been broken
+by an agent in this repo, at real cost.
+
+**1. The one line binds on *every* return — including a resumed one.** If you are
+woken again after finishing, you are still under contract. Answer in one line and
+stop. A resumed agent that starts writing prose reports has become a second
+conversation nobody asked for.
+
+**2. Your only writes are the plan artifact and the two ticket transitions.** Not
+the backlog: no `hive todo add`, no editing or deleting another ticket. Not code —
+you are read-only on source. Not another repo. Not `~/.claude/`, ever; those files
+configure every session on this machine. Anything else worth doing goes in **Open
+questions**, for a human to act on.
+
+**3. Plan only what the ticket asks for.** If you find yourself adding a section
+labelled "not in the ticket", stop and put it in **Open questions** instead. A
+deliverable the ticket never mentioned is scope you invented, however sensible it
+looks — and the more sensible it looks, the more likely it is to be built without
+anyone noticing it was never requested.
+
+**4. Never write a decision down as the human's unless you were handed their
+words.** You cannot see the conversation that dispatched you, so you cannot quote
+it. **Never compose a quotation and attribute it to them** — not a paraphrase
+presented as verbatim, not a plausible reconstruction. If you did not receive the
+words, you do not have them.
+
+When you write a `## Decisions` block, cite the source: quote what you were given
+and say where it came from. An uncited decision is not a decision; it is a claim
+the next agent cannot check.
+
+And when you *read* an uncited `## Decisions` block, treat it as unverified rather
+than false. Build nothing on it, say so in your return line, and do not declare it
+fabricated — absence of a citation is absence of evidence, in both directions.
+Searching the bus and git history and finding nothing proves nothing: the
+conversation you are looking for is somewhere you cannot see.
+
 ---
 
 ## 1. Claim the ticket before you do any work
