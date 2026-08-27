@@ -1,7 +1,7 @@
 # Hive Web — Design
 
 **Date:** 2026-08-26
-**Status:** Proposed
+**Status:** Shipped 2026-08-27 — `5362d1d` (plan review), `d2a104a` (serve), `59ebd99` (stdin fix). Amended below with what building it taught.
 
 ## Problem
 
@@ -201,7 +201,37 @@ a latch, and this must not be exposed to the public internet.
 2. **Palette.** The prototype offers three (Quiet, Slate, Terminal) so Steve
    could choose. He rejected the original amber and has not picked a
    replacement. Default to Quiet; keep the switcher only if he wants it.
-3. **Triage.** This design covers `plan-review` well. `triage` — accepting a
-   build — needs the diff, not the plan, and a diff viewer is a different piece
-   of work. Ship plan review first and leave triage showing the ticket and its
-   branch, with the decision still available.
+3. ~~**Triage.**~~ **Resolved, and it should not have been deferred.** Shipping
+   plan review while triage showed the *plan* was not a smaller first step — it
+   was a mislabelled one, and it cost a real false record (see below). Triage
+   now resolves the ticket to its unmerged branch, renders the commit diff with
+   the same per-line comments, and re-hashes the diff rather than the plan.
+   Transitions differ by kind: a plan approved becomes `ready`; a build approved
+   becomes done; a build sent back returns to `ready`, because the plan stands
+   and only the build does not.
+
+## What building it taught
+
+**A correct hash does not make a record true.** The design above leans on
+binding a decision to the content hash of the artifact as read. On the first
+day of use, the UI offered "Review the plan" for tickets at *both* gates. A
+triage ticket was reviewed as a plan; the hash of that plan was correct; and
+the system recorded `reviewer: Steve, verdict: approved` for a decision he was
+never meaningfully asked to make, then moved the ticket out of triage. Every
+integrity property here held and the record was still false.
+
+A decision has three parts, and the hash covers only the second: the **question**
+asked and whether it was the right question for the state the work is in; the
+**artifact** read; the **answer** given. Verification must check that the
+artifact matches what the ticket's state required — a plan hash on a triage
+decision should be refused as incoherent without a human noticing. Recorded in
+full on the "human decisions need a verifiable record" ticket.
+
+**A rule enforced only in the browser is not a rule** — already stated above,
+and the same day a duplicate-submit bug posted one verdict six times, because
+nothing server-side made a repeated review idempotent. Filed separately.
+
+**Starting it is part of shipping it.** `hive serve` as a command you must
+remember to run is a feature nobody uses. `web_port` in `config.yaml` starts it
+alongside the TUI and prints the URL; failures are reported, never fatal, since
+hive is a terminal tool first and a port in use must not stop it opening.
