@@ -447,7 +447,7 @@ func runTodoState(args []string) int {
 		if label == StateUnrefined {
 			label = "unrefined"
 		}
-		return out, fmt.Sprintf("%s → %s", out[i].ID, label)
+		return out, fmt.Sprintf("%s (%s) → %s", out[i].Subject, out[i].ID, label)
 	})
 	if refused != "" {
 		fmt.Fprintf(os.Stderr, "error: %s\n", refused)

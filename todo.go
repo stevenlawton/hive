@@ -555,7 +555,7 @@ func reapClaims(todos []Todo, live map[string]bool, cutoff time.Time) ([]Todo, [
 		if !stale {
 			continue
 		}
-		released = append(released, todos[i].ID+" (was @"+todos[i].Claim+")")
+		released = append(released, todos[i].Subject+" ("+todos[i].ID+", was @"+todos[i].Claim+")")
 		todos[i].Claim, todos[i].Since = "", ""
 	}
 	return todos, released
