@@ -830,3 +830,126 @@ func TestStaleDoesNotSuppressTheTone(t *testing.T) {
 		t.Errorf("stale keep_going tone = %v, want ToneNone", got)
 	}
 }
+
+func sampleAt(min int, cost float64, base time.Time) costSample {
+	return costSample{At: base.Add(time.Duration(min) * time.Minute), CostUSD: cost}
+}
+
+func TestBurnRate(t *testing.T) {
+	base := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	s := SessionSnapshot{CostSamples: []costSample{
+		sampleAt(0, 10.00, base), sampleAt(30, 13.00, base), sampleAt(60, 16.00, base),
+	}}
+	got, ok := burnRateUSDPerHour(s)
+	if !ok {
+		t.Fatal("three samples over an hour should give a rate")
+	}
+	if got < 5.9 || got > 6.1 {
+		t.Errorf("burn rate = %.2f, want ~6.00/h", got)
+	}
+}
+
+// The statusline fires on activity, so two samples can land milliseconds apart.
+// Dividing by that span would report an absurd rate.
+func TestBurnRateNeedsASpan(t *testing.T) {
+	base := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	s := SessionSnapshot{CostSamples: []costSample{
+		{At: base, CostUSD: 10}, {At: base.Add(2 * time.Second), CostUSD: 10.5},
+	}}
+	if r, ok := burnRateUSDPerHour(s); ok {
+		t.Errorf("a 2s span should not yield a rate, got %.2f/h", r)
+	}
+	if _, ok := burnRateUSDPerHour(SessionSnapshot{}); ok {
+		t.Error("no samples should not yield a rate")
+	}
+}
+
+// Cost only rises. A drop means the session restarted and its counter reset, so
+// the old samples describe a different run and would give a negative rate.
+func TestBurnRateIgnoresACounterReset(t *testing.T) {
+	base := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	s := SessionSnapshot{CostSamples: []costSample{
+		sampleAt(0, 40.00, base), sampleAt(30, 2.00, base),
+	}}
+	if r, ok := burnRateUSDPerHour(s); ok {
+		t.Errorf("a cost decrease should not yield a rate, got %.2f/h", r)
+	}
+}
+
+func TestAppendCostSampleKeepsAWindow(t *testing.T) {
+	base := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	var got []costSample
+	for i := 0; i < costSampleWindow+5; i++ {
+		got = appendCostSample(got, float64(i), base.Add(time.Duration(i)*time.Minute))
+	}
+	if len(got) != costSampleWindow {
+		t.Fatalf("kept %d samples, want the window of %d", len(got), costSampleWindow)
+	}
+	if got[len(got)-1].CostUSD != float64(costSampleWindow+4) {
+		t.Errorf("newest sample is %v, want the last one appended", got[len(got)-1].CostUSD)
+	}
+}
+
+func TestFleetBurnRateSumsLiveSessions(t *testing.T) {
+	base := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	mk := func(a, b float64) SessionSnapshot {
+		return SessionSnapshot{CostSamples: []costSample{sampleAt(0, a, base), sampleAt(60, b, base)}}
+	}
+	snaps := map[string]SessionSnapshot{
+		"one":  mk(10, 16),                                        // 6/h
+		"two":  mk(5, 7),                                          // 2/h
+		"idle": {CostSamples: []costSample{sampleAt(0, 3, base)}}, // no span, contributes nothing
+	}
+	got, n := fleetBurnRateUSDPerHour(snaps)
+	if got < 7.9 || got > 8.1 {
+		t.Errorf("fleet burn = %.2f/h, want ~8.00", got)
+	}
+	if n != 2 {
+		t.Errorf("counted %d contributing sessions, want 2", n)
+	}
+}
+
+func TestFleetStatusShowsBurnAndQuota(t *testing.T) {
+	base := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	cfg := testTelemetryConfig()
+	cfg.RateLimitFloorPct = 60
+	snaps := map[string]SessionSnapshot{
+		"a": {CostSamples: []costSample{sampleAt(0, 10, base), sampleAt(60, 16, base)},
+			HasFiveHour: true, FiveHourPct: 94, FiveHourResetsAt: base.Add(80 * time.Minute).Unix(),
+			CapturedAt: base},
+		"b": {CostSamples: []costSample{sampleAt(0, 5, base), sampleAt(60, 7, base)}, CapturedAt: base},
+	}
+	got := fleetStatus(snaps, cfg, base.Add(60*time.Minute))
+	if !strings.Contains(got, "8.00/h") {
+		t.Errorf("got %q, want the summed burn rate", got)
+	}
+	if !strings.Contains(got, "5h 94%") {
+		t.Errorf("got %q, want the quota", got)
+	}
+
+	// Burn alone, when the quota is quiet or absent.
+	quiet := map[string]SessionSnapshot{
+		"a": {CostSamples: []costSample{sampleAt(0, 10, base), sampleAt(60, 16, base)}, CapturedAt: base},
+	}
+	g2 := fleetStatus(quiet, cfg, base.Add(60*time.Minute))
+	if !strings.Contains(g2, "6.00/h") {
+		t.Errorf("got %q, want a burn rate with no quota reading", g2)
+	}
+	if strings.Contains(g2, "5h") {
+		t.Errorf("got %q, should not invent a quota figure", g2)
+	}
+
+	if got := fleetStatus(map[string]SessionSnapshot{}, cfg, base); got != "" {
+		t.Errorf("nothing to report should be empty, got %q", got)
+	}
+}
+
+func TestStatuslineShowsSessionBurnRate(t *testing.T) {
+	base := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	s := SessionSnapshot{CtxPct: 38, CostUSD: 29.14, Verdict: VerdictKeepGoing,
+		CostSamples: []costSample{sampleAt(0, 26.14, base), sampleAt(60, 29.14, base)}}
+	got := renderTelemetrySuffix(s, false)
+	if !strings.Contains(got, "3.00/h") {
+		t.Errorf("render = %q, want this session's burn rate", got)
+	}
+}
