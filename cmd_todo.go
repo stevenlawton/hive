@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -611,9 +610,18 @@ func todoRef(args []string) (string, bool) {
 }
 
 // runTodoStatusline prints the current task + progress for use as a Claude Code
-// statusLine command. Claude pipes session JSON on stdin; we read cwd from it.
+// statusLine command, and collects session telemetry while it is here.
+//
+// Claude pipes a JSON payload on stdin carrying cost, context-window occupancy
+// and rate-limit headroom for this session. hive is already wired in as the
+// statusLine command, so this is the one place that data arrives for free —
+// see docs/superpowers/specs/2026-08-27-session-telemetry-design.md.
+//
+// Telemetry is strictly secondary: any failure in it is swallowed and the line
+// renders exactly as it did before.
 func runTodoStatusline() int {
-	cwd := statuslineCwd()
+	payload, havePayload := readStatuslinePayload()
+	cwd := payloadCwd(payload, havePayload)
 	todos := loadTodos(cwd)
 	done, active, deferred := todoProgress(todos)
 	if active+deferred == 0 {
@@ -632,29 +640,56 @@ func runTodoStatusline() int {
 	if deferred > 0 {
 		out += fmt.Sprintf(" · %d parked", deferred)
 	}
+	if havePayload {
+		if suffix := statuslineTelemetry(payload); suffix != "" {
+			out += " " + suffix
+		}
+	}
 	fmt.Print(out)
 	return 0
 }
 
-// statuslineCwd extracts the session's working directory from the JSON Claude
-// Code sends on stdin. Prefer `cwd` — for a split running in a worktree it's
-// that worktree, whereas `workspace.current_dir` can resolve to the project
-// root (main), which would make every split claim as the same branch.
-func statuslineCwd() string {
-	if data, err := io.ReadAll(os.Stdin); err == nil && len(data) > 0 {
-		var p struct {
-			Cwd       string `json:"cwd"`
-			Workspace struct {
-				CurrentDir string `json:"current_dir"`
-			} `json:"workspace"`
+// statuslineTelemetry collects and renders this session's verdict. It returns
+// "" for every failure path, so the caller can append unconditionally.
+func statuslineTelemetry(p statuslinePayload) string {
+	cfg := loadTelemetryConfig()
+	if !cfg.Enabled {
+		return ""
+	}
+	snap, ok := collectTelemetry(p, cfg, time.Now())
+	if !ok {
+		return ""
+	}
+	return renderTelemetrySuffix(snap, statuslineColour())
+}
+
+// statuslineColour honours NO_COLOR, the de-facto standard, because a terminal
+// that will not render escapes would otherwise show them as literal noise.
+func statuslineColour() bool {
+	return os.Getenv("NO_COLOR") == ""
+}
+
+// readStatuslinePayload consumes the JSON Claude Code sends on stdin. It is
+// read exactly once: stdin is a pipe, so a second read gets nothing.
+func readStatuslinePayload() (statuslinePayload, bool) {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil || len(data) == 0 {
+		return statuslinePayload{}, false
+	}
+	return decodeStatuslinePayload(data)
+}
+
+// payloadCwd picks the session's working directory out of the payload. Prefer
+// `cwd` — for a split running in a worktree it's that worktree, whereas
+// `workspace.current_dir` can resolve to the project root (main), which would
+// make every split claim as the same branch.
+func payloadCwd(p statuslinePayload, ok bool) string {
+	if ok {
+		if p.Cwd != "" {
+			return p.Cwd
 		}
-		if json.Unmarshal(data, &p) == nil {
-			if p.Cwd != "" {
-				return p.Cwd
-			}
-			if p.Workspace.CurrentDir != "" {
-				return p.Workspace.CurrentDir
-			}
+		if p.Workspace.CurrentDir != "" {
+			return p.Workspace.CurrentDir
 		}
 	}
 	if wd, err := os.Getwd(); err == nil {

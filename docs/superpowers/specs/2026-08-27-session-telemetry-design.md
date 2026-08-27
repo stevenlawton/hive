@@ -209,12 +209,11 @@ action. Everything else stays a ratio.
 ```yaml
 telemetry:
   enabled: true
-  verdict:
-    wrapup_at_pct: 50
-    handoff_at_pct: 70
-    wrapup_growth: 6
-    cold_growth: 5
-    park_at_pct: 90        # five_hour quota; fleet-wide override
+  wrapup_at_pct: 50
+  handoff_at_pct: 70
+  wrapup_growth: 6
+  cold_growth: 5
+  park_at_pct: 90          # five_hour quota; fleet-wide override
   cache_ttl_minutes: 60
   stale_after_seconds: 30
   prune_after_hours: 24

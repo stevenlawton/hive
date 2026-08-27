@@ -13,6 +13,20 @@ notifications:
   poll_interval: 5               # Seconds between health checks
 
 # Per-workspace overrides
+# Session telemetry — answers one question per session: hand the work off so it
+# gets picked up elsewhere, or keep going. Every threshold is a ratio, so none
+# of this goes stale when model prices change.
+telemetry:
+  enabled: true
+  wrapup_at_pct: 50        # context this full -> finish what is in flight
+  handoff_at_pct: 70       # context this full -> move the work; compaction looms
+  wrapup_growth: 6         # turns costing this many times a fresh session
+  cold_growth: 5           # how big a cache-cold session must be to be worth moving
+  park_at_pct: 90          # 5-hour quota; a fleet-wide override, not a per-session input
+  cache_ttl_minutes: 60    # assumed prompt-cache TTL; drops to 5 under usage overage
+  stale_after_seconds: 30  # no report in this long -> render grey, not a stale verdict
+  prune_after_hours: 24    # delete snapshots older than this
+
 # Key = directory name inside repos_dir
 # All fields are optional — unconfigured repos use defaults
 workspaces:
