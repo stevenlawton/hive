@@ -26,14 +26,15 @@ type NotificationConfig struct {
 }
 
 type WorkspaceConfig struct {
-	Name        string `yaml:"name,omitempty"`
-	Short       string `yaml:"short,omitempty"`
-	Color       string `yaml:"color,omitempty"`
-	Description string `yaml:"description,omitempty"`
-	Yolo        bool   `yaml:"yolo,omitempty"`
-	Remote      bool   `yaml:"remote,omitempty"`
-	Favourite   bool   `yaml:"favourite,omitempty"`
-	Collection  bool   `yaml:"collection,omitempty"`
+	Name         string `yaml:"name,omitempty"`
+	Short        string `yaml:"short,omitempty"`
+	Color        string `yaml:"color,omitempty"`
+	Description  string `yaml:"description,omitempty"`
+	Yolo         bool   `yaml:"yolo,omitempty"`
+	WorktreeInit bool   `yaml:"worktree_init,omitempty"`
+	Remote       bool   `yaml:"remote,omitempty"`
+	Favourite    bool   `yaml:"favourite,omitempty"`
+	Collection   bool   `yaml:"collection,omitempty"`
 }
 
 type Config struct {
@@ -256,6 +257,7 @@ func mergeWorkspace(a, b WorkspaceConfig) WorkspaceConfig {
 		out.Description = b.Description
 	}
 	out.Yolo = a.Yolo || b.Yolo
+	out.WorktreeInit = a.WorktreeInit || b.WorktreeInit
 	out.Remote = a.Remote || b.Remote
 	out.Favourite = a.Favourite || b.Favourite
 	out.Collection = a.Collection || b.Collection
@@ -290,6 +292,7 @@ type Repo struct {
 	Color          string
 	Description    string
 	Yolo           bool
+	WorktreeInit   bool
 	Remote         bool
 	Favourite      bool
 	IsScratch      bool
@@ -318,6 +321,7 @@ func applyWorkspaceConfig(repo *Repo, ws WorkspaceConfig) {
 	repo.Color = ws.Color
 	repo.Description = ws.Description
 	repo.Yolo = ws.Yolo
+	repo.WorktreeInit = ws.WorktreeInit
 	repo.Remote = ws.Remote
 	repo.Favourite = ws.Favourite
 	repo.IsCollection = ws.Collection

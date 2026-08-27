@@ -593,7 +593,7 @@ func (m model) viewEdit() string {
 	b.WriteString("\n")
 
 	// Toggle fields
-	toggleLabels := []string{"Yolo", "Remote", "Favourite", "Collection"}
+	toggleLabels := []string{"Yolo", "Remote", "Favourite", "Collection", "Worktree init"}
 	for i, label := range toggleLabels {
 		focusIdx := editToggleYolo + i
 		marker := "  "

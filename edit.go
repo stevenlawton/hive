@@ -6,15 +6,16 @@ import (
 )
 
 const (
-	editFieldName        = 0
-	editFieldShort       = 1
-	editFieldColor       = 2
-	editFieldDesc        = 3
-	editToggleYolo       = 4
-	editToggleRemote     = 5
-	editToggleFavourite  = 6
-	editToggleCollection = 7
-	editFieldCount       = 8
+	editFieldName          = 0
+	editFieldShort         = 1
+	editFieldColor         = 2
+	editFieldDesc          = 3
+	editToggleYolo         = 4
+	editToggleRemote       = 5
+	editToggleFavourite    = 6
+	editToggleCollection   = 7
+	editToggleWorktreeInit = 8
+	editFieldCount         = 9
 )
 
 func (m *model) openEditPanel() tea.Cmd {
@@ -55,7 +56,7 @@ func (m *model) openEditPanel() tea.Cmd {
 	}
 
 	m.editFields = fields
-	m.editToggles = []bool{repo.Yolo, repo.Remote, repo.Favourite, repo.IsCollection}
+	m.editToggles = []bool{repo.Yolo, repo.Remote, repo.Favourite, repo.IsCollection, repo.WorktreeInit}
 	m.editFocus = editFieldName
 	m.editDirName = repo.DirName
 	m.mode = viewEdit
@@ -93,6 +94,7 @@ func (m *model) saveEditPanel() {
 		item.repo.Remote = m.editToggles[1]
 		item.repo.Favourite = m.editToggles[2]
 		item.repo.IsCollection = m.editToggles[3]
+		item.repo.WorktreeInit = m.editToggles[4]
 
 		// Save to config
 		ws := m.cfg.Workspaces[m.editDirName]
@@ -104,6 +106,7 @@ func (m *model) saveEditPanel() {
 		ws.Remote = item.repo.Remote
 		ws.Favourite = item.repo.Favourite
 		ws.Collection = item.repo.IsCollection
+		ws.WorktreeInit = item.repo.WorktreeInit
 		m.cfg.Workspaces[m.editDirName] = ws
 		SaveConfig(m.cfgPath, m.cfg)
 

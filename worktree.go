@@ -234,7 +234,14 @@ func (m *model) createWorktree() tea.Cmd {
 		// interactive session seeded with the prompt.
 		args += shellQuote(prompt)
 	}
-	TmuxSendKeys(sessionName, claudeCommand(args))
+	TmuxSendKeys(sessionName, worktreeLaunchLine(worktreeLaunch{
+		ScriptPresent: hasWorktreeInitScript(parent.repo.Path),
+		Enabled:       parent.repo.WorktreeInit,
+		ParentPath:    parent.repo.Path,
+		Branch:        branch,
+		DirName:       parent.repo.DirName,
+		ClaudeCmd:     claudeCommand(args),
+	}))
 
 	// Add worktree item to the model
 	wtRepo := Repo{
