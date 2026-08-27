@@ -28,6 +28,13 @@ telemetry:
   wrapup_at_pct: 50        # context this full -> finish what is in flight
   handoff_at_pct: 70       # context this full -> move the work; compaction looms
   wrapup_growth: 6         # turns costing this many times a fresh session
+  wrapup_at_cost_usd: 50   # spent this much -> finish up. The only rule that counts
+                           # turns: a session can hold a steady context percentage
+                           # for hundreds of turns, re-reading it every time, and
+                           # trip none of the rules above. 0 disables.
+  handoff_at_cost_usd: 120 # spent this much -> move the work. Cost is cumulative
+                           # and includes subagents, so it also catches a session
+                           # that delegates everything and stays near-empty. 0 disables.
   cold_growth: 5           # how big a cache-cold session must be to be worth moving
   park_at_pct: 90          # 5-hour quota; a fleet-wide override, not a per-session input
   rate_limit_floor_pct: 60 # only show the shared 5h window once it is worth knowing

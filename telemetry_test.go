@@ -772,3 +772,67 @@ func TestStatuslineJoin(t *testing.T) {
 		}
 	}
 }
+
+// Measured on this box: a session sat at 46% context — under every threshold —
+// while being the most expensive session running, at $217. Context percentage
+// describes the window as it stands. It says nothing about how many times that
+// window has been re-read, and that is where the money goes.
+func TestVerdictHandsOffOnCostAloneAtModestContext(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	cfg := testTelemetryConfig()
+	cfg.WrapupAtCostUSD, cfg.HandoffAtCostUSD = 50, 120
+
+	s := healthySnapshot(now)
+	s.CtxPct, s.CtxTokens = 46, 460000
+	s.CostUSD = 216.72
+
+	v, reason := computeVerdict(s, cfg, now)
+	if v != VerdictHandOff {
+		t.Fatalf("$217 at 46%% context: got %q (%q), want hand_off", v, reason)
+	}
+	if !strings.Contains(reason, "217") {
+		t.Errorf("reason %q should name the spend that triggered it", reason)
+	}
+}
+
+func TestVerdictWrapsUpOnCostBeforeContextBites(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	cfg := testTelemetryConfig()
+	cfg.WrapupAtCostUSD, cfg.HandoffAtCostUSD = 50, 120
+
+	s := healthySnapshot(now)
+	s.CtxPct, s.CtxTokens = 43, 430000
+	s.CostUSD = 74.41
+
+	if v, reason := computeVerdict(s, cfg, now); v != VerdictWrapUp {
+		t.Fatalf("$74 at 43%% context: got %q (%q), want wrap_up", v, reason)
+	}
+}
+
+// A delegating session spends real money with an almost-empty window — the
+// shape ticket svl describes. Cost sees it where context cannot.
+func TestVerdictSeesADelegatingSessionsSpend(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	cfg := testTelemetryConfig()
+	cfg.WrapupAtCostUSD, cfg.HandoffAtCostUSD = 50, 120
+
+	s := healthySnapshot(now)
+	s.CtxPct, s.CtxTokens = 11, 110000
+	s.CostUSD = 136.89
+
+	if v, reason := computeVerdict(s, cfg, now); v != VerdictHandOff {
+		t.Fatalf("$137 at 11%% context: got %q (%q), want hand_off", v, reason)
+	}
+}
+
+// Unset thresholds leave every existing verdict exactly as it was, so a config
+// written before these keys existed is never silently reclassified.
+func TestVerdictIgnoresCostWhenThresholdsUnset(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	s := healthySnapshot(now)
+	s.CostUSD = 5000
+
+	if v, reason := computeVerdict(s, testTelemetryConfig(), now); v != VerdictKeepGoing {
+		t.Fatalf("cost thresholds unset: got %q (%q), want keep_going", v, reason)
+	}
+}
