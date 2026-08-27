@@ -1,6 +1,6 @@
 # Hand off, or keep going — session verdicts in hive
 
-**Status:** design, awaiting review
+**Status:** shipped on main, 2026-08-27. Corrected against what was actually built.
 **Date:** 2026-08-27
 
 ## The question this answers
@@ -131,35 +131,28 @@ is the opposite: finish what is in flight, or park.
 
 **The reset outlasts the cache, so resuming is not free.** Waiting for quota
 means waiting; the cache TTL is an hour at best. Whatever context the session is
-holding gets evicted and re-written in full on the first turn back, at the 2×
-write price with nothing read from cache:
+holding is evicted and re-written in full on the first turn back, at the
+cache-write price with nothing read from cache — about **20× a warm turn**.
 
-```
- context     1h-TTL write   5m-TTL write   vs a warm turn
-   50,000   $       0.50   $       0.31       20x
-  250,000   $       2.50   $       1.56       20x
-  500,000   $       5.00   $       3.12       20x
-  555,680   $       5.56   $       3.47       20x
-1,000,000   $      10.00   $       6.25       20x
-```
-
-Validated against observation, within 3% both times: a 102,441-token resume
-predicted $1.02 and cost $1.05; the four >4h resumes predicted $3.91 and
-averaged $3.95.
+**Quoted as a ratio, not in currency, and this is a correction.** An earlier
+version of this design put the figure in dollars from a price table. Checked
+against ground truth, that table was **2.09× wrong**: it priced one real session
+at $194.78 when Claude's own `total_cost_usd` said $93.38, the cache-read term
+alone ($95.81) exceeding the true total. The "validation" that had accepted it
+was circular — a prediction compared against an observation computed from the
+same table. The ratio survives that error where an absolute cannot, because a
+uniform mispricing cancels top and bottom.
 
 Two consequences, and the second is the important one.
 
-**That toll is paid out of the freshly reset quota.** You wait five hours for a
-new bucket and the first thing it buys is re-reading what you already had.
+**That toll is paid out of the freshly reset quota.** You wait for a new bucket
+and the first thing it buys is re-reading what you already had.
 
-**So a big session must hand off *before* it parks.** Resuming a 555,680-token
-session costs $5.56; resuming a fresh 49,485-token one costs $0.49 — 11× less,
-and every turn after that is cheaper too. But a handoff itself spends tokens
-rebuilding context in the new session, and that has to come from somewhere. Let
-the quota run out first and you cannot afford to hand off either: you wait for
-the reset, pay the full resume toll, and only then move the work — paying twice.
-**Running out of quota holding a large context traps the work.** The window to
-act closes before the quota does.
+**So a big session must hand off *before* it parks.** A handoff itself spends
+tokens rebuilding context in a new session. Let the quota run out first and you
+can afford neither move: you wait for the reset, pay the full resume toll, and
+only then move the work — paying twice. **Running out of quota holding a large
+context traps the work.** The window to act closes before the quota does.
 
 Hence the override is conditional:
 
@@ -168,9 +161,9 @@ time_to_reset  = resets_at - now
 cache_survives = time_to_reset < remaining cache TTL
 
 five_hour >= park_at_pct:
-    cache_survives            ->  park    "5h quota 94% — resets 14:20, cache holds"
-    ctx_pct <  handoff_at_pct ->  park    "5h quota 94% — resets 14:20, ~$0.50 to resume"
-    otherwise                 ->  hand off "5h quota 94% — hand off NOW, $5.56 to resume later"
+    cache_survives            ->  park     "5h 94% — resets 14:20, cache holds"
+    ctx_pct <  handoff_at_pct ->  park     "5h 94% — resets 14:20"
+    otherwise                 ->  hand off "5h 94% — hand off now, ≈20× to resume later"
 ```
 
 `cache_survives` matters because the 5-hour limit is a **rolling** window: a
@@ -196,13 +189,12 @@ actionable part. One short clause, naming whichever rule fired:
 context 23% — turns ≈4.6× a fresh session
 context 74% — compaction likely soon
 idle 16h — cache cold, next turn ≈20× normal
-5h quota 94% — resets 14:20, cache holds
-5h quota 94% — hand off NOW, $5.56 to resume later
+5h 94% — resets 14:20, cache holds
+5h 94% — hand off now, ≈20× to resume later
 ```
 
-The quota reasons are the only ones that quote money, because the resume toll is
-a real figure the payload lets us predict and it is the number that decides the
-action. Everything else stays a ratio.
+No reason quotes money. Displayed session cost comes from Claude directly and is
+real; anything hive would have to derive is a ratio.
 
 ### Config
 
@@ -215,7 +207,8 @@ telemetry:
   cold_growth: 5
   park_at_pct: 90          # five_hour quota; fleet-wide override
   cache_ttl_minutes: 60
-  stale_after_seconds: 30
+  rate_limit_floor_pct: 60
+  stale_after_seconds: 300
   prune_after_hours: 24
 ```
 
@@ -337,14 +330,24 @@ is the likeliest thing to be subtly wrong, so it gets tests against both layouts
 ### Statusline
 
 ```
-▸ Hive web: see the backlog… · 3/12 · ● keep going · 23% · $25.07
-▸ Hive web: see the backlog… · 3/12 · ● wrap up · 58% · turns ≈8× fresh
-▸ Hive web: see the backlog… · 3/12 · ● hand off · 74% · compaction likely soon
+2/11 · ████░░░░░░ 38% · $29.14 · $3.00/h
+2/11 · ██████░░░░ 56% · $93.38
+2/11 · ███████░░░ 74% · $47.80 · compaction likely soon
 ```
 
-Green, amber, red. The verdict is the message; the figures are supporting
-evidence. With no payload seen — a session predating this, or `enabled: false` —
-the line is exactly what it is today.
+Three corrections against the original draft, all from watching it run.
+
+**No verdict label.** The colour carries the verdict; spelling it out again cost
+width the rest of the line needed.
+
+**No task subject.** It was the longest thing on the line and the drawer already
+shows it. Progress stays. This also fixed a bug the removal exposed: the
+statusline returned early on an empty backlog, so telemetry never rendered for a
+repo with no tasks — hiding the verdict exactly where there was no task text to
+look at instead. The halves are independent now.
+
+**Cost always shows**, not only on `keep going`, and the session's own burn rate
+beside it once there is enough of a span to mean anything.
 
 ### Split pane
 
@@ -376,14 +379,69 @@ actually answered at a glance.
 
 ### Stale
 
-No write inside `stale_after_seconds` means idle, backgrounded or dead: render
-grey, not the last verdict. A stale "hand off" sends you to a session that
-finished hours ago. Snapshots past `prune_after_hours` are deleted on TUI start.
+**Staleness does not clear a verdict, and this reverses the original draft.**
+Statuslines refresh on activity rather than on a timer — no `refreshInterval` is
+configured — so a session waiting on a human simply stops reporting. Four of
+nine live snapshots were over 100 seconds old against a 30-second threshold.
+Context and cost do not decay while a session idles, so its verdict stays true;
+clearing the colour hid precisely the sessions worth flagging. The draft already
+said as much — "an idle session with a large context is the strongest hand-off
+candidate there is" — and the first implementation did the opposite.
 
-Note the interaction: a genuinely idle session goes grey *and* is the one most
-likely to be cache-cold. Grey must not hide a hand-off verdict — an idle session
-with a large context is the strongest hand-off candidate there is. The reason
-line survives into the grey state.
+Staleness is a display nuance only, and the threshold is 300s to match how the
+statusline actually fires. Snapshots past `prune_after_hours` are deleted.
+
+**Collisions resolve to the worst verdict.** Two Claude sessions in one
+directory produce the same tmux session name, so snapshots collide. Taking the
+freshest let an empty session mask a heavy one in the same directory — observed
+live, a 59%/$102.23 wrap-up hidden behind a 0%/$0 keep-going.
+
+## Fleet burn rate
+
+What the machine costs per hour, across every session, shown once in the tab bar
+filler beside the shared quota.
+
+It needed no new capture. **`total_cost_usd` already includes subagent spend** —
+measured: sessions with no agents predict at a ratio of 0.45–0.49 against the
+(known-wrong) price table, while one session reported $32.61 with a main loop
+accounting for $1.96 and 29 agent files behind it. Only the agents explain that.
+
+Snapshots keep a short cost history rather than only the latest figure, because
+a rate needs a span and the statusline fires on activity — successive samples
+can be milliseconds or hours apart. The rate is measured oldest-to-newest across
+the window, not from the last pair. A cost *decrease* means the session
+restarted and its counter reset, so it yields no rate rather than a negative one.
+
+## Cost per ticket
+
+**A session is not a ticket.** It chats, explores, and touches several tickets;
+its cost cannot be attributed to one. The unit that *is* the ticket is the agent
+run plus every sub-agent it dispatches.
+
+Those sub-agents never touch hive, so they cannot be recognised by what they do.
+What they inherit is a **working directory**. So hive records the cwd whenever a
+ticket is *committed to* on its own CLI — `claim`, `current`, `state` — and all
+agent work under that directory counts, sub-agents included. Claude Code writes
+one transcript per agent under `<project>/<session-id>/subagents/`, so the tree
+walk is the whole join. `hive todo cost [<ref>]` reports it, heaviest first.
+
+Two things this design rejects, both measured rather than assumed:
+
+**Reconstructing attribution afterwards reaches 42%.** Only agents that ran a
+hive command can be recognised, and those are not the ones doing the work.
+
+**Matching ticket ids in prompt text is worse.** Three-letter ids collide with
+English; the first attempt returned "ids", "add", "and" and "may".
+
+**Only commitment counts, not reading.** Recording on `show` attributed 123k
+tokens of unrelated agent work to a ticket that had merely been read, because a
+session reads many tickets and the last one won the directory. A false figure
+here is worse than a missing one — the whole point is judging whether a ticket
+cost too much.
+
+Spend is reported in **tokens**, not money: output plus cache writes, which is
+work produced rather than context re-read. There is no back-fill; it counts from
+when recording started.
 
 ## Failure modes
 
