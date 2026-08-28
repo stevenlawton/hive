@@ -81,6 +81,7 @@ All keys are forwarded to the focused tmux session except chord sequences:
 | `ctrl+space x` | Kill focused split |
 | `ctrl+space f` | Fullscreen attach |
 | `ctrl+space c` | Canned prompts for the focused session |
+| `ctrl+space u` | Future prompts for the focused session |
 
 Mouse scroll wheel browses tmux scrollback history.
 
@@ -105,6 +106,64 @@ prompts:
 `J`/`K` move it up and down the list — the order in the file is the order of
 the number keys. Prompt text is one line: newlines would submit it half-typed,
 so they are flattened to spaces on load.
+
+### Future prompts
+
+Canned prompts send now; future prompts park for later. When the account's
+five-hour quota is spent every session is stuck until the window rolls over,
+which is exactly when the next thing to say tends to occur to you.
+
+`ctrl+space u` — or `ctrl+u` from the canned popup, which right-click already
+opens — brings up the parked queue for that pane. Type a note and press Enter
+to park it; `ctrl+d` deletes the one under the cursor; `esc` saves and closes.
+
+Two tickboxes:
+
+- **auto send** (`ctrl+s`) is ticked on open. It arms the queue against the
+  five-hour reset, and the popup shows when the first prompt will actually go.
+  Untick it and the notes just sit there as a reminder you send by hand.
+- **auto resume** (`ctrl+r`) swaps the queue for a single canned payload,
+  `resume` by default, and greys the editor out. Untick it and your notes come
+  back untouched. Change the payload with `auto_resume_text` in the file below.
+
+The quota is account-level, so the reset time is read from whichever session
+reported most recently rather than from the pane the popup is over — a session
+blocked on the limit stops reporting, and would have nothing to say.
+
+That leaves one blind spot: if *every* session is stalled, nothing is rendering
+a statusline and there is no telemetry to read. So hive falls back to the pane
+itself, which is still showing claude's own limit message, and takes the reset
+time from there — the header says `(from the pane)` when it did. Only if both
+come up empty does the popup say the reset time is unknown, and it then refuses
+to arm rather than promising a send that could never fire.
+
+The banner is matched on shape rather than exact wording — a line naming a
+limit and when it resets — because that wording has changed before and is not
+worth pinning.
+
+Firing waits five minutes past the published reset: a rolling window's reset
+time has been seen landing slightly early, and a prompt typed into a session
+that is still blocked is swallowed with nothing to retry against. Only the
+first prompt goes then; the rest follow as the session finishes each turn, so
+a queue of four does not land in one input box at once.
+
+Arming is spent by any resume. If you type into the pane yourself before the
+window rolls over, hive sees the session generating and cancels the send — the
+parked notes stay put, but nothing is fired into work that has already moved
+on.
+
+The queues live in `~/.config/hive/future.yaml`, keyed by tmux session, and
+survive a restart:
+
+```yaml
+auto_resume_text: resume
+queues:
+  hive-workspace-split-6:
+    prompts:
+      - check the bus, then carry on with the parked work
+    auto_send: true
+    armed_for: 1756400400
+```
 
 ## Worktree bootstrap
 

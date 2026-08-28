@@ -75,7 +75,7 @@ type cannedGeom struct {
 	rows          int
 }
 
-const cannedHint = "↑↓ pick · 1-9,0 send · a add · e edit · d del · esc"
+const cannedHint = "↑↓ pick · 1-9,0 send · a add · e edit · d del · ^u later · esc"
 
 // cannedFormMinWidth keeps the edit form usable even when the menu it replaces
 // is only as wide as its longest label.
@@ -354,6 +354,14 @@ func (m model) handleCannedKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch key := msg.String(); key {
 	case "esc", "escape":
 		m.closeCannedMenu()
+		return m, nil
+	case "ctrl+u":
+		// Same pane, but parked for later rather than sent now. This is the
+		// mouse route into the future-prompt popup: right-click opens this
+		// menu, and ctrl+u hands the session over.
+		session, x, y := m.canned.session, m.canned.geom.x, m.canned.geom.y
+		m.closeCannedMenu()
+		m.openFuturePopup(session, x, y)
 		return m, nil
 	case "enter":
 		return m.sendCannedPrompt(m.canned.cursor)
