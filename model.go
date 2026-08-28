@@ -144,6 +144,10 @@ type model struct {
 	// Workspace layout persisted across restarts
 	layout *LayoutStore
 
+	// Canned-response popup, and the prompts behind it
+	canned      cannedMenu
+	cannedStore *CannedStore
+
 	// One desktop notification slot per repo
 	notifier *desktopNotifier
 
@@ -216,6 +220,11 @@ func newModel(cfg *Config, cfgPath string) model {
 		fmt.Fprintf(os.Stderr, "warning: state store unavailable: %v\n", stateErr)
 	}
 
+	cannedStore, cannedErr := OpenCannedStore()
+	if cannedErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: canned prompts unavailable: %v\n", cannedErr)
+	}
+
 	m := model{
 		cfg:             cfg,
 		cfgPath:         cfgPath,
@@ -231,6 +240,7 @@ func newModel(cfg *Config, cfgPath string) model {
 		mode:            viewManager,
 		draggingDivider: -1,
 		layout:          layout,
+		cannedStore:     cannedStore,
 		state:           stateStore,
 		notifier:        newDesktopNotifier(nil),
 		bus:             busClient,
@@ -581,6 +591,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncModeFromActiveTab()
 		}
 		return m, nil
+	case cannedOpenMsg, cannedRowClickMsg, cannedHoverMsg, cannedScrollMsg:
+		return m.handleCannedMouse(msg)
 	case splitClickMsg:
 		if m.mode == viewWorkspace {
 			if tab := m.workspace.ActiveTab(); tab != nil {
@@ -699,6 +711,12 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// (manager list or an active workspace tab).
 	if m.drawerOpen {
 		return m.handleDrawerKey(msg)
+	}
+
+	// The canned-prompt popup owns all input while it is open, the same way
+	// the drawer does — otherwise its keys would go straight to the session.
+	if m.canned.open {
+		return m.handleCannedKey(msg)
 	}
 
 	// Workspace mode: chord handling and key forwarding
@@ -1062,10 +1080,10 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		m.acknowledgeTab(active.ID)
 	}
 
-	m.applySessionVerdicts(time.Now())
-
 	sessions, err := TmuxListSessions()
 	if err != nil {
+		// nil live set: liveness is unknown this tick, so every tone stands.
+		m.applySessionVerdicts(time.Now(), nil)
 		return m, healthTick()
 	}
 
@@ -1073,6 +1091,8 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 	for _, s := range sessions {
 		liveSessions[s.Name] = true
 	}
+
+	m.applySessionVerdicts(time.Now(), liveSessions)
 
 	deadAlerts := DetectDeadSessions(m.items, liveSessions)
 	remoteAlerts := DetectDeadRemotes(m.items, liveSessions)
@@ -1422,6 +1442,12 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 		m.confirmReturn = m.mode // cancelling leaves you where you were
 		m.mode = viewConfirm
 		return m, nil
+	case ChordCannedMenu:
+		// Anchored near the top-left of the focused pane rather than at a
+		// mouse position, since there isn't one on the keyboard route.
+		if sesName := m.workspace.FocusedSessionName(); sesName != "" {
+			m.openCannedMenu(sesName, m.width/4, m.height/4)
+		}
 	case ChordNextWorker:
 		// One keypress: new worktree split on this repo, running /next.
 		// No form — the branch is auto-numbered and the prompt is fixed,
@@ -1989,7 +2015,7 @@ func (m model) renderWorkspaceStatusBar() string {
 		if splitCount > 1 {
 			keys = append(keys, "o:orient", "s:resize")
 		}
-		keys = append(keys, "f:fullscreen", "t:drawer", "r:refresh", "z:save")
+		keys = append(keys, "f:fullscreen", "t:drawer", "c:canned", "r:refresh", "z:save")
 		status = wrapKeyHints(keys, m.width)
 	} else {
 		// Stage 1: normal — show hint to start chord

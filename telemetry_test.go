@@ -639,8 +639,13 @@ func TestApplySessionVerdictsColoursTheMatchingTab(t *testing.T) {
 	wv.TabBar.Add("gamma", "gamma")
 	wv.TabBar.Add("delta", "delta") // never reported
 
+	live := map[string]bool{}
+	for _, name := range []string{"alpha", "beta", "gamma", "delta"} {
+		live[TmuxSessionName(name, false)] = true
+	}
+
 	m := model{cfg: &Config{Telemetry: testTelemetryConfig()}, workspace: wv}
-	m.applySessionVerdicts(now)
+	m.applySessionVerdicts(now, live)
 
 	want := map[string]ui.TabTone{
 		"alpha": ui.ToneDanger,
@@ -667,7 +672,7 @@ func TestApplySessionVerdictsDisabledLeavesTabsAlone(t *testing.T) {
 	cfg := testTelemetryConfig()
 	cfg.Enabled = false
 	m := model{cfg: &Config{Telemetry: cfg}, workspace: wv}
-	m.applySessionVerdicts(time.Now())
+	m.applySessionVerdicts(time.Now(), map[string]bool{TmuxSessionName("alpha", false): true})
 
 	if wv.TabBar.Tabs[len(wv.TabBar.Tabs)-1].Tone != ui.ToneDanger {
 		t.Error("disabled telemetry must not touch tab tones at all")
@@ -694,8 +699,10 @@ func TestApplySessionVerdictsTintsPanesBySession(t *testing.T) {
 	wt.SplitPane.AddSplit("gamma", "hive-gamma")
 	wv.Tabs["alpha"] = wt
 
+	live := map[string]bool{"hive-beta": true, "hive-gamma": true}
+
 	m := model{cfg: &Config{Telemetry: testTelemetryConfig()}, workspace: wv}
-	m.applySessionVerdicts(now)
+	m.applySessionVerdicts(now, live)
 
 	if got := wt.SplitPane.Splits[0].Terminal.Tone; got != ui.ToneDanger {
 		t.Errorf("pane on hive-beta tone = %v, want ToneDanger", got)
@@ -1041,4 +1048,122 @@ func TestVerdictIgnoresCostWhenThresholdsUnset(t *testing.T) {
 	if v, reason := computeVerdict(s, testTelemetryConfig(), now); v != VerdictKeepGoing {
 		t.Fatalf("cost thresholds unset: got %q (%q), want keep_going", v, reason)
 	}
+}
+
+// A snapshot outlives the session that wrote it: the file sits in
+// XDG_RUNTIME_DIR until the 24h prune, so a session that ended hours ago still
+// carries a verdict. Colouring a tab from it points at a pane that is not
+// there — the tab goes amber while nothing on screen is.
+func TestApplySessionVerdictsIgnoresSessionsThatAreGone(t *testing.T) {
+	rt := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", rt)
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+
+	write := func(id, tmux, verdict string) {
+		s := SessionSnapshot{SessionID: id, TmuxSession: tmux, Verdict: verdict,
+			CapturedAt: now.Add(-2 * time.Second)}
+		if err := writeSnapshot(sessionSnapshotPath(id), s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a", TmuxSessionName("alpha", false), VerdictWrapUp)
+	write("b", TmuxSessionName("beta", false), VerdictHandOff)
+
+	wv := ui.NewWorkspaceView()
+	wv.TabBar.Add("alpha", "alpha")
+	wv.TabBar.Add("beta", "beta")
+	wt := &ui.WorkspaceTab{ID: "alpha", SplitPane: ui.NewSplitPane()}
+	wt.SplitPane.AddSplit("beta", TmuxSessionName("beta", false))
+	wv.Tabs["alpha"] = wt
+
+	// alpha is still running; beta's tmux session has ended.
+	live := map[string]bool{TmuxSessionName("alpha", false): true}
+
+	m := model{cfg: &Config{Telemetry: testTelemetryConfig()}, workspace: wv}
+	m.applySessionVerdicts(now, live)
+
+	if got := tabToneByID(t, wv, "alpha"); got != ui.ToneWarn {
+		t.Errorf("live tab tone = %v, want ToneWarn", got)
+	}
+	if got := tabToneByID(t, wv, "beta"); got != ui.ToneNone {
+		t.Errorf("tab for an ended session tone = %v, want ToneNone", got)
+	}
+	if got := wt.SplitPane.Splits[0].Terminal.Tone; got != ui.ToneNone {
+		t.Errorf("pane for an ended session tone = %v, want ToneNone", got)
+	}
+}
+
+// tmux can fail to answer. Clearing every tone on a transient error would drop
+// the whole fleet's colour for a tick, so an unknown live set filters nothing.
+func TestApplySessionVerdictsKeepsTonesWhenLivenessIsUnknown(t *testing.T) {
+	rt := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", rt)
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+
+	s := SessionSnapshot{SessionID: "a", TmuxSession: TmuxSessionName("alpha", false),
+		Verdict: VerdictHandOff, CapturedAt: now.Add(-2 * time.Second)}
+	if err := writeSnapshot(sessionSnapshotPath("a"), s); err != nil {
+		t.Fatal(err)
+	}
+
+	wv := ui.NewWorkspaceView()
+	wv.TabBar.Add("alpha", "alpha")
+
+	m := model{cfg: &Config{Telemetry: testTelemetryConfig()}, workspace: wv}
+	m.applySessionVerdicts(now, nil)
+
+	if got := tabToneByID(t, wv, "alpha"); got != ui.ToneDanger {
+		t.Errorf("tone with unknown liveness = %v, want ToneDanger", got)
+	}
+}
+
+// The fleet burn rate sums the sessions it can see, so a session that ended
+// while spending keeps padding the figure until its snapshot is pruned.
+func TestApplySessionVerdictsFleetStatusIgnoresSessionsThatAreGone(t *testing.T) {
+	rt := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", rt)
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+
+	spender := func(id, tmux string) {
+		s := SessionSnapshot{
+			SessionID:   id,
+			TmuxSession: tmux,
+			Verdict:     VerdictKeepGoing,
+			CapturedAt:  now.Add(-2 * time.Second),
+			CostSamples: []costSample{
+				{At: now.Add(-time.Hour), CostUSD: 0},
+				{At: now.Add(-2 * time.Second), CostUSD: 10},
+			},
+		}
+		if err := writeSnapshot(sessionSnapshotPath(id), s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spender("a", TmuxSessionName("alpha", false))
+	spender("b", TmuxSessionName("beta", false))
+
+	wv := ui.NewWorkspaceView()
+	wv.TabBar.Add("alpha", "alpha")
+
+	m := model{cfg: &Config{Telemetry: testTelemetryConfig()}, workspace: wv}
+	m.applySessionVerdicts(now, map[string]bool{TmuxSessionName("alpha", false): true})
+
+	// One live session spending $10 an hour. Counting the ended one too would
+	// read $20.
+	if got := wv.TabBar.RightStatus; !strings.Contains(got, "$10.0") {
+		t.Errorf("fleet status = %q, want only the live session's burn (~$10/h)", got)
+	}
+}
+
+// The workspace view carries built-in tabs of its own, so a repo tab is never
+// at a fixed index.
+func tabToneByID(t *testing.T, wv *ui.WorkspaceView, id string) ui.TabTone {
+	t.Helper()
+	for _, tab := range wv.TabBar.Tabs {
+		if tab.ID == id {
+			return tab.Tone
+		}
+	}
+	t.Fatalf("no tab %q", id)
+	return ui.ToneNone
 }
