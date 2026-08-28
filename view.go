@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/stevenlawton/hive/bus"
 	"github.com/stevenlawton/hive/ui"
 
@@ -63,6 +65,10 @@ func (m model) View() tea.View {
 			content = overlayBottom(content, panel, m.height)
 			paneCursor = nil // drawer owns focus; its input cursor resolves via the sentinel
 		}
+		if m.canned.open {
+			content = overlayBox(content, m.renderCannedPopup(), m.canned.geom.x, m.canned.geom.y)
+			paneCursor = nil // the popup owns input; its form draws its own cursor
+		}
 	case viewBus:
 		m.workspace.TabBar.Width = m.width
 		tabBar := m.workspace.TabBar.View()
@@ -116,7 +122,26 @@ func (m model) View() tea.View {
 		mouse := msg.Mouse()
 		switch msg.(type) {
 		case tea.MouseClickMsg:
+			if m.canned.open {
+				// The popup swallows every click: on a row it fires that
+				// prompt, anywhere else it just closes.
+				row := m.canned.geom.rowAt(mouse.X, mouse.Y)
+				return func() tea.Msg { return cannedRowClickMsg{row: row} }
+			}
 			if m.mode == viewWorkspace {
+				// Right-click a pane → canned prompts for that pane's session
+				if mouse.Button == tea.MouseRight {
+					if tab := m.workspace.ActiveTab(); tab != nil {
+						if idx := m.splitHitTest(tab, mouse.X, mouse.Y); idx >= 0 {
+							ses := tab.SplitPane.Splits[idx].SessionName
+							x, y := mouse.X, mouse.Y
+							return func() tea.Msg {
+								return cannedOpenMsg{session: ses, x: x, y: y}
+							}
+						}
+					}
+					return nil
+				}
 				// Click on tab bar (row 0) → switch tab
 				if mouse.Y == 0 {
 					widths := m.workspace.TabBar.TabWidths()
@@ -175,6 +200,10 @@ func (m model) View() tea.View {
 				}
 			}
 		case tea.MouseMotionMsg:
+			if m.canned.open {
+				row := m.canned.geom.rowAt(mouse.X, mouse.Y)
+				return func() tea.Msg { return cannedHoverMsg{row: row} }
+			}
 			if m.mode == viewWorkspace {
 				// Dragging a divider consumes motion (and suppresses hover-focus).
 				if m.draggingDivider >= 0 {
@@ -214,6 +243,9 @@ func (m model) View() tea.View {
 			if mouse.Button == tea.MouseWheelUp {
 				dir = -1
 			}
+			if m.canned.open {
+				return func() tea.Msg { return cannedScrollMsg{dir: dir} }
+			}
 			return func() tea.Msg { return scrollMsg{dir: dir} }
 		}
 		return nil
@@ -242,6 +274,35 @@ func overlayBottom(content, panel string, height int) string {
 		lines[start+i] = pl
 	}
 	return strings.Join(lines, "\n")
+}
+
+// overlayBox draws a self-contained box over content at (x, y), splicing it
+// into each covered row and leaving every other row untouched. Rows past the
+// bottom of the content are dropped rather than extending the frame, so a
+// popup near the last line can't push the frame past the terminal height.
+//
+// The box must carry its own styling: the splice resumes whatever the
+// underlying row was doing on either side of it.
+func overlayBox(content, box string, x, y int) string {
+	lines := strings.Split(content, "\n")
+	for i, boxLine := range strings.Split(box, "\n") {
+		row := y + i
+		if row < 0 || row >= len(lines) {
+			continue
+		}
+		lines[row] = spliceLine(lines[row], boxLine, x)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// spliceLine replaces cells [x, x+width(insert)) of an ANSI-styled line.
+func spliceLine(line, insert string, x int) string {
+	left := ansi.Truncate(line, x, "")
+	if pad := x - lipgloss.Width(left); pad > 0 {
+		left += strings.Repeat(" ", pad)
+	}
+	right := ansi.TruncateLeft(line, x+lipgloss.Width(insert), "")
+	return left + insert + right
 }
 
 // resolveFrameCursor converts the zero-width cursor sentinel embedded in the
