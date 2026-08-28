@@ -105,7 +105,8 @@ The description is optional. Separate it from the subject with " - " (an
 em-dash is accepted too), or pass it with --description/-d, or read it from a
 file with --body-file ("-" means stdin). A body piped in on stdin is picked up
 even without the flag, as long as no other body was given — giving two is an
-error, never a silent drop.
+error, never a silent drop. With a body flag the separator is not read at all,
+so the subject keeps its dashes.
 
 Prefer --body-file or a pipe for anything long: passing prose through argv
 means quoting every apostrophe and backtick, and the shell mangling is silent.
@@ -179,13 +180,16 @@ func finishTodoAdd(rest []string, desc string, flagged bool) (string, string, er
 	if text == "" {
 		return "", "", fmt.Errorf("a subject is required")
 	}
-	subject, inline := splitSubjectDesc(text)
-	if inline != "" {
-		if flagged {
-			return "", "", fmt.Errorf(
-				"description given twice: once as a flag and once after the separator")
+	// The separator only separates when there is something to separate: once a
+	// body has been named with a flag, a " - " in the subject is subject text.
+	// Splitting anyway manufactured a second description and then refused the
+	// add, so no scripted subject could contain a dash.
+	subject := text
+	if !flagged {
+		var inline string
+		if subject, inline = splitSubjectDesc(text); inline != "" {
+			desc = inline
 		}
-		desc = inline
 	}
 	// Read stdin whatever else was given. Taking it only as a fallback meant a
 	// piped body was silently discarded when the subject happened to contain a
