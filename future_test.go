@@ -8,10 +8,10 @@ import (
 func TestFleetResetAtTakesTheFreshestReading(t *testing.T) {
 	base := time.Date(2026, 8, 28, 14, 0, 0, 0, time.UTC)
 	snaps := map[string]SessionSnapshot{
-		"stale": {
+		"older": {
 			HasFiveHour:      true,
 			CapturedAt:       base.Add(-3 * time.Hour),
-			FiveHourResetsAt: base.Add(-2 * time.Hour).Unix(),
+			FiveHourResetsAt: base.Add(30 * time.Minute).Unix(),
 		},
 		"fresh": {
 			HasFiveHour:      true,
@@ -20,7 +20,7 @@ func TestFleetResetAtTakesTheFreshestReading(t *testing.T) {
 		},
 	}
 
-	got, ok := fleetResetAt(snaps)
+	got, ok := fleetResetAt(snaps, base)
 
 	if !ok {
 		t.Fatal("no reset time found, want the one from the freshest snapshot")
@@ -35,7 +35,7 @@ func TestFleetResetAtWithNothingReporting(t *testing.T) {
 		"quiet": {HasFiveHour: false, FiveHourResetsAt: 999},
 	}
 
-	if _, ok := fleetResetAt(snaps); ok {
+	if _, ok := fleetResetAt(snaps, time.Now()); ok {
 		t.Error("a snapshot with no five-hour window supplied a reset time")
 	}
 }
@@ -275,5 +275,51 @@ func TestArmFutureWithNoKnownResetLeavesItUnarmed(t *testing.T) {
 
 	if q.AutoSend || q.ArmedFor != 0 {
 		t.Errorf("armed against an unknown reset time, so it would never fire: %#v", q)
+	}
+}
+
+func TestFleetResetAtIgnoresAWindowThatHasAlreadyPassed(t *testing.T) {
+	now := time.Date(2026, 8, 28, 14, 0, 0, 0, time.UTC)
+	snaps := map[string]SessionSnapshot{
+		"yesterday": {
+			HasFiveHour:      true,
+			CapturedAt:       now.Add(-30 * time.Second),
+			FiveHourResetsAt: now.Add(-3 * time.Hour).Unix(),
+		},
+	}
+
+	if got, ok := fleetResetAt(snaps, now); ok {
+		t.Errorf("armed against a reset %d that has already passed", got)
+	}
+}
+
+func TestFleetResetAtIgnoresStaleSnapshots(t *testing.T) {
+	now := time.Date(2026, 8, 28, 14, 0, 0, 0, time.UTC)
+	snaps := map[string]SessionSnapshot{
+		"gone-quiet": {
+			HasFiveHour:      true,
+			Stale:            true,
+			CapturedAt:       now.Add(-90 * time.Minute),
+			FiveHourResetsAt: now.Add(time.Hour).Unix(),
+		},
+	}
+
+	if _, ok := fleetResetAt(snaps, now); ok {
+		t.Error("took a reset time from a snapshot that had gone stale")
+	}
+}
+
+func TestFutureDueIgnoresAnArmingFromAWindowLongGone(t *testing.T) {
+	now := time.Date(2026, 8, 28, 14, 0, 0, 0, time.UTC)
+	queues := map[string]FutureQueue{
+		"yesterday": {
+			Prompts:  []string{"this was for a window that closed long ago"},
+			AutoSend: true,
+			ArmedFor: now.Add(-26 * time.Hour).Unix(),
+		},
+	}
+
+	if got := futureDue(queues, now); len(got) != 0 {
+		t.Errorf("got %v due — a day-old arming fired into whatever the session is doing now", got)
 	}
 }

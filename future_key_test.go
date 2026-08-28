@@ -163,3 +163,77 @@ func TestCannedPopupHandsOffToFuturePrompts(t *testing.T) {
 			m.future.open, m.future.session)
 	}
 }
+
+// A tick can fire the queue while the popup sits open on it. Closing the popup
+// must not write back the snapshot taken when it opened, or the prompt that
+// just went would be re-armed and typed a second time.
+func TestFuturePopupDoesNotResurrectAPromptThatFiredWhileItWasOpen(t *testing.T) {
+	store := newFutureStore(t.TempDir())
+	reset := time.Now().Add(-futureFireGrace - time.Minute)
+	if err := store.Save(map[string]FutureQueue{
+		"hive-x": {Prompts: []string{"p1", "p2"}, AutoSend: true, ArmedFor: reset.Unix()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := model{
+		width: 100, height: 40,
+		items:       []repoItem{{tmuxSes: "hive-x", richStatus: &SessionStatus{Status: "completed"}}},
+		futureStore: store,
+	}
+	m.openFuturePopup("hive-x", 2, 2)
+
+	// The tick fires p1 underneath the open popup.
+	if cmd := m.runFutureQueues(time.Now()); cmd != nil {
+		cmd()
+	}
+
+	// The user closes the popup.
+	next, _ := m.handleFutureKey(keyEscape)
+	m = next.(model)
+
+	saved := m.futureStore.Queues()["hive-x"]
+	if saved.ArmedFor != 0 {
+		t.Errorf("closing the popup re-armed a queue that had already fired: %#v", saved)
+	}
+	for _, p := range saved.Prompts {
+		if p == "p1" {
+			t.Fatalf("the prompt that already fired was resurrected: %#v", saved.Prompts)
+		}
+	}
+}
+
+func TestFuturePopupKeepsNotesTypedWhileTheQueueFiredUnderneath(t *testing.T) {
+	store := newFutureStore(t.TempDir())
+	reset := time.Now().Add(-futureFireGrace - time.Minute)
+	if err := store.Save(map[string]FutureQueue{
+		"hive-x": {Prompts: []string{"p1"}, AutoSend: true, ArmedFor: reset.Unix()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := model{
+		width: 100, height: 40,
+		items:       []repoItem{{tmuxSes: "hive-x", richStatus: &SessionStatus{Status: "completed"}}},
+		futureStore: store,
+	}
+	m.openFuturePopup("hive-x", 2, 2)
+	m.future.input.SetValue("a thought I had while it fired")
+	next, _ := m.handleFutureKey(keyEnter)
+	m = next.(model)
+
+	if cmd := m.runFutureQueues(time.Now()); cmd != nil {
+		cmd()
+	}
+	next, _ = m.handleFutureKey(keyEscape)
+	m = next.(model)
+
+	saved := m.futureStore.Queues()["hive-x"]
+	found := false
+	for _, p := range saved.Prompts {
+		if p == "a thought I had while it fired" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the note typed while the queue fired was lost: %#v", saved.Prompts)
+	}
+}

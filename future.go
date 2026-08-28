@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,11 +16,18 @@ import (
 // read from the fleet rather than from the session a prompt is parked against
 // — a session blocked on the limit stops rendering its statusline and its own
 // snapshot goes stale, while its siblings keep reporting the same figure.
-func fleetResetAt(snaps map[string]SessionSnapshot) (int64, bool) {
+//
+// A stale snapshot, or one whose window has already rolled over, is no use:
+// arming against a reset in the past would fire on the very next tick, into a
+// pane that may well still be blocked.
+func fleetResetAt(snaps map[string]SessionSnapshot, now time.Time) (int64, bool) {
 	var best SessionSnapshot
 	found := false
 	for _, s := range snaps {
-		if !s.HasFiveHour || s.FiveHourResetsAt <= 0 {
+		if !s.HasFiveHour || s.Stale || s.FiveHourResetsAt <= 0 {
+			continue
+		}
+		if !time.Unix(s.FiveHourResetsAt, 0).After(now) {
 			continue
 		}
 		if !found || s.CapturedAt.After(best.CapturedAt) {
@@ -54,6 +62,11 @@ type FutureQueue struct {
 	// draining, not-yet-running session and fire the following prompt into an
 	// input box the first one is still being typed into.
 	AwaitingPickup bool `yaml:"awaiting_pickup,omitempty"`
+
+	// SentAt stamps the last send, so a pickup that is never observed does not
+	// strand the rest of the queue. A turn can begin and end between two ticks,
+	// and a dead pane never reports at all.
+	SentAt int64 `yaml:"sent_at,omitempty"`
 }
 
 // FutureStore is the parked-prompt file, ~/.config/hive/future.yaml, keyed by
@@ -93,50 +106,87 @@ func newFutureStore(dir string) *FutureStore {
 }
 
 // Queues returns what is currently parked, re-read from disk each call so a
-// hand-edit lands without restarting hive.
+// hand-edit lands without restarting hive. A file that cannot be read yields
+// nothing; callers that are about to write must use LoadQueues instead, or a
+// transient read failure would replace every other session's queue.
 func (s *FutureStore) Queues() map[string]FutureQueue {
-	return s.read().Queues
+	file, err := s.load()
+	if err != nil {
+		return map[string]FutureQueue{}
+	}
+	return file.Queues
+}
+
+// LoadQueues is Queues for a caller that intends to write back. It reports the
+// difference between "nothing parked yet" and "the file is there but could not
+// be read" — saving over the latter would silently delete the lot.
+func (s *FutureStore) LoadQueues() (map[string]FutureQueue, error) {
+	file, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	return file.Queues, nil
 }
 
 // ResumeText is what "auto resume" sends.
 func (s *FutureStore) ResumeText() string {
-	if text := flattenLines(s.read().ResumeText); text != "" {
+	file, err := s.load()
+	if err != nil {
+		return defaultResumeText
+	}
+	if text := flattenLines(file.ResumeText); text != "" {
 		return text
 	}
 	return defaultResumeText
 }
 
-func (s *FutureStore) read() futureFile {
+func (s *FutureStore) load() (futureFile, error) {
 	if s == nil {
-		return futureFile{Queues: map[string]FutureQueue{}}
+		return emptyFutureFile(), nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.loadLocked()
+}
 
-	file := futureFile{Queues: map[string]FutureQueue{}}
+func (s *FutureStore) loadLocked() (futureFile, error) {
 	data, err := os.ReadFile(s.path())
-	if err != nil {
-		return file
+	if os.IsNotExist(err) {
+		return emptyFutureFile(), nil
 	}
+	if err != nil {
+		return emptyFutureFile(), err
+	}
+
+	file := emptyFutureFile()
 	if err := yaml.Unmarshal(data, &file); err != nil {
-		return futureFile{Queues: map[string]FutureQueue{}}
+		return emptyFutureFile(), fmt.Errorf("parse %s: %w", s.path(), err)
 	}
 	if file.Queues == nil {
 		file.Queues = map[string]FutureQueue{}
 	}
-	return file
+	return file, nil
 }
 
-// Save replaces the parked queues, keeping the stored resume text.
+func emptyFutureFile() futureFile {
+	return futureFile{Queues: map[string]FutureQueue{}}
+}
+
+// Save replaces the parked queues, keeping the stored resume text. The lock is
+// held across the whole read-modify-write: releasing it in between would let
+// an interleaved writer's resume text be silently dropped.
 func (s *FutureStore) Save(queues map[string]FutureQueue) error {
 	if s == nil {
 		return nil
 	}
-	file := s.read()
-	file.Queues = cleanFutureQueues(queues)
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	file, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	file.Queues = cleanFutureQueues(queues)
 	return s.write(file)
 }
 
@@ -158,7 +208,11 @@ func (s *FutureStore) write(file futureFile) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	return os.Rename(tmp.Name(), s.path())
+	if err := os.Rename(tmp.Name(), s.path()); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }
 
 func (s *FutureStore) path() string {
@@ -193,6 +247,16 @@ func cleanFutureQueues(in map[string]FutureQueue) map[string]FutureQueue {
 // minutes is cheap insurance against that.
 const futureFireGrace = 5 * time.Minute
 
+// futureStaleArming is how long past its reset an arming stays live. Hive can
+// be down when a window rolls over; coming back a day later and firing
+// yesterday's notes into whatever the session is doing now helps nobody, so a
+// long-dead arming is left as notes for the user to send by hand.
+const futureStaleArming = 12 * time.Hour
+
+// futurePickupWait is how long a drain waits to see the session pick up the
+// last prompt before carrying on regardless.
+const futurePickupWait = 2 * time.Minute
+
 // futureDue lists the sessions whose parked queues have come due, sorted so a
 // wave of them fires in a stable order.
 func futureDue(queues map[string]FutureQueue, now time.Time) []string {
@@ -201,7 +265,8 @@ func futureDue(queues map[string]FutureQueue, now time.Time) []string {
 		if !q.AutoSend || q.ArmedFor <= 0 {
 			continue
 		}
-		if now.Before(time.Unix(q.ArmedFor, 0).Add(futureFireGrace)) {
+		reset := time.Unix(q.ArmedFor, 0)
+		if now.Before(reset.Add(futureFireGrace)) || now.After(reset.Add(futureStaleArming)) {
 			continue
 		}
 		due = append(due, session)
@@ -353,6 +418,7 @@ func futureWorkFor(
 			return
 		}
 		rest.AwaitingPickup = true
+		rest.SentAt = now.Unix()
 		out[session] = rest
 		sends = append(sends, futureSend{session: session, text: text})
 		changed = true
@@ -362,10 +428,19 @@ func futureWorkFor(
 		fire(session)
 	}
 	for _, session := range futureDrainReady(out, generating) {
-		if out[session].AwaitingPickup {
+		if q := out[session]; q.AwaitingPickup && !futurePickupLapsed(q, now) {
 			continue
 		}
 		fire(session)
 	}
 	return out, sends, changed
+}
+
+// futurePickupLapsed reports whether a queue has waited long enough to stop
+// expecting the session to be seen picking up the last prompt.
+func futurePickupLapsed(q FutureQueue, now time.Time) bool {
+	if q.SentAt <= 0 {
+		return true
+	}
+	return now.After(time.Unix(q.SentAt, 0).Add(futurePickupWait))
 }

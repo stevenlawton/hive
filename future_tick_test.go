@@ -84,16 +84,18 @@ func TestFutureWorkAutoResumeSendsTheResumeText(t *testing.T) {
 }
 
 func TestFutureWorkWaitsForPickupBeforeDraining(t *testing.T) {
+	now := time.Now()
 	queues := map[string]FutureQueue{
 		"just-fired": {
 			Prompts:        []string{"the second one"},
 			AutoSend:       true,
 			Draining:       true,
 			AwaitingPickup: true,
+			SentAt:         now.Unix(),
 		},
 	}
 
-	_, sends, _ := futureWork(queues, map[string]bool{}, "resume", time.Now())
+	_, sends, _ := futureWork(queues, map[string]bool{}, "resume", now)
 
 	if len(sends) != 0 {
 		t.Errorf("sent prompt #2 before #1 was picked up: %#v", sends)
@@ -108,6 +110,7 @@ func TestFutureWorkDrainsOnceTheSessionHasTakenItsTurn(t *testing.T) {
 			AutoSend:       true,
 			Draining:       true,
 			AwaitingPickup: true,
+			SentAt:         now.Unix(),
 		},
 	}
 
@@ -169,5 +172,46 @@ func TestFutureWorkDisarmsOnFreshEvidenceOfAResume(t *testing.T) {
 	}
 	if got["steve-typed-here"].AutoSend {
 		t.Error("a session reporting fresh telemetry while generating was not disarmed")
+	}
+}
+
+// A drain waits for the session to be seen generating before sending the next
+// prompt. If that is never observed — the pane died, or the turn began and
+// ended inside one tick — the rest of the queue must not sit there forever.
+func TestFutureWorkGivesUpWaitingForAPickupThatNeverComes(t *testing.T) {
+	now := time.Date(2026, 8, 28, 18, 40, 0, 0, time.UTC)
+	queues := map[string]FutureQueue{
+		"quiet": {
+			Prompts:        []string{"the second one"},
+			AutoSend:       true,
+			Draining:       true,
+			AwaitingPickup: true,
+			SentAt:         now.Add(-futurePickupWait - time.Minute).Unix(),
+		},
+	}
+
+	_, sends, _ := futureWorkFor(queues, map[string]bool{}, map[string]bool{}, "resume", now)
+
+	if len(sends) != 1 || sends[0].text != "the second one" {
+		t.Fatalf("got %#v, want the drain to continue once the wait expired", sends)
+	}
+}
+
+func TestFutureWorkStillWaitsInsideThePickupWindow(t *testing.T) {
+	now := time.Date(2026, 8, 28, 18, 40, 0, 0, time.UTC)
+	queues := map[string]FutureQueue{
+		"just-sent": {
+			Prompts:        []string{"the second one"},
+			AutoSend:       true,
+			Draining:       true,
+			AwaitingPickup: true,
+			SentAt:         now.Add(-10 * time.Second).Unix(),
+		},
+	}
+
+	_, sends, _ := futureWorkFor(queues, map[string]bool{}, map[string]bool{}, "resume", now)
+
+	if len(sends) != 0 {
+		t.Errorf("sent prompt #2 ten seconds after #1: %#v", sends)
 	}
 }

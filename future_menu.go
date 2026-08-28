@@ -27,6 +27,13 @@ type futureMenu struct {
 
 	resumeText string
 	geom       cannedGeom
+
+	// baseline is the queue as it stood when the popup opened, and typed
+	// lists the notes added since. A tick can fire the queue while the popup
+	// sits open on it, so closing merges against what is on disk rather than
+	// writing back this copy wholesale.
+	baseline FutureQueue
+	typed    []string
 }
 
 // newFutureMenu opens the popup over a session's parked queue. Auto send is
@@ -34,14 +41,18 @@ type futureMenu struct {
 // notes to go — but only when there is a reset to fire against, and never for
 // a queue the user has already unticked by hand.
 func newFutureMenu(session string, q FutureQueue, resetAt int64, resumeText string) futureMenu {
+	baseline := q
 	fresh := len(q.Prompts) == 0 && !q.AutoSend && !q.AutoResume && q.ArmedFor == 0
-	if fresh || q.AutoSend {
+	// A draining queue already has a firing trigger; re-arming it against the
+	// next reset would give it a second one.
+	if (fresh || q.AutoSend) && !q.Draining {
 		q = armFuture(q, resetAt)
 	}
 	return futureMenu{
 		open:       true,
 		session:    session,
 		q:          q,
+		baseline:   baseline,
 		resetAt:    resetAt,
 		resumeText: resumeText,
 		input:      newCannedInput("> ", "note for when the tokens come back", "", futureMenuWidth-6),
@@ -89,6 +100,7 @@ func (c *futureMenu) commitPrompt() {
 		return
 	}
 	c.q.Prompts = append(c.q.Prompts, text)
+	c.typed = append(c.typed, text)
 	c.cursor = len(c.q.Prompts) - 1
 }
 
@@ -203,7 +215,9 @@ func futureWhen(q FutureQueue, resetAt int64) string {
 func (m model) handleFutureKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "escape":
-		m.persistFuture()
+		if err := m.persistFuture(); err != nil {
+			m.err = fmt.Errorf("save future prompts: %w", err)
+		}
 		m.future = futureMenu{}
 		return m, nil
 
@@ -246,18 +260,57 @@ func (m model) handleFutureKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// persistFuture writes the popup's queue back to the store, dropping the entry
-// entirely when there is nothing left worth keeping.
-func (m *model) persistFuture() {
+// persistFuture writes the popup's queue back to the store.
+//
+// Ticks keep running while the popup is open, so the queue on disk may have
+// fired since — writing this copy back wholesale would re-arm it and type the
+// same prompt a second time. When disk has moved on, disk wins and only the
+// notes typed here are carried over.
+func (m *model) persistFuture() error {
 	if m.futureStore == nil || m.future.session == "" {
-		return
+		return nil
 	}
-	queues := m.futureStore.Queues()
-	if queues == nil {
-		queues = map[string]FutureQueue{}
+	queues, err := m.futureStore.LoadQueues()
+	if err != nil {
+		return err
 	}
-	queues[m.future.session] = m.future.q
-	_ = m.futureStore.Save(queues)
+
+	session := m.future.session
+	queues[session] = mergeFutureQueue(m.future, queues[session])
+	return m.futureStore.Save(queues)
+}
+
+// mergeFutureQueue reconciles what the popup holds with what is on disk.
+func mergeFutureQueue(c futureMenu, onDisk FutureQueue) FutureQueue {
+	if !futureQueueFiredSince(c.baseline, onDisk) {
+		return c.q
+	}
+	// The tick moved it. Keep its state, and re-park only the notes typed
+	// here that the user has not since deleted.
+	for _, note := range c.typed {
+		if containsString(c.q.Prompts, note) && !containsString(onDisk.Prompts, note) {
+			onDisk.Prompts = append(onDisk.Prompts, note)
+		}
+	}
+	return onDisk
+}
+
+// futureQueueFiredSince reports whether the firing machinery has touched a
+// queue since the popup opened on it.
+func futureQueueFiredSince(baseline, onDisk FutureQueue) bool {
+	return onDisk.ArmedFor != baseline.ArmedFor ||
+		onDisk.Draining != baseline.Draining ||
+		onDisk.AwaitingPickup != baseline.AwaitingPickup ||
+		len(onDisk.Prompts) != len(baseline.Prompts)
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // openFuturePopup shows the parked queue for a session, reading the reset time
@@ -267,11 +320,9 @@ func (m *model) openFuturePopup(session string, x, y int) {
 	if session == "" || m.futureStore == nil {
 		return
 	}
-	tcfg := defaultTelemetryConfig()
-	if m.cfg != nil {
-		tcfg = m.cfg.Telemetry
-	}
-	resetAt, _ := fleetResetAt(readSessionSnapshots(tcfg, time.Now()))
+	tcfg := m.telemetryConfig()
+	now := time.Now()
+	resetAt, _ := fleetResetAt(readSessionSnapshots(tcfg, now), now)
 	c := newFutureMenu(session, m.futureStore.Queues()[session], resetAt, m.futureStore.ResumeText())
 	c.geom = cannedGeometry(make([]CannedPrompt, futureMenuRows), x, y, m.width, m.height).
 		widenTo(futureMenuWidth, m.width)
@@ -302,7 +353,11 @@ func (m *model) runFutureQueues(now time.Time) tea.Cmd {
 	if m.futureStore == nil {
 		return nil
 	}
-	queues := m.futureStore.Queues()
+	queues, err := m.futureStore.LoadQueues()
+	if err != nil {
+		m.err = fmt.Errorf("future prompts: %w", err)
+		return nil
+	}
 	if len(queues) == 0 {
 		return nil
 	}
@@ -313,7 +368,13 @@ func (m *model) runFutureQueues(now time.Time) tea.Cmd {
 	if !changed {
 		return nil
 	}
-	_ = m.futureStore.Save(next)
+	// Nothing is typed until the state that records it is safely on disk. A
+	// failed write with the sends already away would re-fire the same prompt
+	// on every tick from here on.
+	if err := m.futureStore.Save(next); err != nil {
+		m.err = fmt.Errorf("future prompts: %w", err)
+		return nil
+	}
 	if len(sends) == 0 {
 		return nil
 	}
@@ -321,13 +382,17 @@ func (m *model) runFutureQueues(now time.Time) tea.Cmd {
 	// The plans sleep between keystrokes, so they run off the Update loop. The
 	// whole fleet unblocks on the same reset, so sends are spaced: several
 	// panes being typed into in the same instant is worth avoiding.
-	busy := generating
+	//
+	// A queue that fires is by construction aimed at a pane that is not
+	// working, so nothing is interrupted: the busy-ness sampled here would be
+	// seconds stale by the last send anyway, and a wrong Escape would clear
+	// whatever the user had half-typed in the input box.
 	return func() tea.Msg {
 		for i, s := range sends {
 			if i > 0 {
 				time.Sleep(futureSendSpacing)
 			}
-			sendCannedOps(s.session, cannedSendPlan(busy[s.session], s.text))
+			sendCannedOps(s.session, cannedSendPlan(false, s.text))
 		}
 		return nil
 	}
@@ -346,9 +411,12 @@ func (m model) resumedSessions(generating map[string]bool, now time.Time) map[st
 	if len(generating) == 0 {
 		return map[string]bool{}
 	}
-	tcfg := defaultTelemetryConfig()
-	if m.cfg != nil {
-		tcfg = m.cfg.Telemetry
+	tcfg := m.telemetryConfig()
+	// A zero stale window would mark every snapshot stale, and no session
+	// would ever be seen resuming. Fall back to the default rather than
+	// silently disabling the check.
+	if tcfg.StaleAfterSeconds <= 0 {
+		tcfg.StaleAfterSeconds = defaultTelemetryConfig().StaleAfterSeconds
 	}
 	snaps := readSessionSnapshots(tcfg, now)
 
@@ -359,4 +427,11 @@ func (m model) resumedSessions(generating map[string]bool, now time.Time) map[st
 		}
 	}
 	return out
+}
+
+func (m model) telemetryConfig() TelemetryConfig {
+	if m.cfg == nil {
+		return defaultTelemetryConfig()
+	}
+	return m.cfg.Telemetry
 }

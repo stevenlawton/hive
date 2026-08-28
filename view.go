@@ -67,6 +67,7 @@ func (m model) View() tea.View {
 		}
 		if m.future.open {
 			content = overlayBox(content, renderFutureMenu(m.future), m.future.geom.x, m.future.geom.y)
+			paneCursor = nil // the popup owns input; its field draws its own cursor
 		}
 		if m.canned.open {
 			content = overlayBox(content, m.renderCannedPopup(), m.canned.geom.x, m.canned.geom.y)
