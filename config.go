@@ -152,6 +152,10 @@ func decodeConfigNode(root *yaml.Node, cfg *Config) ([]wsEntry, error) {
 		switch key {
 		case "repos_dir":
 			cfg.ReposDir = val.Value
+		case "web_port":
+			if err := val.Decode(&cfg.WebPort); err != nil {
+				return nil, fmt.Errorf("web_port: %w", err)
+			}
 		case "scratch_dir":
 			cfg.ScratchDir = val.Value
 		case "default_action":
@@ -178,6 +182,11 @@ func decodeConfigNode(root *yaml.Node, cfg *Config) ([]wsEntry, error) {
 				}
 				entries = append(entries, wsEntry{key: wsKey, cfg: ws})
 			}
+		default:
+			// This switch is the only thing that reads the top level: a struct
+			// tag alone decodes nothing here. A key with no case is dropped in
+			// silence, which is how web_port sat in the config doing nothing.
+			fmt.Fprintf(os.Stderr, "warning: config key %q is not understood and was ignored\n", key)
 		}
 	}
 	return entries, nil

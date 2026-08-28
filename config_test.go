@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -226,5 +229,55 @@ func TestRefineConcurrencyDefaultsToThree(t *testing.T) {
 	}
 	if got := (WorkspaceConfig{RefineConcurrency: -1}).refineConcurrency(); got != 3 {
 		t.Fatalf("negative refineConcurrency = %d, want 3", got)
+	}
+}
+
+// web_port sat in the config for days doing nothing: the top-level switch in
+// decodeConfigNode is the only thing that reads these keys, and it had no case
+// for it, so hive's own web UI never started and a stray 'hive serve' covered
+// for it. A struct tag is not enough here.
+func TestLoadConfigReadsWebPort(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("repos_dir: /tmp/r\nweb_port: 8787\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.WebPort != 8787 {
+		t.Errorf("web_port not read from config: got %d, want 8787", cfg.WebPort)
+	}
+}
+
+// Every top-level key hive understands must have a case in decodeConfigNode.
+// The struct tags are the inventory; the switch is what actually runs.
+func TestEveryTopLevelConfigKeyIsDecoded(t *testing.T) {
+	rt := reflect.TypeOf(Config{})
+	for i := 0; i < rt.NumField(); i++ {
+		tag := rt.Field(i).Tag.Get("yaml")
+		key, _, _ := strings.Cut(tag, ",")
+		if key == "" || key == "-" {
+			continue
+		}
+		t.Run(key, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			var buf bytes.Buffer
+			old := os.Stderr
+			r, w, _ := os.Pipe()
+			os.Stderr = w
+			if err := os.WriteFile(path, []byte(key+": {}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = LoadConfig(path)
+			w.Close()
+			os.Stderr = old
+			_, _ = buf.ReadFrom(r)
+			if strings.Contains(buf.String(), "is not understood") {
+				t.Errorf("%q is a Config field but decodeConfigNode has no case for it, so it is silently ignored", key)
+			}
+		})
 	}
 }
