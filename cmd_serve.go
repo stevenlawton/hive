@@ -278,18 +278,12 @@ func apiReview(w http.ResponseWriter, r *http.Request) {
 			return ts
 		}
 		subject = ts[i].Subject
-		switch {
-		case post.Kind == "plan" && post.Verdict == "approve":
-			ts[i].State = StateReady // planned and approved; a builder may take it
-		case post.Kind == "plan":
-			ts[i].State = StateUnrefined // back to the planner
-		case post.Verdict == "approve":
+		state, done := reviewDestination(post.Kind, post.Verdict)
+		ts[i].State = state
+		if done {
 			// Set, not toggle: a second acceptance of the same build must not
 			// un-accept it.
 			ts[i].Done = true
-			ts[i].State = StateUnrefined
-		default:
-			ts[i].State = StateReady // the plan stands; the build does not
 		}
 		ts[i].Claim, ts[i].Since = "", ""
 		return ts
@@ -382,6 +376,35 @@ func reviewDoc(subject, id string, p reviewPost, artifact, planRel string) strin
 	return b.String()
 }
 
+// reviewDestination maps a verdict to where the ticket lands. The store update
+// and the bus announcement both read it, so a broadcast cannot describe a move
+// the store did not make.
+func reviewDestination(kind, verdict string) (state string, done bool) {
+	switch {
+	case kind == "plan" && verdict == "approve":
+		return StateReady, false // planned and approved; a builder may take it
+	case kind == "plan":
+		return StateUnrefined, false // back to the planner
+	case verdict == "approve":
+		return StateUnrefined, true // the build is accepted, and the ticket with it
+	default:
+		return StateReady, false // the plan stands; the build does not
+	}
+}
+
+// reviewMoveLabel names that destination for a human reading the bus.
+func reviewMoveLabel(p reviewPost) string {
+	state, done := reviewDestination(p.Kind, p.Verdict)
+	switch {
+	case done:
+		return "done"
+	case state == StateUnrefined:
+		return "unrefined"
+	default:
+		return state
+	}
+}
+
 func announceReview(repo, id, subject string, p reviewPost) {
 	verdict := "changes requested"
 	if p.Verdict == "approve" {
@@ -390,8 +413,8 @@ func announceReview(repo, id, subject string, p reviewPost) {
 	head := fmt.Sprintf("%s review posted on %s (%s) — %s, %d comment(s), against hash %s",
 		p.Kind, id, repo, verdict, len(p.Comments), p.Hash)
 	body := fmt.Sprintf("Reviewed from hive web. Subject: %s\nThe review is at docs/plans/%s.review.md, "+
-		"and the ticket has moved to %s.\nEach comment quotes the plan line it is against.",
-		subject, id, map[string]string{"approve": "ready", "changes": "unrefined"}[p.Verdict])
+		"and the ticket has moved to %s.\nEach comment quotes the %s line it is against.",
+		subject, id, reviewMoveLabel(p), p.Kind)
 	_ = runBusCmd([]string{"announce", head, "--body", body})
 }
 

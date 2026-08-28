@@ -53,8 +53,6 @@ h1{font-size:28px;font-weight:700}
 .sub{color:var(--ink-muted);font-size:14.5px}
 .bar{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin:13px 0 4px}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
-.note{margin:12px 0 22px;padding:8px 11px;border-radius:7px;background:var(--surface-2);
-  border:1px solid var(--hairline);color:var(--ink-muted);font-size:14px;line-height:1.5}
 .gates{margin:0 0 26px}
 .gh{display:flex;align-items:center;gap:9px;margin-bottom:11px}
 .gh h2{font-size:18px;font-weight:700}
@@ -212,7 +210,6 @@ footer{margin-top:30px;padding-top:15px;border-top:1px solid var(--hairline);
 <div class="wrap" id="app">
 <header><h1>Hive Backlog</h1><span class="sub" id="totals"></span></header>
 <div class="bar"><span class="sub">Palette</span><div class="chips" id="pal"></div></div>
-<div class="note"><strong>Prototype.</strong> Your real backlog and both real plans, read from disk minutes ago. Nothing writes to hive &mdash; but the review panel shows you exactly what <em>would</em> be sent to the agent.</div>
 
 <div class="topgrid">
 <section class="gates">
@@ -221,7 +218,7 @@ footer{margin-top:30px;padding-top:15px;border-top:1px solid var(--hairline);
 </section>
 <div class="pipe" id="pipe"></div>
 </div>
-<div class="bar"><input type="search" id="q" placeholder="Search 256 tasks…" aria-label="Search tasks"></div>
+<div class="bar"><input type="search" id="q" placeholder="Search tasks…" aria-label="Search tasks"></div>
 <div class="bar"><div class="chips" id="repochips"></div></div>
 <div class="bar" style="margin-bottom:16px"><div class="chips" id="statechips"></div></div>
 <div id="repos"></div>
