@@ -219,15 +219,16 @@ func (s *FutureStore) path() string {
 	return filepath.Join(s.dir, "future.yaml")
 }
 
-// cleanFutureQueues flattens each prompt to one line — a newline mid-prompt
-// would submit it half-typed, since sending is a literal keystroke stream —
-// and drops queues holding nothing worth restoring.
+// cleanFutureQueues tidies each note and drops queues holding nothing worth
+// restoring. Newlines are kept: a note written across several lines is
+// delivered as a bracketed paste rather than as keystrokes, so its shape
+// survives all the way to the input box.
 func cleanFutureQueues(in map[string]FutureQueue) map[string]FutureQueue {
 	out := make(map[string]FutureQueue, len(in))
 	for session, q := range in {
 		prompts := make([]string, 0, len(q.Prompts))
 		for _, p := range q.Prompts {
-			if p = flattenLines(p); p != "" {
+			if p = trimNote(p); p != "" {
 				prompts = append(prompts, p)
 			}
 		}

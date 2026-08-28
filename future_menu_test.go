@@ -136,3 +136,39 @@ func TestFuturePopupRendersTheParkedPromptsAndBothTicks(t *testing.T) {
 		}
 	}
 }
+
+func TestFuturePopupParksANoteWrittenAcrossLines(t *testing.T) {
+	c := newFutureMenu("hive-x", FutureQueue{}, 1756400000, "resume")
+	c.input.SetValue("rework the importer:\n- keep the csv path\n- drop the xml one")
+
+	c.commitPrompt()
+
+	if len(c.q.Prompts) != 1 {
+		t.Fatalf("got %d prompts, want the note parked whole: %#v", len(c.q.Prompts), c.q.Prompts)
+	}
+	if !strings.Contains(c.q.Prompts[0], "\n- drop the xml one") {
+		t.Errorf("the note was flattened on the way in: %q", c.q.Prompts[0])
+	}
+}
+
+func TestFutureRowShowsAMultiLineNoteByItsFirstLine(t *testing.T) {
+	got := futureRowText(0, "rework the importer:\n- keep the csv\n- drop the xml")
+
+	if strings.Contains(got, "\n") {
+		t.Fatalf("a multi-line note broke the row: %q", got)
+	}
+	if !strings.Contains(got, "rework the importer:") {
+		t.Errorf("row %q does not lead with the note's first line", got)
+	}
+	if !strings.Contains(got, "+2") {
+		t.Errorf("row %q does not say how many lines are hidden", got)
+	}
+}
+
+func TestFutureRowLeavesASingleLineNoteAlone(t *testing.T) {
+	got := futureRowText(0, "carry on")
+
+	if strings.Contains(got, "+") {
+		t.Errorf("row %q claims hidden lines that do not exist", got)
+	}
+}

@@ -21,6 +21,9 @@ func futureTestModel(t *testing.T, q FutureQueue) model {
 	}
 }
 
+// keyParkNote is ctrl+a: Enter now breaks the line inside a note.
+var keyParkNote = tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}
+
 func pressFuture(t *testing.T, m model, msg tea.KeyPressMsg) model {
 	t.Helper()
 	next, _ := m.handleFutureKey(msg)
@@ -31,7 +34,7 @@ func TestFuturePopupParksATypedNoteOnEnter(t *testing.T) {
 	m := futureTestModel(t, FutureQueue{})
 	m.future.input.SetValue("check the bus")
 
-	m = pressFuture(t, m, keyEnter)
+	m = pressFuture(t, m, keyParkNote)
 
 	if len(m.future.q.Prompts) != 1 || m.future.q.Prompts[0] != "check the bus" {
 		t.Fatalf("note was not parked: %#v", m.future.q.Prompts)
@@ -44,7 +47,7 @@ func TestFuturePopupParksATypedNoteOnEnter(t *testing.T) {
 func TestFuturePopupEscapePersistsAndCloses(t *testing.T) {
 	m := futureTestModel(t, FutureQueue{})
 	m.future.input.SetValue("carry on tomorrow")
-	m = pressFuture(t, m, keyEnter)
+	m = pressFuture(t, m, keyParkNote)
 
 	m = pressFuture(t, m, keyEscape)
 
@@ -217,7 +220,7 @@ func TestFuturePopupKeepsNotesTypedWhileTheQueueFiredUnderneath(t *testing.T) {
 	}
 	m.openFuturePopup("hive-x", 2, 2)
 	m.future.input.SetValue("a thought I had while it fired")
-	next, _ := m.handleFutureKey(keyEnter)
+	next, _ := m.handleFutureKey(keyParkNote)
 	m = next.(model)
 
 	if cmd := m.runFutureQueues(time.Now()); cmd != nil {

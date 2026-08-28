@@ -323,3 +323,35 @@ func TestFutureDueIgnoresAnArmingFromAWindowLongGone(t *testing.T) {
 		t.Errorf("got %v due — a day-old arming fired into whatever the session is doing now", got)
 	}
 }
+
+func TestFutureStoreKeepsNewlinesInANote(t *testing.T) {
+	dir := t.TempDir()
+	note := "rework the importer:\n- keep the csv path\n- drop the xml one"
+
+	if err := newFutureStore(dir).Save(map[string]FutureQueue{
+		"hive-x": {Prompts: []string{note}, AutoSend: true, ArmedFor: 1756400000},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := newFutureStore(dir).Queues()["hive-x"]
+
+	if len(got.Prompts) != 1 || got.Prompts[0] != note {
+		t.Errorf("the note did not survive the round trip:\n got %q\nwant %q", got.Prompts, note)
+	}
+}
+
+func TestFutureStoreStillDropsBlankNotes(t *testing.T) {
+	dir := t.TempDir()
+	if err := newFutureStore(dir).Save(map[string]FutureQueue{
+		"hive-x": {Prompts: []string{"  \n\n  ", "a real one"}, AutoSend: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := newFutureStore(dir).Queues()["hive-x"]
+
+	if len(got.Prompts) != 1 || got.Prompts[0] != "a real one" {
+		t.Errorf("blank note was kept: %#v", got.Prompts)
+	}
+}

@@ -511,6 +511,21 @@ func TmuxSendWheel(sessionName string, up bool, count int) error {
 	return TmuxControlSend(cmd)
 }
 
+// TmuxPasteText delivers text to a pane as a bracketed paste. Sending it as
+// keystrokes would submit the prompt at the first newline, leaving the rest to
+// arrive as further half-finished prompts.
+//
+// -d deletes the buffer afterwards so it does not sit in tmux's paste stack,
+// and -p wraps the text in the bracketed-paste markers that tell the receiving
+// application the newlines are content rather than Enter.
+func TmuxPasteText(sessionName, text string) error {
+	buf := "hive-paste-" + sessionName
+	if err := tmuxRun("set-buffer", "-b", buf, text); err != nil {
+		return err
+	}
+	return tmuxRun("paste-buffer", "-d", "-p", "-b", buf, "-t", tmuxPaneTarget(sessionName))
+}
+
 func TmuxSendLiteral(sessionName, text string) error {
 	// Quote it for the tmux command parser.
 	if controlWrite(fmt.Sprintf("send-keys -t %s -l %q",

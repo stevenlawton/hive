@@ -131,3 +131,35 @@ func paneLimitReset(session string, now time.Time) (int64, bool) {
 	}
 	return limitBannerReset(pane, now)
 }
+
+// futureSendPlan builds the delivery for a parked note. A single line is typed
+// as keystrokes, which is what the canned popup does and what claude's input
+// box handles best. Anything longer goes as a bracketed paste: a typed newline
+// would submit the prompt, so a note written across four lines would otherwise
+// arrive as four half-finished ones.
+func futureSendPlan(note string) []cannedOp {
+	note = trimNote(note)
+	if note == "" {
+		return nil
+	}
+	if strings.Contains(note, "\n") {
+		return []cannedOp{
+			{paste: note},
+			{key: "enter", delay: cannedSubmitPause},
+		}
+	}
+	return []cannedOp{
+		{literal: note},
+		{key: "enter", delay: cannedSubmitPause},
+	}
+}
+
+// trimNote drops surrounding blank space while leaving the shape of the note
+// alone — the indentation of a list, say, is the user's and worth keeping.
+func trimNote(note string) string {
+	lines := strings.Split(note, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t\r")
+	}
+	return strings.Trim(strings.Join(lines, "\n"), "\n \t")
+}
