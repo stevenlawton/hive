@@ -80,8 +80,31 @@ All keys are forwarded to the focused tmux session except chord sequences:
 | `ctrl+space left/right` | Focus split |
 | `ctrl+space x` | Kill focused split |
 | `ctrl+space f` | Fullscreen attach |
+| `ctrl+space c` | Canned prompts for the focused session |
 
 Mouse scroll wheel browses tmux scrollback history.
+
+### Canned prompts
+
+Right-click a session pane (or `ctrl+space c`) for a popup of pre-written
+prompts. Pick one with `1`-`9` / `0`, the arrow keys and Enter, the scroll
+wheel, or a click; `esc` closes it without sending. If claude is mid-turn in
+that pane hive sends Escape first, so the prompt interrupts the work rather
+than queueing behind it — an idle pane is never interrupted.
+
+The list lives in `~/.config/hive/canned.yaml`, seeded with defaults on first
+use and re-read every time the popup opens, so hand-edits need no restart:
+
+```yaml
+prompts:
+  - label: tests
+    text: run the tests and fix whatever fails
+```
+
+`a` adds an entry, `e` edits the one under the cursor, `d` deletes it, and
+`J`/`K` move it up and down the list — the order in the file is the order of
+the number keys. Prompt text is one line: newlines would submit it half-typed,
+so they are flattened to spaces on load.
 
 ## Worktree bootstrap
 
