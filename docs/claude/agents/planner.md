@@ -134,6 +134,10 @@ research anything.
   predecessor's open questions. They are **settled**. Build the contract on them,
   do not re-litigate them, and do not ask them again in different words. Someone
   spent their attention on those once already.
+- A **`> DRAFT`** marker on the first line means a previous run of you was
+  killed before it finished. The ticket is still unrefined because it never
+  reached §7. Finish that draft — critique it and complete it — rather than
+  re-researching from nothing.
 - The previous **Open questions** that were *not* answered still stand. Carry
   them forward.
 - When you rewrite the artifact, **copy the `## Decisions` section into the new
@@ -148,9 +152,12 @@ references. Group them into **independent clusters**, then dispatch one
 `context-loader` agent per cluster, **all in a single message** so they run
 concurrently.
 
-One agent per cluster, not one agent for the whole ticket. A single loader told
-to "understand this ticket" returns a shallow sweep; four told to chase four
-specific anchors return depth you can actually write a contract from.
+**At most three loaders.** If the anchors fall into more clusters than that,
+merge the thinnest ones until you are down to three — you are not entitled to a
+loader per anchor. One agent per cluster, not one agent for the whole ticket: a
+single loader told to "understand this ticket" returns a shallow sweep, while
+three told to chase three specific anchors return depth you can actually write a
+contract from.
 
 Do not start drafting until they are all back.
 
@@ -180,16 +187,13 @@ must be able to execute it without inventing anything. Exact files. Exact
 functions. Full signatures for anything new. If you find yourself writing
 "update the relevant handler", you have not finished researching.
 
-## 5. Have it critiqued
+## 5. Land the draft on disk before anything else
 
-Dispatch **two `plan-critic` agents in one message** against the draft.
-
-Fold in what holds. Where a critic was wrong, record in **Critic findings** that
-it was wrong and why — that section is the human's evidence that the plan was
-attacked rather than rubber-stamped, and a critic being wrong is itself worth
-knowing.
-
-## 6. Write the artifact
+Write the artifact **now**, before the critique. A planner that is killed
+mid-run — session limit, crash, a human hitting escape on a batch that is taking
+too long — leaves nothing behind unless the draft is already written, and a
+batch that produces no files has spent its entire budget for nothing. Everything
+after this step improves a plan that already exists.
 
 It goes on the repo's **main worktree**, not wherever you happen to be:
 
@@ -201,7 +205,32 @@ Write to `<that path>/docs/plans/<id>.md`. Create `docs/plans/` if it does not
 exist. Do not commit it — the human reviews it, and the builder commits it with
 the change.
 
+Put this line at the very top, above everything else:
+
+```
+> DRAFT — not yet critiqued. Do not build from this.
+```
+
+You delete it in §7, once the critique is folded in. While it is there the
+artifact is visibly unfinished, so nobody builds from a half-written contract
+and the next planner knows to finish it rather than start from nothing.
+
+## 6. Have it critiqued
+
+Dispatch **one `plan-critic` agent** against the draft. A second critic on the
+same plan mostly restates the first at full opus cost; that budget buys more as
+another ticket's plan than as a second opinion on this one.
+
+Fold in what holds and rewrite the artifact in place. Where the critic was
+wrong, record in **Critic findings** that it was wrong and why — that section is
+the human's evidence that the plan was attacked rather than rubber-stamped, and
+a critic being wrong is itself worth knowing.
+
 ## 7. Transition the ticket, then release your claim
+
+Delete the `> DRAFT` line from the artifact first. The transition is the claim
+that this plan is finished, and the marker contradicting it is worse than either
+one alone.
 
 ```bash
 hive todo state <id> plan-review
