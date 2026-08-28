@@ -60,10 +60,11 @@ workspaces:
                                  # a worktree and a branch, and each one lands in
                                  # your triage queue — so raise it only as fast as
                                  # you are willing to read the results.
-    # refine_concurrency: 3      # How many /refine planners run at once. A planner
+    # refine_concurrency: 1      # How many /refine planners run at once. A planner
                                  # is not one agent — it fans out to context
-                                 # loaders and a critic of its own, so three
-                                 # planners is already a dozen agents in flight.
+                                 # loaders and a critic of its own, so even one
+                                 # planner is about five agents. Raise it only
+                                 # once you know what one ticket costs.
   another-app:
     name: "Another App"
     short: "AA"

@@ -7,7 +7,7 @@ Refine the backlog: turn unrefined tickets into reviewable plans, without pullin
 a single plan into this session.
 
 `$ARGUMENTS` may be a count (`/refine 3`), a list of ids (`/refine lxg dmy`), or
-empty. Default: **3**.
+empty. Default: **1**.
 
 ## 1. Select the tickets
 
@@ -27,16 +27,18 @@ If ids were given explicitly, use those and skip the filter, but still refuse a
 done or deferred one and say why.
 
 **Cap the batch** at this workspace's `refine_concurrency` from
-`~/.config/hive/config.yaml`, defaulting to **3** when the key is absent. The
-cap binds on an explicit id list too — `/refine a b c d e f` runs the first
-three and queues the rest.
+`~/.config/hive/config.yaml`, defaulting to **1** when the key is absent. The
+cap binds on an explicit id list too — `/refine a b c d e f` refines the first
+one and queues the rest.
 
-The cap is small because a planner is not one agent. Each one dispatches
-context-loaders and a critic of its own, so a batch of 3 is roughly a dozen
-agents in flight, most of them on opus. Six planners is two dozen agents, which
-will spend a great deal of money in ten minutes and — because a planner only
-lands its artifact near the end — can still leave nothing on disk if the batch
-is interrupted.
+One, because a planner is not one agent. Each dispatches up to three
+context-loaders and a critic of its own, so even a single planner is about five
+agents, most of them on opus. Three planners is fifteen; six is thirty, which
+spends a great deal of money in ten minutes and can still leave nothing behind
+if the batch is interrupted before its planners finish.
+
+Raise it per workspace with `refine_concurrency` once you have watched a batch
+of one run all the way through and know what one ticket actually costs.
 
 If the cap bites, **say how many you left queued** and name them. Silent
 truncation reads as "that was everything", and the tickets you dropped look

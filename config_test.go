@@ -220,15 +220,15 @@ func TestBuildConcurrencyDefaultsToThree(t *testing.T) {
 	}
 }
 
-func TestRefineConcurrencyDefaultsToThree(t *testing.T) {
-	if got := (WorkspaceConfig{}).refineConcurrency(); got != 3 {
-		t.Fatalf("default refineConcurrency = %d, want 3", got)
+func TestRefineConcurrencyDefaultsToOne(t *testing.T) {
+	if got := (WorkspaceConfig{}).refineConcurrency(); got != 1 {
+		t.Fatalf("default refineConcurrency = %d, want 1", got)
 	}
 	if got := (WorkspaceConfig{RefineConcurrency: 5}).refineConcurrency(); got != 5 {
 		t.Fatalf("explicit refineConcurrency = %d, want 5", got)
 	}
-	if got := (WorkspaceConfig{RefineConcurrency: -1}).refineConcurrency(); got != 3 {
-		t.Fatalf("negative refineConcurrency = %d, want 3", got)
+	if got := (WorkspaceConfig{RefineConcurrency: -1}).refineConcurrency(); got != 1 {
+		t.Fatalf("negative refineConcurrency = %d, want 1", got)
 	}
 }
 
