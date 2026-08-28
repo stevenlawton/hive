@@ -7,7 +7,7 @@ Refine the backlog: turn unrefined tickets into reviewable plans, without pullin
 a single plan into this session.
 
 `$ARGUMENTS` may be a count (`/refine 3`), a list of ids (`/refine lxg dmy`), or
-empty. Default: **5**.
+empty. Default: **3**.
 
 ## 1. Select the tickets
 
@@ -25,6 +25,22 @@ A ticket is a candidate when it is **all** of:
 
 If ids were given explicitly, use those and skip the filter, but still refuse a
 done or deferred one and say why.
+
+**Cap the batch** at this workspace's `refine_concurrency` from
+`~/.config/hive/config.yaml`, defaulting to **3** when the key is absent. The
+cap binds on an explicit id list too — `/refine a b c d e f` runs the first
+three and queues the rest.
+
+The cap is small because a planner is not one agent. Each one dispatches
+context-loaders and a critic of its own, so a batch of 3 is roughly a dozen
+agents in flight, most of them on opus. Six planners is two dozen agents, which
+will spend a great deal of money in ten minutes and — because a planner only
+lands its artifact near the end — can still leave nothing on disk if the batch
+is interrupted.
+
+If the cap bites, **say how many you left queued** and name them. Silent
+truncation reads as "that was everything", and the tickets you dropped look
+finished when they never started.
 
 If there are no candidates, say so and stop. Do not go looking for work.
 
