@@ -396,6 +396,34 @@ directory produce the same tmux session name, so snapshots collide. Taking the
 freshest let an empty session mask a heavy one in the same directory — observed
 live, a 59%/$102.23 wrap-up hidden behind a 0%/$0 keep-going.
 
+### A snapshot has to die with its session
+
+The record is keyed by Claude session id but read by tmux session name, so
+every collision rule above depends on the colliding snapshots all being *live*.
+`/clear` breaks that: it starts a new session id in the same pane, so the pane
+holds two files, and worst-verdict-wins goes on colouring the tab from the
+conversation that is gone. Observed live: a he-events pane washed amber at
+`wrap_up 47% $85.36` while the session actually in it — and the statusline
+printed underneath the wash — read `9% $4.00`. The dead snapshot was a
+three-day session cleared that morning.
+
+Two mechanisms retire a snapshot, and both are needed:
+
+- `dropDeadSessions` (read side) drops any snapshot whose **tmux session** is
+  gone. It cannot see the `/clear` case, where tmux outlives the conversation.
+- The **`SessionEnd` hook** (`hive session-end`) deletes the snapshot for the
+  ending **Claude session** id. Claude Code fires it with reason `clear`,
+  `resume`, `logout`, `prompt_input_exit` or `other`; all five mean the same
+  thing here, so the reason is not read. Installed by `bus.InstallClaudeHook`,
+  which runs on every hive start.
+
+`prune_after_hours` remains the backstop for a session that ends without the
+hook firing — a crash, a killed pane, a reboot with hive still open.
+
+The hook exits 0 unconditionally, including on unparseable input. A hook that
+fails is noise in the session it fires in, and the worst case of doing nothing
+is one more stale tint, which the prune already tolerates.
+
 ## Fleet burn rate
 
 What the machine costs per hour, across every session, shown once in the tab bar
@@ -452,6 +480,7 @@ when recording started.
 | No prior snapshot (`growth` unknown) | `ctx_pct` rules only; reason says so |
 | Snapshot dir unwritable | Silent; statusline unaffected; TUI all grey |
 | Snapshot stale | Grey, reason retained |
+| `SessionEnd` hook missing or failed | Snapshot outlives its session until `prune_after_hours` |
 | tmux `window-style` fails | Attach proceeds untinted |
 | `enabled: false` | Collector and tints off; today's behaviour exactly |
 

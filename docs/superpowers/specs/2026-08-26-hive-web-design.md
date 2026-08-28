@@ -22,12 +22,12 @@ half, and is the more valuable of the two.
 
 ## What already exists
 
-A working prototype, built from the real backlog and both real plan documents:
-`https://claude.ai/code/artifact/4c8e8736-470f-4d04-b996-24b6bdb9c2b1`
-
-It is the design conversation in artifact form; the decisions below were taken
-against it, by Steve, in conversation on 2026-08-26. It is not the
-implementation — it is a static page with the data baked in.
+A working prototype, built from the real backlog and both real plan documents,
+was the design conversation in artifact form; the decisions below were taken
+against it, by Steve, in conversation on 2026-08-26. It was never the
+implementation — a static page with the data baked in — and it was retired once
+hive's own web view shipped, so the reviewer runs from the hive process and
+nowhere else.
 
 ## Decisions already taken
 
@@ -129,9 +129,15 @@ The server:
 2. Rejects `approve` with a non-empty `comments` array, and `changes` with an
    empty one. The UI enforces both; the server does not trust the UI.
 3. Writes `<repo>/docs/plans/<id>.review.md`.
-4. Moves the ticket: `approve` → `ready`; `changes` → unrefined (`""`).
+4. Moves the ticket. A plan: `approve` → `ready`, `changes` → unrefined
+   (`""`). A build: `approve` → done, `changes` → `ready`, the plan having
+   survived what the build did with it.
 5. Posts a bus announcement naming the ticket, the verdict, the comment count
-   and the plan hash.
+   and the plan hash. **Amended 2026-08-28:** its body names the state the
+   ticket moved to, and both it and the store read that from one function
+   (`reviewDestination`). They disagreed before: every build review was
+   announced with a plan review's destination, so an accepted build reached
+   the bus as "ready" and peers picked up finished work.
 
 ### The review file
 

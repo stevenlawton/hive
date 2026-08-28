@@ -159,3 +159,36 @@ func TestServeAlongsideReportsAPortAlreadyInUse(t *testing.T) {
 		t.Errorf("the announcement does not say how to find the squatter: %q", body)
 	}
 }
+
+// The bus announcement told peers a build approval had moved the ticket to
+// "ready" — it moves it to done. A peer that believes the broadcast picks up
+// finished work, which is what happened to the worktree-bootstrap ticket.
+func TestTheAnnouncementNamesTheStateTheStoreMovedTo(t *testing.T) {
+	cases := []struct {
+		post reviewPost
+		want string
+	}{
+		{reviewPost{Kind: "plan", Verdict: "approve"}, "ready"},
+		{reviewPost{Kind: "plan", Verdict: "changes"}, "unrefined"},
+		{reviewPost{Kind: "build", Verdict: "approve"}, "done"},
+		{reviewPost{Kind: "build", Verdict: "changes"}, "ready"},
+	}
+	for _, c := range cases {
+		t.Run(c.post.Kind+" "+c.post.Verdict, func(t *testing.T) {
+			if got := reviewMoveLabel(c.post); got != c.want {
+				t.Errorf("announced %q, store moved it to %q", got, c.want)
+			}
+			state, done := reviewDestination(c.post.Kind, c.post.Verdict)
+			named := state
+			if state == StateUnrefined {
+				named = "unrefined"
+			}
+			if done {
+				named = "done"
+			}
+			if named != c.want {
+				t.Errorf("the store moves it to %q, not %q", named, c.want)
+			}
+		})
+	}
+}
