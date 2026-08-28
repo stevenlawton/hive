@@ -1080,10 +1080,10 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		m.acknowledgeTab(active.ID)
 	}
 
-	m.applySessionVerdicts(time.Now())
-
 	sessions, err := TmuxListSessions()
 	if err != nil {
+		// nil live set: liveness is unknown this tick, so every tone stands.
+		m.applySessionVerdicts(time.Now(), nil)
 		return m, healthTick()
 	}
 
@@ -1091,6 +1091,8 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 	for _, s := range sessions {
 		liveSessions[s.Name] = true
 	}
+
+	m.applySessionVerdicts(time.Now(), liveSessions)
 
 	deadAlerts := DetectDeadSessions(m.items, liveSessions)
 	remoteAlerts := DetectDeadRemotes(m.items, liveSessions)
