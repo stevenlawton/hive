@@ -97,7 +97,8 @@ function mdBlocks(src){
   return out}
 
 function renderTotals(){const a=all();
-  document.getElementById("totals").textContent=`${a.length} tasks · ${a.filter(isOpen).length} open · ${DATA.length} repos`}
+  document.getElementById("totals").textContent=`${a.length} tasks · ${a.filter(isOpen).length} open · ${DATA.length} repos`;
+  document.getElementById("q").placeholder=`Search ${a.length} tasks…`}
 function renderPal(){document.getElementById("pal").innerHTML=Object.entries(PALETTES)
   .map(([k,v])=>`<button class="chip" aria-pressed="${pal===k}" data-pal="${k}">${v.name}</button>`).join("")}
 function renderGates(){
