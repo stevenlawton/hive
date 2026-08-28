@@ -114,8 +114,16 @@ five-hour quota is spent every session is stuck until the window rolls over,
 which is exactly when the next thing to say tends to occur to you.
 
 `ctrl+space u` — or `ctrl+u` from the canned popup, which right-click already
-opens — brings up the parked queue for that pane. Type a note and press Enter
-to park it; `ctrl+d` deletes the one under the cursor; `esc` saves and closes.
+opens — brings up the parked queue for that pane. The note field is a small
+text area: `Enter` breaks the line, `ctrl+a` parks the note, `ctrl+up`/`ctrl+down`
+move the cursor through the parked list, `ctrl+d` deletes the one under it, and
+`esc` saves and closes. A note written across several lines shows in the list by
+its first, with a `+2` for what is not on screen.
+
+A multi-line note is delivered as a bracketed paste rather than as keystrokes,
+because a typed newline submits the prompt — four lines would otherwise arrive
+as four half-finished prompts. Single-line notes are still typed, as canned
+prompts are.
 
 Two tickboxes:
 

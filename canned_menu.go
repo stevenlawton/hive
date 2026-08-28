@@ -154,7 +154,11 @@ func runeLen(s string) int { return len([]rune(s)) }
 type cannedOp struct {
 	key     string
 	literal string
-	delay   time.Duration
+	// paste delivers text as a bracketed paste rather than as keystrokes.
+	// A newline typed into claude submits the prompt, so anything written
+	// across more than one line has to arrive as a block.
+	paste string
+	delay time.Duration
 }
 
 // cannedSendPlan builds the keystroke sequence for sending a prompt. A busy
@@ -321,6 +325,8 @@ var sendCannedOps = func(session string, plan []cannedOp) {
 			time.Sleep(op.delay)
 		}
 		switch {
+		case op.paste != "":
+			TmuxPasteText(session, op.paste)
 		case op.literal != "":
 			TmuxSendLiteral(session, op.literal)
 		case op.key != "":

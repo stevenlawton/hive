@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 )
@@ -23,7 +23,7 @@ type futureMenu struct {
 	q       FutureQueue
 	resetAt int64
 	cursor  int
-	input   textinput.Model
+	input   textarea.Model
 
 	resumeText  string
 	resetSource futureResetSource
@@ -70,7 +70,7 @@ func newFutureMenuFrom(
 		resetAt:     resetAt,
 		resumeText:  resumeText,
 		resetSource: source,
-		input:       newCannedInput("> ", "note for when the tokens come back", "", futureMenuWidth-6),
+		input:       newFutureInput(),
 	}
 }
 
@@ -105,11 +105,28 @@ func (c *futureMenu) move(delta int) {
 	c.cursor = clampInt(c.cursor+delta, 0, len(c.q.Prompts)-1)
 }
 
-// commitPrompt parks whatever is in the field. Prompts are flattened to one
-// line: the text is delivered as a literal keystroke stream, so an embedded
-// newline would submit it half-typed.
+// newFutureInput builds the note editor. It is a textarea rather than a single
+// line because a parked note is often a list — Enter breaks the line, ctrl+a
+// parks the note.
+func newFutureInput() textarea.Model {
+	ta := textarea.New()
+	ta.Placeholder = "note for when the tokens come back"
+	ta.ShowLineNumbers = false
+	ta.SetWidth(futureMenuWidth - 4)
+	ta.SetHeight(futureNoteRows)
+	ta.CharLimit = 0
+	return ta
+}
+
+// futureNoteRows is how much of the note is on screen while writing it. The
+// textarea scrolls beyond that rather than growing the popup.
+const futureNoteRows = 3
+
+// commitPrompt parks whatever is in the field, newlines and all: a multi-line
+// note is delivered as a bracketed paste, so its shape survives to the input
+// box.
 func (c *futureMenu) commitPrompt() {
-	text := flattenLines(c.input.Value())
+	text := trimNote(c.input.Value())
 	c.input.SetValue("")
 	if text == "" {
 		return
@@ -199,8 +216,10 @@ func renderFutureMenu(c futureMenu) string {
 	}
 
 	if c.editorEnabled() {
-		lines = append(lines, cannedRowStyle.Width(inner).Render(
-			" "+truncateCells(c.input.View(), inner-2)))
+		for _, row := range strings.Split(c.input.View(), "\n") {
+			lines = append(lines, cannedRowStyle.Width(inner).Render(
+				" "+truncateCells(row, inner-2)))
+		}
 	}
 
 	lines = append(lines,
@@ -213,10 +232,17 @@ func renderFutureMenu(c futureMenu) string {
 	return cannedBorderStyle.Render(strings.Join(lines, "\n"))
 }
 
-const futureHint = "enter park · ^s auto send · ^r auto resume · ^d del · esc"
+const futureHint = "^a park · enter newline · ^s send · ^r resume · ^d del · esc"
 
+// futureRowText renders one parked note as a single row. A note written across
+// several lines shows its first, with a count of what is not on screen.
 func futureRowText(index int, prompt string) string {
-	return fmt.Sprintf("%d. %s", index+1, prompt)
+	lines := strings.Split(prompt, "\n")
+	head := fmt.Sprintf("%d. %s", index+1, lines[0])
+	if len(lines) > 1 {
+		head += fmt.Sprintf("  +%d", len(lines)-1)
+	}
+	return head
 }
 
 // futureWhen spells out when an armed queue actually goes, grace included, so
@@ -247,17 +273,17 @@ func (m model) handleFutureKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.future = futureMenu{}
 		return m, nil
 
-	case "enter":
+	case "ctrl+a":
 		if m.future.editorEnabled() {
 			m.future.commitPrompt()
 		}
 		return m, nil
 
-	case "up":
+	case "ctrl+up":
 		m.future.move(-1)
 		return m, nil
 
-	case "down":
+	case "ctrl+down":
 		m.future.move(1)
 		return m, nil
 
@@ -357,7 +383,7 @@ func (m *model) openFuturePopup(session string, x, y int) {
 
 // futureMenuRows is what the popup's geometry is sized for: the header, a few
 // parked prompts, the field, both tickboxes and the hint.
-const futureMenuRows = 9
+const futureMenuRows = 9 + futureNoteRows
 
 // runningSessions is the set of tmux sessions claude is currently generating
 // in. This is what holds a drain back mid-turn.
