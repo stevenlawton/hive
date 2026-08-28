@@ -65,6 +65,9 @@ func (m model) View() tea.View {
 			content = overlayBottom(content, panel, m.height)
 			paneCursor = nil // drawer owns focus; its input cursor resolves via the sentinel
 		}
+		if m.future.open {
+			content = overlayBox(content, renderFutureMenu(m.future), m.future.geom.x, m.future.geom.y)
+		}
 		if m.canned.open {
 			content = overlayBox(content, m.renderCannedPopup(), m.canned.geom.x, m.canned.geom.y)
 			paneCursor = nil // the popup owns input; its form draws its own cursor

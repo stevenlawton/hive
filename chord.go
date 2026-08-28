@@ -27,6 +27,7 @@ const (
 	ChordNextWorker
 	ChordSaveState
 	ChordCannedMenu
+	ChordFutureMenu
 )
 
 // ChordHandler manages the Ctrl+Space chord prefix state.
@@ -108,6 +109,8 @@ func (c *ChordHandler) Complete(key string) (ChordAction, bool) {
 		return ChordSaveState, true
 	case "c":
 		return ChordCannedMenu, true
+	case "u":
+		return ChordFutureMenu, true
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		c.TabIndex = int(key[0] - '0')
 		return ChordJumpTab, true

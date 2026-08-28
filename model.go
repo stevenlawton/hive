@@ -148,6 +148,11 @@ type model struct {
 	canned      cannedMenu
 	cannedStore *CannedStore
 
+	// Future-prompt popup: notes parked against a session while the five-hour
+	// quota is spent, fired when the window rolls over
+	future      futureMenu
+	futureStore *FutureStore
+
 	// One desktop notification slot per repo
 	notifier *desktopNotifier
 
@@ -225,6 +230,11 @@ func newModel(cfg *Config, cfgPath string) model {
 		fmt.Fprintf(os.Stderr, "warning: canned prompts unavailable: %v\n", cannedErr)
 	}
 
+	futureStore, futureErr := OpenFutureStore()
+	if futureErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: future prompts unavailable: %v\n", futureErr)
+	}
+
 	m := model{
 		cfg:             cfg,
 		cfgPath:         cfgPath,
@@ -241,6 +251,7 @@ func newModel(cfg *Config, cfgPath string) model {
 		draggingDivider: -1,
 		layout:          layout,
 		cannedStore:     cannedStore,
+		futureStore:     futureStore,
 		state:           stateStore,
 		notifier:        newDesktopNotifier(nil),
 		bus:             busClient,
@@ -711,6 +722,12 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// (manager list or an active workspace tab).
 	if m.drawerOpen {
 		return m.handleDrawerKey(msg)
+	}
+
+	// The future-prompt popup owns input while it is open, ahead of the canned
+	// one: only one of the two is ever open.
+	if m.future.open {
+		return m.handleFutureKey(msg)
 	}
 
 	// The canned-prompt popup owns all input while it is open, the same way
@@ -1241,6 +1258,10 @@ func (m model) handleTick() (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if cmd := m.runFutureQueues(time.Now()); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
 	cmds = append(cmds, healthTick())
 	return m, tea.Batch(cmds...)
 }
@@ -1442,6 +1463,13 @@ func (m model) handleChordAction(action ChordAction) (tea.Model, tea.Cmd) {
 		m.confirmReturn = m.mode // cancelling leaves you where you were
 		m.mode = viewConfirm
 		return m, nil
+	case ChordFutureMenu:
+		if sesName := m.workspace.FocusedSessionName(); sesName != "" {
+			m.closeCannedMenu()
+			m.openFuturePopup(sesName, m.width/4, m.height/4)
+		}
+		return m, nil
+
 	case ChordCannedMenu:
 		// Anchored near the top-left of the focused pane rather than at a
 		// mouse position, since there isn't one on the keyboard route.
@@ -2015,7 +2043,7 @@ func (m model) renderWorkspaceStatusBar() string {
 		if splitCount > 1 {
 			keys = append(keys, "o:orient", "s:resize")
 		}
-		keys = append(keys, "f:fullscreen", "t:drawer", "c:canned", "r:refresh", "z:save")
+		keys = append(keys, "f:fullscreen", "t:drawer", "c:canned", "u:future", "r:refresh", "z:save")
 		status = wrapKeyHints(keys, m.width)
 	} else {
 		// Stage 1: normal — show hint to start chord
