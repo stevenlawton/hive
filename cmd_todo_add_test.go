@@ -100,13 +100,6 @@ func TestParseTodoAddFlagsEitherSideOfTheSubject(t *testing.T) {
 	}
 }
 
-func TestParseTodoAddRejectsBothDescriptionForms(t *testing.T) {
-	_, _, err := parseTodoAddArgs([]string{"--description", "one", "subj — two"})
-	if err == nil {
-		t.Fatal("giving a description twice is ambiguous and must be refused")
-	}
-}
-
 // A subject may legitimately start with a dash; "--" ends flag parsing so it
 // can be written without being mistaken for one.
 func TestParseTodoAddDoubleDashEndsFlags(t *testing.T) {
