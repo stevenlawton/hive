@@ -258,6 +258,12 @@ func InstallClaudeHook(hiveBinary string) error {
 	inboxJSONCommand := fmt.Sprintf("%s bus inbox --posttooluse", hiveBinary)
 	ensureBusHook(hooks, "PostToolUse", inboxJSONCommand, "")
 
+	// Drop a session's telemetry snapshot when the session ends. /clear starts
+	// a new session id in the same pane, and without this the old snapshot goes
+	// on colouring the tab with a verdict about a conversation that is gone.
+	sessionEndCommand := fmt.Sprintf("%s session-end", hiveBinary)
+	ensureBusHook(hooks, "SessionEnd", sessionEndCommand, "")
+
 	// Ensure preferredNotifChannel is set to terminal_bell so Claude Code
 	// emits a BEL character on turn completion — Hive's attention
 	// detection watches tmux's window_bell_flag. Without this, the flag

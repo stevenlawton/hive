@@ -417,7 +417,7 @@ func busHookCmd(args []string) int {
 			fmt.Fprintf(os.Stderr, "install MCP server: %v\n", err)
 			return 1
 		}
-		fmt.Printf("✓ bus hooks installed (UserPromptSubmit + SessionStart + PostToolUse/TodoWrite) → %s\n", exe)
+		fmt.Printf("✓ bus hooks installed (UserPromptSubmit + SessionStart + SessionEnd + PostToolUse/TodoWrite) → %s\n", exe)
 		fmt.Println("✓ Hive Bus section added to ~/.claude/CLAUDE.md")
 		fmt.Printf("✓ hive-bus MCP server registered in ~/.claude.json → %s bus mcp-serve\n", exe)
 		return 0
