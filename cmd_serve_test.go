@@ -87,38 +87,17 @@ func TestReviewDocSurvivesAnOutOfRangeLine(t *testing.T) {
 	}
 }
 
-func TestAuthRejectsEverythingWithoutTheToken(t *testing.T) {
-	h := newServeMux("sekret")
-	for _, path := range []string{"/", "/api/backlog", "/api/plan/x/abc"} {
+// Steve, 2026-08-28: "i dont want or need that - i didnt ask for that."
+// The web UI is unauthenticated by decision: the network it is bound to is the
+// only boundary. This pins that, so nobody reintroduces a gate by accident.
+func TestTheWebUINeedsNoCredential(t *testing.T) {
+	h := newServeMux()
+	for _, path := range []string{"/", "/api/backlog"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-		if w.Code != http.StatusUnauthorized {
-			t.Errorf("%s returned %d without a token, want 401", path, w.Code)
+		if w.Code == http.StatusUnauthorized {
+			t.Errorf("%s asked for a credential; the UI is meant to open bare", path)
 		}
-	}
-}
-
-func TestAuthAcceptsTheTokenAndSetsACookie(t *testing.T) {
-	h := newServeMux("sekret")
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/backlog?t=sekret", nil))
-	if w.Code == http.StatusUnauthorized {
-		t.Fatal("a correct token was rejected")
-	}
-	if !strings.Contains(w.Header().Get("Set-Cookie"), "hive=sekret") {
-		t.Errorf("no cookie set, so a phone would re-authenticate every request: %q",
-			w.Header().Get("Set-Cookie"))
-	}
-}
-
-func TestAuthRejectsAWrongCookie(t *testing.T) {
-	h := newServeMux("sekret")
-	r := httptest.NewRequest("GET", "/api/backlog", nil)
-	r.AddCookie(&http.Cookie{Name: "hive", Value: "guess"})
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("a wrong cookie returned %d, want 401", w.Code)
 	}
 }
 

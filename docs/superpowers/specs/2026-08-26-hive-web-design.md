@@ -165,17 +165,22 @@ part of the work, versus what hive writes on its own schedule.
 
 ## Reach and auth
 
-Binds `0.0.0.0` so a tailnet address works. Auth is a single shared token,
-generated on first run into `$XDG_DATA_HOME/hive/web-token`, required as a
-cookie set from `?t=<token>` on first visit. Every endpoint checks it.
+Binds `0.0.0.0` so a tailnet address works. **There is no authentication.**
 
-This is deliberately modest, and its limits should be stated rather than dressed
-up: it stops a device on the network wandering in, and it is not a defence
-against anyone who can read the token file or the tailnet. Given the backlog
-carries unfixed security findings for a live site — scanned 2026-08-26, no
-credentials, but the Stripe webhook rotation hole and the erasure gaps are in
-there — the honest posture is: Tailscale is the security boundary, the token is
-a latch, and this must not be exposed to the public internet.
+There was a shared token, minted into `$XDG_DATA_HOME/hive/web-token` and
+carried as `?t=` on first visit. It was removed on 2026-08-28 at Steve's
+instruction — the cost of finding a token to open a UI on your own machine was
+not worth what the token bought. It was never a defence against anyone who
+could read that file or reach the tailnet, and it leaked into browser history
+and shell scrollback by riding in the URL.
+
+The posture is now stated plainly rather than half-defended: the network the
+port is bound to is the only boundary. Anyone who can reach it can read every
+backlog and plan, and can approve or reject work. Given the backlog carries
+unfixed security findings for a live site — scanned 2026-08-26, no credentials,
+but the Stripe webhook rotation hole and the erasure gaps are in there — this
+must not be exposed to the public internet, and a laptop that joins untrusted
+networks is exposing it to them.
 
 ## Testing
 
@@ -187,7 +192,7 @@ a latch, and this must not be exposed to the public internet.
   ticket's state moved, its id unchanged.
 - **Concurrent write with the drawer.** A review and a drawer edit at once both
   survive — the existing `withTodos` concurrency test extended to the server.
-- **Auth.** Every endpoint 401s without the token.
+- **No credential.** Every endpoint answers a bare request; nothing 401s.
 - **Repo resolution.** A `{repo}` that is not in `DiscoverRepos` 404s and never
   reaches the filesystem.
 

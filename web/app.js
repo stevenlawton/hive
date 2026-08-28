@@ -1,8 +1,6 @@
 
 let DATA=[], PLANS={};
 const api=(p,o)=>fetch(p,o).then(async r=>{
-  if(r.status===401){document.body.innerHTML='<div class="wrap"><h1>Not signed in</h1>'+
-    '<p>Open the URL hive printed, token and all.</p></div>';throw new Error("401")}
   const ct=r.headers.get("content-type")||"";
   const d=ct.includes("json")?await r.json():await r.text();
   if(!r.ok)throw Object.assign(new Error((d&&d.error)||d||r.statusText),{status:r.status,data:d});

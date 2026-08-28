@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -25,10 +23,11 @@ var webFS embed.FS
 const serveUsage = `usage: hive serve [--port N] [--bind ADDR]
 
 Serves the backlog over HTTP so it can be read and reviewed from a phone.
-Binds 0.0.0.0 by default so a tailnet address works; the URL it prints carries
-a token you need once per browser.
+Binds 0.0.0.0 by default so a tailnet address works.
 
-Tailscale is the security boundary. Do not expose this to the internet.`
+There is no authentication: anyone who can reach the port can read the backlog
+and approve or reject work. The network is the only boundary. Do not expose
+this to the internet.`
 
 // serveTask is a task as the browser sees it: the store's fields plus the repo
 // it came from, which the store file does not carry.
@@ -90,19 +89,13 @@ func runServeCmd(args []string) int {
 		}
 	}
 
-	token, err := webToken()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
 	srv := &http.Server{
 		Addr:              bind + ":" + port,
-		Handler:           newServeMux(token),
+		Handler:           newServeMux(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	fmt.Printf("hive web on http://%s:%s/?t=%s\n", hostGuess(bind), port, token)
-	fmt.Println("  token is stored at " + webTokenPath())
-	fmt.Println("  Tailscale is the security boundary — do not expose this to the internet.")
+	fmt.Printf("hive web on http://%s:%s/\n", hostGuess(bind), port)
+	fmt.Println("  no authentication — anyone who can reach this port is in.")
 	if err := srv.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -120,32 +113,7 @@ func hostGuess(bind string) string {
 	return bind
 }
 
-func webTokenPath() string { return filepath.Join(hiveDataDir(), "web-token") }
-
-// webToken reads the shared token, minting one on first run. It is a latch, not
-// a defence: anyone who can read this file, or who is on the tailnet, is in.
-func webToken() (string, error) {
-	path := webTokenPath()
-	if b, err := os.ReadFile(path); err == nil {
-		if t := strings.TrimSpace(string(b)); t != "" {
-			return t, nil
-		}
-	}
-	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	t := hex.EncodeToString(raw)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(path, []byte(t+"\n"), 0o600); err != nil {
-		return "", err
-	}
-	return t, nil
-}
-
-func newServeMux(token string) http.Handler {
+func newServeMux() http.Handler {
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(webFS, "web")
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))
@@ -154,29 +122,8 @@ func newServeMux(token string) http.Handler {
 	mux.HandleFunc("GET /api/build/{repo}/{id}", apiBuild)
 	mux.HandleFunc("POST /api/review/{repo}/{id}", apiReview)
 	mux.HandleFunc("POST /api/task/{repo}/{id}", apiTask)
-	return withAuth(token, mux)
+	return mux
 }
-
-// withAuth gates everything on the shared token. It arrives once as ?t= and is
-// kept in a cookie, so a phone pays the cost only on its first visit.
-func withAuth(token string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if t := r.URL.Query().Get("t"); t != "" && eq(t, token) {
-			http.SetCookie(w, &http.Cookie{Name: "hive", Value: token, Path: "/",
-				HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 60 * 60 * 24 * 365})
-			if r.URL.Path == "/" {
-				http.Redirect(w, r, "/", http.StatusFound)
-				return
-			}
-		} else if c, err := r.Cookie("hive"); err != nil || !eq(c.Value, token) {
-			http.Error(w, "unauthorised — open the URL hive printed, token and all", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func eq(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
 
 // repoByName resolves a repo the browser named against the repos hive knows
 // about. Anything unknown is a 404 and never reaches the filesystem — the name
@@ -575,13 +522,8 @@ var busAnnounce = func(head, body string) {
 }
 
 // serveAlongside runs the web UI beside the TUI. It never takes hive down: a
-// port in use, or a token it cannot write, is reported and shrugged off.
+// port in use is reported and shrugged off.
 func serveAlongside(port int) {
-	token, err := webToken()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "hive web: %v\n", err)
-		return
-	}
 	addr := fmt.Sprintf("0.0.0.0:%d", port)
 	// Bind before serving, so a port already taken is known now rather than
 	// somewhere inside ListenAndServe. Behind the TUI's alt-screen stderr is
@@ -598,8 +540,8 @@ func serveAlongside(port int) {
 				"Find it with: ss -ltnp | grep :%d", port, err, port, port))
 		return
 	}
-	srv := &http.Server{Handler: newServeMux(token), ReadHeaderTimeout: 10 * time.Second}
-	fmt.Printf("hive web on http://%s:%d/?t=%s\n", hostGuess("0.0.0.0"), port, token)
+	srv := &http.Server{Handler: newServeMux(), ReadHeaderTimeout: 10 * time.Second}
+	fmt.Printf("hive web on http://%s:%d/\n", hostGuess("0.0.0.0"), port)
 	if err := srv.Serve(ln); err != nil {
 		fmt.Fprintf(os.Stderr, "hive web: %v\n", err)
 	}
