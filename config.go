@@ -36,7 +36,8 @@ type WorkspaceConfig struct {
 	Favourite    bool   `yaml:"favourite,omitempty"`
 	Collection   bool   `yaml:"collection,omitempty"`
 
-	BuildConcurrency int `yaml:"build_concurrency,omitempty"` // parallel /build workers; 0 = default
+	BuildConcurrency  int `yaml:"build_concurrency,omitempty"`  // parallel /build workers; 0 = default
+	RefineConcurrency int `yaml:"refine_concurrency,omitempty"` // parallel /refine planners; 0 = default
 }
 
 // buildConcurrency caps how many /build workers run at once. Each one holds a
@@ -45,6 +46,16 @@ type WorkspaceConfig struct {
 func (w WorkspaceConfig) buildConcurrency() int {
 	if w.BuildConcurrency > 0 {
 		return w.BuildConcurrency
+	}
+	return 3
+}
+
+// refineConcurrency caps how many /refine planners run at once. A planner is not
+// one agent: it fans out to context loaders and a critic of its own, so a batch
+// of three is already a dozen agents in flight.
+func (w WorkspaceConfig) refineConcurrency() int {
+	if w.RefineConcurrency > 0 {
+		return w.RefineConcurrency
 	}
 	return 3
 }

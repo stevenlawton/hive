@@ -216,3 +216,15 @@ func TestBuildConcurrencyDefaultsToThree(t *testing.T) {
 		t.Errorf("negative should fall back to the default, got %d", got)
 	}
 }
+
+func TestRefineConcurrencyDefaultsToThree(t *testing.T) {
+	if got := (WorkspaceConfig{}).refineConcurrency(); got != 3 {
+		t.Fatalf("default refineConcurrency = %d, want 3", got)
+	}
+	if got := (WorkspaceConfig{RefineConcurrency: 5}).refineConcurrency(); got != 5 {
+		t.Fatalf("explicit refineConcurrency = %d, want 5", got)
+	}
+	if got := (WorkspaceConfig{RefineConcurrency: -1}).refineConcurrency(); got != 3 {
+		t.Fatalf("negative refineConcurrency = %d, want 3", got)
+	}
+}
