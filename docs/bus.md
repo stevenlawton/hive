@@ -168,7 +168,7 @@ The Hive UI uses the hard-coded sender `steve` (see `model.go`, `newModel`).
 
 ## Claude Code integration
 
-Claude joins the bus automatically. No per-worktree setup required. Three
+Claude joins the bus automatically. No per-worktree setup required. Four
 distinct hooks are installed globally into `~/.claude/settings.json`:
 
 ### 1. `SessionStart` + `UserPromptSubmit` → inbox digest injection
@@ -210,6 +210,23 @@ the bus exists — it uses `TodoWrite` as its native planning surface, and
 Hive mirrors every plan change onto the bus automatically. Every
 interactive Claude session becomes a bus participant without any
 behavioural change required from Claude.
+
+### 3. `SessionEnd` → retire the session's telemetry snapshot
+
+The one passenger here that is not a bus hook. It runs `hive session-end`,
+which deletes `$XDG_RUNTIME_DIR/hive/sessions/<session_id>.json` for the
+session that just ended.
+
+It rides along because this installer is the only thing that already owns
+`~/.claude/settings.json` and re-runs on every hive start. Session telemetry
+is keyed by Claude session id but read by tmux session name, so a snapshot
+that outlives its session keeps colouring a pane — `/clear` starts a new id
+in the same pane, and the old file went on painting the tab amber from a
+conversation that was gone. See the session-telemetry design doc.
+
+Claude Code fires `SessionEnd` with reason `clear`, `resume`, `logout`,
+`prompt_input_exit` or `other`. All five mean the same thing here, so the
+reason is not read. The hook exits 0 whatever it is handed.
 
 ## The `claude -p` responder
 
@@ -299,6 +316,7 @@ bus/
 
 cmd_bus.go          `hive bus <verb>` CLI dispatch
 cmd_bus_todo.go     `hive bus todo-hook` — PostToolUse stdin handler
+cmd_session_end.go  `hive session-end` — SessionEnd stdin handler (telemetry, not bus)
 bus_runtime.go      busRuntime: watcher lifecycle + responder fleet
 model.go            bus tab wiring, compose input, peer source
 view.go             bus tab rendering
@@ -309,10 +327,11 @@ ui/workspace.go     BusTabID constant, IsBusActive helper
 
 On every Hive startup (`main.go`), two idempotent installers run:
 
-1. **`bus.InstallClaudeHook(exe)`** — writes the three hook entries into
+1. **`bus.InstallClaudeHook(exe)`** — writes the four hook entries into
    `~/.claude/settings.json`, updating the binary path in place if it has
    changed. Uses the marker field (last word of the command: `inbox` /
-   `todo-hook`) to find previously-installed entries without duplicating.
+   `todo-hook` / `session-end`) to find previously-installed entries without
+   duplicating.
    Also cleans up any legacy `Stop` hook entries from earlier broken
    versions.
 
