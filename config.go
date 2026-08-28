@@ -51,13 +51,13 @@ func (w WorkspaceConfig) buildConcurrency() int {
 }
 
 // refineConcurrency caps how many /refine planners run at once. A planner is not
-// one agent: it fans out to context loaders and a critic of its own, so a batch
-// of three is already a dozen agents in flight.
+// one agent: it fans out to context loaders and a critic of its own, so even a
+// single planner is about five agents, most of them on opus.
 func (w WorkspaceConfig) refineConcurrency() int {
 	if w.RefineConcurrency > 0 {
 		return w.RefineConcurrency
 	}
-	return 3
+	return 1
 }
 
 type Config struct {
