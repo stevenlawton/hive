@@ -152,6 +152,8 @@ type model struct {
 	// quota is spent, fired when the window rolls over
 	future      futureMenu
 	futureStore *FutureStore
+	// snapshotsFor is a seam for tests; nil means read the real ones.
+	snapshotsFor func(time.Time) map[string]SessionSnapshot
 
 	// One desktop notification slot per repo
 	notifier *desktopNotifier

@@ -25,8 +25,9 @@ type futureMenu struct {
 	cursor  int
 	input   textinput.Model
 
-	resumeText string
-	geom       cannedGeom
+	resumeText  string
+	resetSource futureResetSource
+	geom        cannedGeom
 
 	// baseline is the queue as it stood when the popup opened, and typed
 	// lists the notes added since. A tick can fire the queue while the popup
@@ -41,6 +42,19 @@ type futureMenu struct {
 // notes to go — but only when there is a reset to fire against, and never for
 // a queue the user has already unticked by hand.
 func newFutureMenu(session string, q FutureQueue, resetAt int64, resumeText string) futureMenu {
+	return newFutureMenuFrom(session, q, resetAt, futureResetFromFleet, resumeText)
+}
+
+func newFutureMenuFrom(
+	session string,
+	q FutureQueue,
+	resetAt int64,
+	source futureResetSource,
+	resumeText string,
+) futureMenu {
+	if resetAt <= 0 {
+		source = futureResetNone
+	}
 	baseline := q
 	fresh := len(q.Prompts) == 0 && !q.AutoSend && !q.AutoResume && q.ArmedFor == 0
 	// A draining queue already has a firing trigger; re-arming it against the
@@ -49,13 +63,14 @@ func newFutureMenu(session string, q FutureQueue, resetAt int64, resumeText stri
 		q = armFuture(q, resetAt)
 	}
 	return futureMenu{
-		open:       true,
-		session:    session,
-		q:          q,
-		baseline:   baseline,
-		resetAt:    resetAt,
-		resumeText: resumeText,
-		input:      newCannedInput("> ", "note for when the tokens come back", "", futureMenuWidth-6),
+		open:        true,
+		session:     session,
+		q:           q,
+		baseline:    baseline,
+		resetAt:     resetAt,
+		resumeText:  resumeText,
+		resetSource: source,
+		input:       newCannedInput("> ", "note for when the tokens come back", "", futureMenuWidth-6),
 	}
 }
 
@@ -127,6 +142,16 @@ func futureHeader(resetAt int64) string {
 	return "5h window · resets " + time.Unix(resetAt, 0).Local().Format("15:04")
 }
 
+// futureHeaderFrom names the clock and, when it came off the pane rather than
+// the API, says so — the banner is claude's own wording and worth less trust.
+func futureHeaderFrom(resetAt int64, source futureResetSource) string {
+	head := futureHeader(resetAt)
+	if source == futureResetFromBanner {
+		return head + " (from the pane)"
+	}
+	return head
+}
+
 func futureTick(on bool) string {
 	if on {
 		return "[x]"
@@ -149,7 +174,8 @@ func renderFutureMenu(c futureMenu) string {
 	}
 
 	lines := []string{
-		futureDimStyle.Width(inner).Render(" " + truncateCells(futureHeader(c.resetAt), inner-2)),
+		futureDimStyle.Width(inner).Render(" " + truncateCells(
+			futureHeaderFrom(c.resetAt, c.resetSource), inner-2)),
 	}
 
 	switch {
@@ -320,10 +346,10 @@ func (m *model) openFuturePopup(session string, x, y int) {
 	if session == "" || m.futureStore == nil {
 		return
 	}
-	tcfg := m.telemetryConfig()
 	now := time.Now()
-	resetAt, _ := fleetResetAt(readSessionSnapshots(tcfg, now), now)
-	c := newFutureMenu(session, m.futureStore.Queues()[session], resetAt, m.futureStore.ResumeText())
+	resetAt, source := m.resetClock(session, now)
+	c := newFutureMenuFrom(
+		session, m.futureStore.Queues()[session], resetAt, source, m.futureStore.ResumeText())
 	c.geom = cannedGeometry(make([]CannedPrompt, futureMenuRows), x, y, m.width, m.height).
 		widenTo(futureMenuWidth, m.width)
 	m.future = c
@@ -418,7 +444,7 @@ func (m model) resumedSessions(generating map[string]bool, now time.Time) map[st
 	if tcfg.StaleAfterSeconds <= 0 {
 		tcfg.StaleAfterSeconds = defaultTelemetryConfig().StaleAfterSeconds
 	}
-	snaps := readSessionSnapshots(tcfg, now)
+	snaps := m.snapshotsWith(tcfg, now)
 
 	out := map[string]bool{}
 	for session := range generating {
@@ -429,9 +455,39 @@ func (m model) resumedSessions(generating map[string]bool, now time.Time) map[st
 	return out
 }
 
+// resetClock finds the next quota reset. Telemetry is preferred: it is an
+// exact figure straight from the API. Its blind spot is the case this feature
+// exists for — with every session stalled, nothing is rendering a statusline
+// and the fleet has no clock — so the pane's own limit banner is read as a
+// fallback.
+func (m model) resetClock(session string, now time.Time) (int64, futureResetSource) {
+	if at, ok := fleetResetAt(m.snapshots(now), now); ok {
+		return at, futureResetFromFleet
+	}
+	if at, ok := paneLimitReset(session, now); ok {
+		return at, futureResetFromBanner
+	}
+	return 0, futureResetNone
+}
+
+// snapshots reads the telemetry snapshots, through a seam tests can replace.
+func (m model) snapshots(now time.Time) map[string]SessionSnapshot {
+	if m.snapshotsFor != nil {
+		return m.snapshotsFor(now)
+	}
+	return readSessionSnapshots(m.telemetryConfig(), now)
+}
+
 func (m model) telemetryConfig() TelemetryConfig {
 	if m.cfg == nil {
 		return defaultTelemetryConfig()
 	}
 	return m.cfg.Telemetry
+}
+
+func (m model) snapshotsWith(cfg TelemetryConfig, now time.Time) map[string]SessionSnapshot {
+	if m.snapshotsFor != nil {
+		return m.snapshotsFor(now)
+	}
+	return readSessionSnapshots(cfg, now)
 }

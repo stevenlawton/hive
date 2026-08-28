@@ -128,9 +128,18 @@ Two tickboxes:
 
 The quota is account-level, so the reset time is read from whichever session
 reported most recently rather than from the pane the popup is over — a session
-blocked on the limit stops reporting, and would have nothing to say. If no
-session is reporting at all the popup says the reset time is unknown and
-refuses to arm, rather than promising a send that could never fire.
+blocked on the limit stops reporting, and would have nothing to say.
+
+That leaves one blind spot: if *every* session is stalled, nothing is rendering
+a statusline and there is no telemetry to read. So hive falls back to the pane
+itself, which is still showing claude's own limit message, and takes the reset
+time from there — the header says `(from the pane)` when it did. Only if both
+come up empty does the popup say the reset time is unknown, and it then refuses
+to arm rather than promising a send that could never fire.
+
+The banner is matched on shape rather than exact wording — a line naming a
+limit and when it resets — because that wording has changed before and is not
+worth pinning.
 
 Firing waits five minutes past the published reset: a rolling window's reset
 time has been seen landing slightly early, and a prompt typed into a session
