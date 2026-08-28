@@ -130,13 +130,9 @@ func TestBodyGivenTwiceIsRefused(t *testing.T) {
 	if err := os.WriteFile(path, []byte("from file"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{
-		{"subj", "-d", "inline", "--body-file", path},
-		{"subj - inline", "--body-file", path},
-	} {
-		if _, _, err := parseTodoAddArgs(args); err == nil {
-			t.Errorf("parseTodoAddArgs(%v) should have refused two bodies", args)
-		}
+	args := []string{"subj", "-d", "inline", "--body-file", path}
+	if _, _, err := parseTodoAddArgs(args); err == nil {
+		t.Errorf("parseTodoAddArgs(%v) should have refused two bodies", args)
 	}
 }
 
@@ -225,5 +221,38 @@ func TestReadingStdinAsTheBodyWaitsForIt(t *testing.T) {
 	}()
 	if got := pipedBody(false); got != "a slow body" {
 		t.Errorf("got %q, want the slow body — blocking read must wait", got)
+	}
+}
+
+// A separator in the subject is only a separator when there is nothing else to
+// separate it from. With an explicit body flag the subject is the subject,
+// dashes and all — scripted `hive todo add --body-file b.md "a - b"` was
+// refused as a description given twice, naming a body the caller never gave.
+func TestSubjectKeepsItsSeparatorWhenTheBodyCameFromAFlag(t *testing.T) {
+	dir := newTestRepo(t)
+	path := filepath.Join(dir, "b.md")
+	if err := os.WriteFile(path, []byte("the real body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"body-file", []string{"--body-file", path, "add - rejects a dash"}, "add - rejects a dash"},
+		{"description", []string{"-d", "the real body", "add — rejects an em-dash"}, "add — rejects an em-dash"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			subj, desc, err := parseTodoAddArgs(c.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if subj != c.want {
+				t.Errorf("subject = %q, want %q", subj, c.want)
+			}
+			if desc != "the real body" {
+				t.Errorf("description = %q, want the flagged body", desc)
+			}
+		})
 	}
 }
