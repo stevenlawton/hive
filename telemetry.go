@@ -674,11 +674,14 @@ func tabToneForVerdict(verdict string, stale bool) ui.TabTone {
 // A tab with no snapshot loses its tone rather than keeping the last one: a
 // session that stopped reporting has no verdict, and holding the old colour
 // would assert something nobody is still checking.
-func (m model) applySessionVerdicts(now time.Time) {
+//
+// live names the tmux sessions that still exist; nil means the caller could not
+// find out. See dropDeadSessions.
+func (m model) applySessionVerdicts(now time.Time, live map[string]bool) {
 	if m.cfg == nil || !m.cfg.Telemetry.Enabled || m.workspace == nil || m.workspace.TabBar == nil {
 		return
 	}
-	snaps := readSessionSnapshots(m.cfg.Telemetry, now)
+	snaps := dropDeadSessions(readSessionSnapshots(m.cfg.Telemetry, now), live)
 	for i := range m.workspace.TabBar.Tabs {
 		tab := &m.workspace.TabBar.Tabs[i]
 		s, ok := snaps[TmuxSessionName(tab.ID, false)]
@@ -710,6 +713,28 @@ func (m model) applySessionVerdicts(now time.Time) {
 			term.Tone = tabToneForVerdict(s.Verdict, s.Stale)
 		}
 	}
+}
+
+// dropDeadSessions removes snapshots whose tmux session no longer exists. A
+// snapshot outlives its session — the file sits in XDG_RUNTIME_DIR until the
+// age prune hours later — so without this a tab keeps the colour of a session
+// that ended, pointing at a pane nobody can open, and the fleet burn rate keeps
+// billing for it.
+//
+// A nil live set means liveness is unknown (tmux failed to answer), and
+// nothing is dropped: losing the fleet's colour for a tick is worse than
+// carrying one stale tone through it.
+func dropDeadSessions(snaps map[string]SessionSnapshot, live map[string]bool) map[string]SessionSnapshot {
+	if live == nil {
+		return snaps
+	}
+	out := make(map[string]SessionSnapshot, len(snaps))
+	for name, s := range snaps {
+		if live[name] {
+			out[name] = s
+		}
+	}
+	return out
 }
 
 // verdictWindowStyle is the tmux window-style for a verdict, or "default" to
