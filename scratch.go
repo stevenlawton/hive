@@ -1,12 +1,15 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -87,13 +90,16 @@ func PromoteScratch(scratchPath, reposDir, name string) (string, error) {
 		return "", fmt.Errorf("repo %s already exists", name)
 	}
 
-	if err := os.Rename(scratchPath, newPath); err != nil {
+	if err := moveDir(scratchPath, newPath); err != nil {
 		return "", fmt.Errorf("failed to move scratch to repos: %w", err)
 	}
 
 	cmd := exec.Command("git", "init")
 	cmd.Dir = newPath
-	cmd.Run()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("moved to %s but git init failed: %w: %s",
+			newPath, err, strings.TrimSpace(string(out)))
+	}
 
 	return newPath, nil
 }
@@ -167,4 +173,73 @@ func (m *model) promoteSelected(name string) {
 	}
 
 	_ = oldShort // previously used for kitty tab title
+}
+
+// moveDir moves a directory tree, falling back to copy-then-delete when source
+// and destination are on different filesystems.
+//
+// scratch_dir lives under /tmp, which is tmpfs, and repos_dir is on disk, so
+// every promote on a normal setup is a cross-device move. The bare rename
+// failed with EXDEV each time and promote could not work at all.
+func moveDir(src, dst string) error {
+	err := os.Rename(src, dst)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	if err := copyTree(src, dst); err != nil {
+		// Leave the scratch where it is and take the half-copy away: a
+		// failed move must lose nothing, and a partial repo in ~/repos
+		// looks like a real one.
+		os.RemoveAll(dst)
+		return err
+	}
+	return os.RemoveAll(src)
+}
+
+// copyTree copies a directory tree, preserving permission bits. Symlinks are
+// recreated rather than followed, so a link into the scratch does not become a
+// second copy of the tree.
+func copyTree(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+
+		switch {
+		case info.IsDir():
+			return os.MkdirAll(target, info.Mode().Perm())
+		case info.Mode()&os.ModeSymlink != 0:
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		case !info.Mode().IsRegular():
+			return nil // sockets, devices and fifos are not scratch content
+		}
+
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+
+		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(out, in); err != nil {
+			out.Close()
+			return err
+		}
+		return out.Close()
+	})
 }
