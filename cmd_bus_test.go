@@ -204,3 +204,32 @@ func TestDigestLineLeavesAShortHeadlineAlone(t *testing.T) {
 		t.Errorf("short headline should pass through untouched: %q", line)
 	}
 }
+
+func TestInboxSkipsSubagentHookPayload(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"subagent", `{"session_id":"s","agent_id":"af35c16a99384b530","agent_type":"builder","hook_event_name":"PostToolUse"}`, true},
+		{"top-level session", `{"session_id":"s","hook_event_name":"PostToolUse"}`, false},
+		{"empty agent_id", `{"session_id":"s","agent_id":""}`, false},
+		{"no stdin", ``, false},
+		{"not json", `hello`, false},
+	}
+	for _, c := range cases {
+		if got := fromSubagent(c.raw); got != c.want {
+			t.Errorf("%s: fromSubagent = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestInboxCursorStopsAtWhatWasScanned(t *testing.T) {
+	scanned := []bus.Announcement{{ID: "msg_a"}, {ID: "msg_b"}}
+	if got := cursorAfter("msg_0", scanned); got != "msg_b" {
+		t.Errorf("cursorAfter = %q, want msg_b", got)
+	}
+	if got := cursorAfter("msg_0", nil); got != "msg_0" {
+		t.Errorf("nothing scanned: cursorAfter = %q, want the old cursor", got)
+	}
+}

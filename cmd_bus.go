@@ -165,6 +165,13 @@ func busInboxCmd(args []string) int {
 		return 2
 	}
 
+	// A subagent shares its parent's tmux session, so it shares the seen
+	// cursor too. Letting its hooks drain the inbox shows the digest to a
+	// worker that won't act on it and hides it from the session it was for.
+	if fromSubagent(pipedBody(true)) {
+		return 0
+	}
+
 	b, err := openBus()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bus open: %v\n", err)
@@ -196,7 +203,7 @@ func busInboxCmd(args []string) int {
 		if *peek {
 			return
 		}
-		if err := seen.Set(key, b.LatestID()); err != nil {
+		if err := seen.Set(key, cursorAfter(cursor, all)); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to save seen cursor: %v\n", err)
 		}
 	}
@@ -220,6 +227,24 @@ func busInboxCmd(args []string) int {
 
 	advance()
 	return 0
+}
+
+// fromSubagent reports whether a hook payload came from an Agent-tool
+// subagent rather than the top-level session.
+func fromSubagent(payload string) bool {
+	var p struct {
+		AgentID string `json:"agent_id"`
+	}
+	return json.Unmarshal([]byte(payload), &p) == nil && p.AgentID != ""
+}
+
+// cursorAfter is the cursor to save once `scanned` has been shown. It is not
+// the log's latest id: a message posted after the scan would be skipped.
+func cursorAfter(cursor string, scanned []bus.Announcement) string {
+	if len(scanned) == 0 {
+		return cursor
+	}
+	return scanned[len(scanned)-1].ID
 }
 
 func busListCmd(args []string) int {
