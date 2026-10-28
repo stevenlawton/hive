@@ -50,6 +50,12 @@ covers the function at all.
 
 Run the tests you write. Iterate until they pass.
 
+When a test pins existing behaviour, never type an expected value you have not
+watched the real code produce. Write a placeholder, run it, and take the value
+from the runner's output. Working the answer out by reading the code, or from a
+copy of the function in a scratch file, pins your reading and certifies any
+misreading.
+
 If a test fails because the production code is genuinely wrong, do not bend the
 test to make it green. Leave it failing, and report the bug you found — a
 failing test that exposes a real defect is the most valuable thing you can
