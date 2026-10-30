@@ -165,6 +165,15 @@ If it is not a real red, send it back to `test-writer` with what was wrong. Do
 not proceed. A green-from-the-start test means the rest of your run proves
 nothing.
 
+**Keep the receipt.** Commit order and the final tree cannot show that a test
+failed first. Copy the verbatim failing output into the artifact under
+`## RED receipt`, one block per behaviour-changing test, with the command that
+produced it. A pure behaviour-preserving refactor has no red; classify the diff
+as behaviour-changing, pure refactor or mixed, and give a refactor its passing
+baseline instead of a fabricated failure. If you have no receipt for a
+behaviour-changing change, write the chronology as indeterminate. Never assert
+a red you did not see.
+
 Then dispatch `implementer` against the contract.
 
 **For a feature**, write the stubs first so both agents have something to compile

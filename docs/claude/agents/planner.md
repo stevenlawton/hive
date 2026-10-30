@@ -187,6 +187,15 @@ must be able to execute it without inventing anything. Exact files. Exact
 functions. Full signatures for anything new. If you find yourself writing
 "update the relevant handler", you have not finished researching.
 
+**Is it one thing?** If the contract has parts that wait on different other
+tickets, or several outcomes a player or caller could observe separately, the
+ticket is probably too big. You may not file tickets and you may not cut the
+ticket's scope, so write a `## Suggested split` section and carry it as an Open
+question. Split by what can be observed, not by layer: each child is an actor,
+a trigger and an observable outcome that works end to end, and names what it
+leaves out for now. Server, client and protocol as three children is a smell;
+those are tasks inside one child.
+
 ## 5. Land the draft on disk before anything else
 
 Write the artifact **now**, before the critique. A planner that is killed

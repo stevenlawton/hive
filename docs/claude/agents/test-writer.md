@@ -38,6 +38,13 @@ and say that you had no local precedent to follow.
 Then read the code under test properly — including its callers — so the tests
 assert on real behaviour rather than on what the function name implies.
 
+## What a good test asserts
+
+Assert what the code does, not how. A test named "should call X" pins an
+implementation detail and breaks on any refactor. Use the public interface at
+the layer the behaviour belongs to, and cover boundaries at their exact values:
+the threshold itself, one under, one over.
+
 ## What to cover
 
 Prioritise error paths, boundaries, and the cases a human would skip: empty
